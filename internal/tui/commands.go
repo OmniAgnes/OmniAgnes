@@ -7,6 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"omni/internal/agent"
+	"omni/internal/memory"
+	"omni/internal/skills"
 	"omni/internal/webui"
 )
 
@@ -27,10 +29,14 @@ Slash 命令（输入 / 出现提示，↑↓ 选择 · Tab 补全）:
   /config        打开模型配置表单（类型/模型/Base URL/API Key）
   /model <名称>   切换模型（如 /model gpt-4o）
   /mode <模式>    build=可修改文件/执行命令；plan=只读
+  /skills        列出并重新加载技能
+  /memory        查看全局记忆
+  /mcp           查看 MCP 服务器与工具状态
   /webui         在浏览器打开网页版聊天
   /quit          退出
 
-工具: read · write · edit · bash · grep · glob
+技能: ~/.config/omni/skills/<名称>/SKILL.md（全局）或 .omni/skills/<名称>/SKILL.md（项目），
+      输入 /技能名 直接触发。工具: read · write · edit · bash · grep · glob · skill · memory · mcp__*
 配置: 默认读取 ~/.config/omni/config.json，支持 OPENAI_API_KEY 等环境变量；
       无可用配置时启动会自动打开 /config 表单。`
 
@@ -81,8 +87,62 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		default:
 			m.addSystemMsg("未知模式: " + args[1] + "（可选 build / plan）")
 		}
+	case "/skills":
+		m.reloadSkills()
+		if len(m.skillCmds) == 0 {
+			m.addSystemMsg("未找到技能。将 SKILL.md 放到 ~/.config/omni/skills/<名称>/ 或 .omni/skills/<名称>/ 后重试。")
+			return nil
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("已加载 %d 个技能:\n", len(m.skillCmds)))
+		for _, s := range m.skillCmds {
+			src := "全局"
+			if s.Source == "project" {
+				src = "项目"
+			}
+			fmt.Fprintf(&b, "  /%s  %s（%s）\n", s.Name, s.Description, src)
+		}
+		m.addSystemMsg(strings.TrimRight(b.String(), "\n"))
+	case "/memory":
+		if m.extras == nil || m.extras.MemoryPath == "" {
+			m.addSystemMsg("全局记忆不可用。")
+			return nil
+		}
+		if mem := memory.Load(m.extras.MemoryPath); mem != "" {
+			m.addSystemMsg("全局记忆（" + m.extras.MemoryPath + "）:\n" + mem)
+		} else {
+			m.addSystemMsg("全局记忆为空。agent 可通过 memory 工具自动沉淀；也可直接编辑 " + m.extras.MemoryPath)
+		}
+	case "/mcp":
+		if m.extras == nil || m.extras.MCP == nil {
+			m.addSystemMsg("未启用 MCP。在配置文件中添加 mcp_servers 后启动。")
+			return nil
+		}
+		statuses := m.extras.MCP.Statuses()
+		if len(statuses) == 0 {
+			m.addSystemMsg("未配置 MCP 服务器。在 ~/.config/omni/config.json 中添加 mcp_servers。")
+			return nil
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("MCP 服务器 %d 个:\n", len(statuses)))
+		for _, st := range statuses {
+			state := "已连接"
+			if !st.Connected {
+				state = "失败"
+			}
+			fmt.Fprintf(&b, "  %s [%s] %s — %s，工具 %d 个", st.Name, st.Kind, st.Target, state, st.ToolCount)
+			if st.Err != "" {
+				b.WriteString("（" + st.Err + "）")
+			}
+			b.WriteString("\n")
+		}
+		m.addSystemMsg(strings.TrimRight(b.String(), "\n"))
 	case "/webui":
-		url, err := webui.Launch(m.a)
+		url, err := webui.Launch(webui.Options{
+			ConfigPath:  m.configPath,
+			Extras:      m.extras,
+			StartCwd:    m.cwd,
+		})
 		if err != nil {
 			m.addSystemMsg("启动网页版失败: " + err.Error())
 			return nil
@@ -91,7 +151,21 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 	case "/quit", "/exit", "/q":
 		return tea.Quit
 	default:
+		// 技能命令：/技能名 → 以技能正文发起一轮对话
+		if s, ok := m.extrasSkill(args[0]); ok {
+			prompt := "请使用技能 " + s.Name + " 执行以下指令：\n\n" + s.Body()
+			m.addUserMsg("/" + s.Name)
+			return m.startAgent(prompt)
+		}
 		m.addSystemMsg("未知命令: " + args[0] + "（输入 /help 查看帮助）")
 	}
 	return nil
+}
+
+// extrasSkill 按命令名查找技能。
+func (m *Model) extrasSkill(cmdName string) (*skills.Skill, bool) {
+	if m.extras == nil || m.extras.Skills == nil {
+		return nil, false
+	}
+	return m.extras.Skills.Lookup(m.cwd, cmdName)
 }

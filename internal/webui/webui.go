@@ -1,24 +1,38 @@
-// Package webui 提供网页版聊天界面：本地 HTTP 服务 + SSE 流式输出，
-// 与终端 TUI 共用同一个 Agent 实例。
+// Package webui 提供网页版工作台：任务/项目管理、聊天与设置。
+// 本地 HTTP 服务 + SSE 流式输出，每个任务使用独立 Agent 并持久化到 store。
 package webui
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
-	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os/exec"
 	"runtime"
-	"strings"
 	"sync"
 
 	"omni/internal/agent"
+	"omni/internal/config"
+	"omni/internal/extras"
 	"omni/internal/llm"
+	"omni/internal/store"
 )
 
-//go:embed page.html
-var pageHTML string
+//go:embed all:dist
+var distFS embed.FS
+
+// Options 是 webui 的启动参数。
+type Options struct {
+	// ConfigPath 配置文件路径（设置改动会写回）。
+	ConfigPath string
+	// Extras 是技能/记忆/MCP 扩展（与 TUI 共享）。
+	Extras *extras.Extras
+	// StartCwd 是 omni 的启动目录，无项目任务的默认工作目录。
+	StartCwd string
+	// Version 版本号（状态展示用）。
+	Version string
+}
 
 var (
 	mu     sync.Mutex
@@ -26,40 +40,35 @@ var (
 )
 
 // Start 启动网页版服务（仅监听 127.0.0.1，重复调用复用已有服务），返回访问地址。
-func Start(a *agent.Agent) (string, error) {
+func Start(opts Options) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if srvURL != "" {
 		return srvURL, nil
 	}
+	cfg, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		return "", err
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(pageHTML))
-	})
-	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
-			"model":      a.Model(),
-			"mode":       string(a.Mode()),
-			"configured": a.HasProvider(),
-		})
-	})
-	mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) {
-		handleChat(a, w, r)
-	})
-	srv := &http.Server{Handler: mux}
+	s := &server{
+		opts:   opts,
+		cfg:    cfg,
+		store:  store.New(config.DefaultDataDir()),
+		agents: map[string]*agent.Agent{},
+	}
+	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
 	srvURL = "http://" + ln.Addr().String()
 	return srvURL, nil
 }
 
 // Launch 启动服务并尝试用系统浏览器打开，返回 URL。
-func Launch(a *agent.Agent) (string, error) {
-	url, err := Start(a)
+func Launch(opts Options) (string, error) {
+	url, err := Start(opts)
 	if err != nil {
 		return "", err
 	}
@@ -67,51 +76,63 @@ func Launch(a *agent.Agent) (string, error) {
 	return url, nil
 }
 
-// handleChat 以 SSE 流式返回一轮问答。
-func handleChat(a *agent.Agent, w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Text string `json:"text"`
+// routes 组装全部路由。
+func (s *server) routes() http.Handler {
+	mux := http.NewServeMux()
+	// 前端静态资源（dist 内 index.html + assets）
+	sub, err := fs.Sub(distFS, "dist")
+	if err == nil {
+		mux.Handle("GET /", http.FileServerFS(sub))
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
-		http.Error(w, `请求体需为 {"text": "..."}`, http.StatusBadRequest)
-		return
-	}
-	if !a.HasProvider() {
-		http.Error(w, "尚未配置模型：请先在终端 TUI 中运行 /config 配置", http.StatusServiceUnavailable)
-		return
-	}
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "当前连接不支持流式输出", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("GET /api/models", s.handleModels)
+	mux.HandleFunc("GET /api/providers", s.handleProvidersGet)
+	mux.HandleFunc("PUT /api/providers", s.handleProvidersPut)
+	mux.HandleFunc("GET /api/projects", s.handleProjectsList)
+	mux.HandleFunc("POST /api/projects", s.handleProjectsAdd)
+	mux.HandleFunc("DELETE /api/projects/{id}", s.handleProjectDelete)
+	mux.HandleFunc("GET /api/browse", s.handleBrowse)
+	mux.HandleFunc("GET /api/tasks", s.handleTasksList)
+	mux.HandleFunc("POST /api/tasks", s.handleTaskCreate)
+	mux.HandleFunc("GET /api/tasks/{id}", s.handleTaskGet)
+	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleTaskDelete)
+	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
+	mux.HandleFunc("POST /api/settings", s.handleSettingsSet)
+	mux.HandleFunc("GET /api/memory", s.handleMemoryGet)
+	mux.HandleFunc("PUT /api/memory", s.handleMemorySet)
+	mux.HandleFunc("GET /api/mcp", s.handleMCP)
+	mux.HandleFunc("GET /api/skills", s.handleSkills)
+	return mux
+}
 
-	send := func(payload map[string]any) {
-		b, _ := json.Marshal(payload)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
-		fl.Flush()
-	}
-	_ = a.Run(r.Context(), req.Text, func(ev agent.Event) {
-		switch ev.Type {
-		case agent.EventText:
-			send(map[string]any{"type": "text", "text": ev.Text})
-		case agent.EventToolStart:
-			send(map[string]any{"type": "tool_start", "name": ev.Tool.Name, "args": llm.MarshalToolArgs(ev.Tool.Args)})
-		case agent.EventToolOutput:
-			send(map[string]any{"type": "tool_output", "name": ev.Tool.Name, "output": ev.Output, "is_error": ev.IsError})
-		case agent.EventError:
-			send(map[string]any{"type": "error", "error": ev.Err.Error()})
-		case agent.EventDone:
-			send(map[string]any{"type": "done"})
-		}
-	})
+// server 是 webui 服务端状态。
+type server struct {
+	opts   Options
+	cfg    *config.Config
+	store  *store.Store
+	mu     sync.Mutex
+	agents map[string]*agent.Agent
+	// provider 非空时优先使用（测试注入口），否则按 cfg 解析。
+	provider llm.Provider
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg})
+}
+
+// decode 读取 JSON 请求体。
+func decode[T any](r *http.Request) (T, error) {
+	var v T
+	err := json.NewDecoder(r.Body).Decode(&v)
+	return v, err
 }
 
 func openBrowser(url string) error {

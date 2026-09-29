@@ -1,16 +1,22 @@
 # omni — 终端 AI 编码智能体
 
-类 [opencode](https://github.com/sst/opencode) 的 CLI TUI 编码智能体，在终端里与 AI 协作编程。
+类 [opencode](https://github.com/sst/opencode) 的 CLI TUI 编码智能体，在终端里与 AI 协作编程，并附带网页版工作台。
 
 ## 特性
 
 - **TUI 聊天界面**：Bubble Tea 构建，消息流、流式输出、工具调用树（可折叠）
-- **网页版**：`/webui` 在浏览器打开本地网页聊天（127.0.0.1，SSE 流式）
-- **Slash 提示**：输入 `/` 弹出命令列表，↑↓ 选择、Tab 补全
+- **网页版工作台**：`--web` 或 TUI 内 `/webui` 打开（127.0.0.1，SSE 流式）
+  - 左侧「任务 / 项目」：任务即发出去的一条条对话；项目是本地文件夹，各自管理任务
+  - 任务列表默认显示 5 条，更多折叠展开
+  - 设置：供应商与模型管理（URL / API Key / 多模型）、全局记忆、主题（深色/浅色/跟随系统）、技能与 MCP 状态
+  - 界面基于 [shadcn/ui](https://ui.shadcn.com/)，适配移动端（H5）
+  - 任务与会话历史持久化在 `~/.local/share/omni/`
+  - 桌面版：Electron 壳，见 `webui/desktop`
+- **MCP 支持**：`mcp_servers` 配置 stdio / streamable HTTP 服务器，远端工具以 `mcp__服务器__工具` 注入
+- **技能（Skills）**：`SKILL.md` 定义技能，agent 自动调用，也可 `/技能名` 直接触发
+- **全局记忆**：跨会话长期记忆，agent 可通过 `memory` 工具自动沉淀，设置面板可编辑
 - **多 Provider**：OpenAI 兼容 / Anthropic / Gemini / Ollama 等
 - **Agent 模式**：`build`（可写文件、执行命令）与 `plan`（只读）
-- **内置工具**：`read` / `write` / `edit` / `bash` / `grep` / `glob`
-- **交互控制**：Esc 取消生成、Ctrl+R 重新生成、slash 命令切换模型/模式
 - **非交互模式**：`--print "问题"` 供脚本与 CI 使用
 
 ## 安装
@@ -18,6 +24,8 @@
 ```sh
 go build -o omni .
 ```
+
+需要 Node.js 的场景只有修改前端（`webui/frontend`）；仓库已提交构建产物，日常编译无需 Node。
 
 ## 快速开始
 
@@ -39,10 +47,10 @@ export OLLAMA_MODEL=qwen2.5-coder
 ./omni
 ```
 
-交互模式：
+网页版工作台：
 
-```
-输入消息，Enter 发送，Alt+Enter 换行；/help 查看帮助
+```sh
+./omni --web      # 直接启动（或 TUI 内输入 /webui）
 ```
 
 ## 配置文件
@@ -53,13 +61,58 @@ export OLLAMA_MODEL=qwen2.5-coder
 {
   "provider": "gpt-4o",
   "providers": [
-    { "type": "openai", "model": "gpt-4o", "env_key": "OPENAI_API_KEY", "default": true },
-    { "type": "ollama", "model": "qwen2.5-coder", "base_url": "http://localhost:11434/v1" }
+    {
+      "name": "OpenAI 兼容",
+      "type": "openai",
+      "models": ["gpt-4o", "gpt-4o-mini"],
+      "base_url": "https://api.example.com/v1",
+      "env_key": "OPENAI_API_KEY",
+      "default": true
+    },
+    { "type": "ollama", "models": ["qwen2.5-coder"], "base_url": "http://localhost:11434/v1" }
   ],
   "max_tool_output": 4000,
-  "bash_timeout_seconds": 10
+  "bash_timeout_seconds": 10,
+  "theme": "dark",
+  "mcp_servers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "fetch": { "url": "http://127.0.0.1:8931/mcp" }
+  }
 }
 ```
+
+供应商也可以直接在网页版「设置 → 模型」中维护（名称 / 类型 / Base URL / API Key / 多模型）。
+
+### MCP 服务器
+
+- stdio：`{"command": "...", "args": [...], "env": {...}}`，本地拉起子进程
+- streamable HTTP：`{"url": "http://.../mcp"}`
+- `"disabled": true` 可临时停用某个服务器
+
+工具注入后命名为 `mcp__<服务器>__<工具>`；服务器发出工具变更通知时自动刷新（TUI 内 `/mcp` 查看状态）。
+
+### 技能（Skills）
+
+目录约定（均为 `名称/SKILL.md`）：
+
+- 全局：`~/.config/omni/skills/<名称>/SKILL.md`
+- 项目：`<项目>/.omni/skills/<名称>/SKILL.md`（覆盖同名全局技能）
+
+```markdown
+---
+name: review
+description: 审查当前代码改动并给出风险与改进建议
+---
+
+请先用 git diff 查看当前改动，然后……
+```
+
+agent 在任务匹配技能描述时会自动调用 `skill` 工具；也可以直接输入 `/review` 触发。
+
+### 全局记忆
+
+文件：`~/.config/omni/memory.md`。内容注入每轮系统提示词，agent 可用 `memory` 工具追加/替换；
+网页版设置面板可直接编辑。
 
 ## 命令行参数
 
@@ -72,6 +125,8 @@ export OLLAMA_MODEL=qwen2.5-coder
 | `--unsafe` | 允许工具访问工作目录之外 |
 | `--print "<query>"` | 非交互模式，单轮问答后输出并退出 |
 | `--timeout 5m` | 非交互模式整体超时 |
+| `--web` | 不进 TUI，直接启动网页版工作台 |
+| `--no-open` | 配合 `--web`，不自动打开系统浏览器（桌面版/调试用） |
 | `--version` | 打印版本 |
 
 ## 快捷键
@@ -88,7 +143,8 @@ export OLLAMA_MODEL=qwen2.5-coder
 
 ## Slash 命令
 
-`/help` `/new` `/config` `/model <名称>` `/mode build|plan` `/webui` `/quit`
+`/help` `/new` `/config` `/model <名称>` `/mode build|plan` `/skills` `/memory` `/mcp` `/webui` `/quit`
+（外加已安装技能的 `/技能名`）
 
 ## 工具
 
@@ -100,6 +156,9 @@ export OLLAMA_MODEL=qwen2.5-coder
 | bash | 执行 | 运行 shell 命令（默认 10s 超时） |
 | grep | 只读 | 正则搜索 |
 | glob | 只读 | 文件名模式匹配（支持 `**`） |
+| skill | 只读 | 读取技能指令 |
+| memory | 写 | 读写全局记忆 |
+| `mcp__*` | 视服务器 | MCP 远端工具（plan 模式默认不可用） |
 
 ## 开发
 
@@ -109,15 +168,33 @@ go test ./...         # 单元与集成测试
 go vet ./...          # 静态检查
 ```
 
+前端（webui/frontend，React + Vite + Tailwind + shadcn/ui）：
+
+```sh
+cd webui/frontend
+npm install
+npm run build         # 产物输出到 internal/webui/dist，由 go:embed 打进二进制
+OMNI_URL=http://127.0.0.1:PORT npm run dev   # 调试：代理到正在运行的 omni
+```
+
 ## 目录结构
 
 ```
-├── main.go              入口 / flag / provider 解析 / TUI / --print
+├── main.go              入口 / flag / 扩展装配 / TUI / --print / --web
 ├── config.example.json  配置模板
-└── internal/
-    ├── config/          配置加载
-    ├── llm/             Provider 抽象（openai / anthropic / gemini）
-    ├── tools/           工具实现与安全边界
-    ├── agent/           Agent 循环 / 模式 / 历史
-    └── tui/             Bubble Tea 界面
+├── internal/
+│   ├── config/          配置加载（providers / theme / mcp_servers）
+│   ├── llm/             Provider 抽象（openai / anthropic / gemini）+ 解析
+│   ├── tools/           工具实现与安全边界（支持动态注册）
+│   ├── agent/           Agent 循环 / 模式 / 历史
+│   ├── mcp/             MCP 客户端管理（stdio / streamable HTTP）
+│   ├── skills/          技能（SKILL.md）加载
+│   ├── memory/          全局记忆
+│   ├── extras/          技能/记忆/MCP 聚合装配
+│   ├── store/           任务与项目持久化
+│   ├── tui/             Bubble Tea 界面
+│   ├── webui/           网页版服务 + 内嵌前端 dist
+│   └── ...
+├── webui/frontend/      前端源码（React + shadcn/ui）
+└── webui/desktop/       桌面版 Electron 壳
 ```

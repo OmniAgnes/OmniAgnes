@@ -1,0 +1,81 @@
+package llm
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"omni/internal/config"
+)
+
+// ResolveProvider 从配置（providers 列表）或环境变量解析可用的 Provider。
+// 返回 (provider, 模型名, error)；规则与 main 的历史实现一致：
+// 优先匹配 cfg.Provider/model 指向的模型名，其次 Default 标记，最后第一个。
+func ResolveProvider(cfg *config.Config) (Provider, string, error) {
+	if len(cfg.Providers) > 0 {
+		target := cfg.Provider
+		if target == "" {
+			target = cfg.Model
+		}
+		var pick *config.ProviderConfig
+		if target != "" {
+			for i := range cfg.Providers {
+				if cfg.Providers[i].Model == target || cfg.Providers[i].HasModel(target) {
+					pick = &cfg.Providers[i]
+					break
+				}
+			}
+		}
+		if pick == nil {
+			for i := range cfg.Providers {
+				if cfg.Providers[i].Default {
+					pick = &cfg.Providers[i]
+					break
+				}
+			}
+		}
+		if pick == nil {
+			pick = &cfg.Providers[0]
+		}
+		p := *pick
+		apiKey := p.ResolveAPIKey()
+		// ollama/本地端点无需 key
+		needKey := apiKey == ""
+		if needKey && p.Type == "ollama" {
+			needKey = false
+		}
+		if needKey && strings.Contains(p.BaseURL, "localhost") {
+			needKey = false
+		}
+		if needKey {
+			return nil, "", fmt.Errorf("provider %s 缺少 API Key：请配置 providers[].api_key 或 env_key，或设置对应环境变量", p.Type)
+		}
+		prov, err := New(ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: apiKey})
+		if err != nil {
+			return nil, "", err
+		}
+		return prov, p.Model, nil
+	}
+
+	typ, model, base, ok := config.DetectFromEnv()
+	if !ok {
+		return nil, "", fmt.Errorf(
+			"未找到可用的 LLM Provider。请在 %s 配置 providers，或设置 OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY / OLLAMA_BASE_URL 环境变量",
+			config.DefaultPath(),
+		)
+	}
+	apiKey := ""
+	switch typ {
+	case "openai":
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	case "anthropic":
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	case "gemini":
+		apiKey = os.Getenv("GEMINI_API_KEY")
+	}
+	prov, err := New(ConfigP{Type: typ, Model: model, BaseURL: base, APIKey: apiKey})
+	if err != nil {
+		return nil, "", err
+	}
+	return prov, model, nil
+}

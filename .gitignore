@@ -9,3 +9,12 @@ go.sum.bak
 # 本地会话
 .omni-sessions/
 /omni.exe~
+/.zcode
+
+# webui 前端
+webui/frontend/node_modules/
+webui/frontend/.npm-tmp-cache/
+webui/desktop/node_modules/
+
+# ZCode 会话数据
+.zcode/

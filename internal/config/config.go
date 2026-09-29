@@ -16,24 +16,72 @@ const (
 
 // ProviderConfig 描述单个 LLM 提供方。
 type ProviderConfig struct {
-	Type    string `json:"type"` // openai | anthropic | gemini
-	Model   string `json:"model"`
-	BaseURL string `json:"base_url,omitempty"`
-	APIKey  string `json:"api_key,omitempty"`
-	EnvKey  string `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
-	Default bool   `json:"default,omitempty"`
+	Name    string   `json:"name,omitempty"` // 显示名称
+	Type    string   `json:"type"`           // openai | anthropic | gemini | ollama
+	Model   string   `json:"model,omitempty"` // 主模型（与 models[0] 同步）
+	Models  []string `json:"models,omitempty"` // 该供应商可用模型（首个为主模型）
+	BaseURL string   `json:"base_url,omitempty"`
+	APIKey  string   `json:"api_key,omitempty"`
+	EnvKey  string   `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
+	Default bool     `json:"default,omitempty"`
+}
+
+// Normalize 同步 Model 与 Models 字段。
+func (p *ProviderConfig) Normalize() {
+	if len(p.Models) == 0 {
+		if p.Model != "" {
+			p.Models = []string{p.Model}
+		}
+		return
+	}
+	// 过滤空项并去重
+	var models []string
+	seen := map[string]bool{}
+	for _, m := range p.Models {
+		m = strings.TrimSpace(m)
+		if m == "" || seen[m] {
+			continue
+		}
+		seen[m] = true
+		models = append(models, m)
+	}
+	p.Models = models
+	if len(p.Models) > 0 {
+		p.Model = p.Models[0]
+	}
+}
+
+// HasModel 报告该供应商是否提供指定模型。
+func (p *ProviderConfig) HasModel(model string) bool {
+	for _, m := range p.Models {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+// MCPServerConfig 描述一个 MCP 服务器：command（stdio）或 url（streamable HTTP）二选一。
+type MCPServerConfig struct {
+	Command  string            `json:"command,omitempty"`
+	Args     []string          `json:"args,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Disabled bool              `json:"disabled,omitempty"`
 }
 
 // Config 是 omni 的顶层配置。
 type Config struct {
-	Provider          string           `json:"provider"`
-	Model             string           `json:"model,omitempty"`
-	Providers         []ProviderConfig `json:"providers"`
-	MaxToolOutput     int              `json:"max_tool_output"`
-	BashTimeoutSec    int              `json:"bash_timeout_seconds"`
-	Cwd               string           `json:"cwd,omitempty"` // 工作目录；为空则取启动时目录
-	SessionDir        string           `json:"session_dir,omitempty"`
-	SystemPromptExtra string           `json:"system_prompt_extra,omitempty"`
+	Provider          string                     `json:"provider"`
+	Model             string                     `json:"model,omitempty"`
+	Providers         []ProviderConfig           `json:"providers"`
+	MaxToolOutput     int                        `json:"max_tool_output"`
+	BashTimeoutSec    int                        `json:"bash_timeout_seconds"`
+	Cwd               string                     `json:"cwd,omitempty"` // 工作目录；为空则取启动时目录
+	SessionDir        string                     `json:"session_dir,omitempty"`
+	SystemPromptExtra string                     `json:"system_prompt_extra,omitempty"`
+	Theme             string                     `json:"theme,omitempty"` // dark | light | system
+	MCPServers        map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
 // DefaultPath 返回默认配置文件路径。
@@ -45,12 +93,34 @@ func DefaultPath() string {
 	return filepath.Join(home, defaultConfigDir, "config.json")
 }
 
-func DefaultSessionDir() string {
+func DefaultDataDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".omni-sessions"
+		return ".omni-data"
 	}
-	return filepath.Join(home, ".local", "share", "omni", "sessions")
+	return filepath.Join(home, ".local", "share", "omni")
+}
+
+func DefaultSessionDir() string {
+	return filepath.Join(DefaultDataDir(), "sessions")
+}
+
+// DefaultMemoryPath 返回全局记忆文件路径。
+func DefaultMemoryPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "omni-memory.md"
+	}
+	return filepath.Join(home, defaultConfigDir, "memory.md")
+}
+
+// DefaultSkillsDir 返回全局技能目录。
+func DefaultSkillsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".omni-skills"
+	}
+	return filepath.Join(home, defaultConfigDir, "skills")
 }
 
 // Default 返回带默认值的配置。
@@ -61,6 +131,7 @@ func Default() *Config {
 		BashTimeoutSec:    defaultBashTimeoutSec,
 		SessionDir:        DefaultSessionDir(),
 		SystemPromptExtra: "",
+		Theme:             "dark",
 	}
 }
 
@@ -91,6 +162,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.SessionDir == "" {
 		cfg.SessionDir = DefaultSessionDir()
+	}
+	if cfg.Theme != "light" && cfg.Theme != "system" {
+		cfg.Theme = "dark"
+	}
+	for i := range cfg.Providers {
+		cfg.Providers[i].Normalize()
 	}
 	// 优先的默认 provider
 	if cfg.Provider == "" {

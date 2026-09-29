@@ -15,12 +15,16 @@ import (
 
 	"omni/internal/agent"
 	"omni/internal/config"
+	"omni/internal/extras"
 	"omni/internal/llm"
+	"omni/internal/mcp"
+	"omni/internal/skills"
 	"omni/internal/tools"
 	"omni/internal/tui"
+	"omni/internal/webui"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	var (
@@ -32,6 +36,8 @@ func main() {
 		flagPrint   = flag.String("print", "", "非交互模式：执行单轮问答并输出结果后退出")
 		flagVersion = flag.Bool("version", false, "打印版本")
 		flagTimeout = flag.Duration("timeout", 0, "非交互模式整体超时（如 5m）")
+		flagWeb     = flag.Bool("web", false, "不进 TUI，直接启动网页版工作台")
+		flagNoOpen  = flag.Bool("no-open", false, "启动网页版时不自动打开系统浏览器（桌面版/调试用）")
 	)
 	flag.Parse()
 
@@ -45,7 +51,7 @@ func main() {
 		exitErr("加载配置失败: %v", err)
 	}
 
-	prov, model, err := resolveProvider(cfg)
+	prov, model, err := llm.ResolveProvider(cfg)
 	if err != nil {
 		// 交互模式允许无配置启动，进 TUI 后用 /config 配置；非交互模式必须可用。
 		if *flagPrint != "" {
@@ -73,12 +79,27 @@ func main() {
 		exitErr("工作目录不存在: %s", absCwd)
 	}
 
+	// 运行时扩展：MCP 服务器、技能、全局记忆
+	ext := &extras.Extras{
+		Skills:     &skills.Store{GlobalDir: config.DefaultSkillsDir()},
+		MemoryPath: config.DefaultMemoryPath(),
+	}
 	reg := tools.NewRegistry(&tools.Env{
 		Cwd:       absCwd,
 		Unsafe:    *flagUnsafe,
 		MaxOutput: cfg.MaxToolOutput,
 		Timeout:   time.Duration(cfg.BashTimeoutSec) * time.Second,
 	})
+	if len(cfg.MCPServers) > 0 {
+		mgr := mcp.NewManager(version)
+		ext.MCP = mgr
+		mgr.SetOnChange(func() { mgr.RegisterInto(reg) })
+		ext.RegisterTools(reg, absCwd)
+		for _, st := range mgr.Start(context.Background(), cfg.MCPServers) {
+			fmt.Fprintf(os.Stderr, "omni: mcp %s 连接失败: %s\n", st.Name, st.Err)
+		}
+	}
+	ext.RegisterTools(reg, absCwd)
 
 	mode := agent.ModeBuild
 	if *flagMode != "" {
@@ -94,6 +115,7 @@ func main() {
 		MaxIterations:     32,
 		MaxTokens:         8192,
 		SystemPromptExtra: cfg.SystemPromptExtra,
+		ExtraPrompt:       func() string { return ext.ExtraPrompt(absCwd) },
 	})
 
 	if *flagPrint != "" {
@@ -101,12 +123,36 @@ func main() {
 		return
 	}
 
-	sessionID := newSessionID()
 	configPath := *flagConfig
 	if configPath == "" {
 		configPath = config.DefaultPath()
 	}
-	p := tea.NewProgram(tui.New(a, sessionID, configPath), tea.WithAltScreen())
+	opts := webui.Options{
+		ConfigPath: configPath,
+		Extras:     ext,
+		StartCwd:   absCwd,
+		Version:    version,
+	}
+
+	if *flagWeb {
+		var (
+			url string
+			err error
+		)
+		if *flagNoOpen {
+			url, err = webui.Start(opts)
+		} else {
+			url, err = webui.Launch(opts)
+		}
+		if err != nil {
+			exitErr("启动网页版失败: %v", err)
+		}
+		fmt.Printf("omni 工作台已启动: %s（Ctrl+C 退出）\n", url)
+		select {}
+	}
+
+	sessionID := newSessionID()
+	p := tea.NewProgram(tui.New(a, sessionID, configPath, ext, absCwd), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		exitErr("TUI 运行失败: %v", err)
 	}
@@ -115,77 +161,6 @@ func main() {
 func exitErr(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "omni: "+format+"\n", args...)
 	os.Exit(1)
-}
-
-// resolveProvider 从配置或环境变量解析 LLM provider。
-func resolveProvider(cfg *config.Config) (llm.Provider, string, error) {
-	if len(cfg.Providers) > 0 {
-		target := cfg.Provider
-		if target == "" {
-			target = cfg.Model
-		}
-		var pick *config.ProviderConfig
-		if target != "" {
-			for i := range cfg.Providers {
-				if cfg.Providers[i].Model == target {
-					pick = &cfg.Providers[i]
-					break
-				}
-			}
-		}
-		if pick == nil {
-			for i := range cfg.Providers {
-				if cfg.Providers[i].Default {
-					pick = &cfg.Providers[i]
-					break
-				}
-			}
-		}
-		if pick == nil {
-			pick = &cfg.Providers[0]
-		}
-		p := *pick
-		apiKey := p.ResolveAPIKey()
-		// ollama/本地端点无需 key
-		needKey := apiKey == ""
-		if needKey && p.Type == "ollama" {
-			needKey = false
-		}
-		if needKey && strings.Contains(p.BaseURL, "localhost") {
-			needKey = false
-		}
-		if needKey {
-			return nil, "", fmt.Errorf("provider %s 缺少 API Key：请配置 providers[].api_key 或 env_key，或设置对应环境变量", p.Type)
-		}
-		model := p.Model
-		prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: model, BaseURL: p.BaseURL, APIKey: apiKey})
-		if err != nil {
-			return nil, "", err
-		}
-		return prov, model, nil
-	}
-
-	typ, model, base, ok := config.DetectFromEnv()
-	if !ok {
-		return nil, "", fmt.Errorf(
-			"未找到可用的 LLM Provider。请在 %s 配置 providers，或设置 OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY / OLLAMA_BASE_URL 环境变量",
-			config.DefaultPath(),
-		)
-	}
-	apiKey := ""
-	switch typ {
-	case "openai":
-		apiKey = os.Getenv("OPENAI_API_KEY")
-	case "anthropic":
-		apiKey = os.Getenv("ANTHROPIC_API_KEY")
-	case "gemini":
-		apiKey = os.Getenv("GEMINI_API_KEY")
-	}
-	prov, err := llm.New(llm.ConfigP{Type: typ, Model: model, BaseURL: base, APIKey: apiKey})
-	if err != nil {
-		return nil, "", err
-	}
-	return prov, model, nil
 }
 
 // runPrint 非交互模式执行一次问答并输出。

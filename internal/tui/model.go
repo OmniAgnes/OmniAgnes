@@ -14,7 +14,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"omni/internal/agent"
+	"omni/internal/extras"
 	"omni/internal/llm"
+	"omni/internal/skills"
 )
 
 const (
@@ -30,6 +32,11 @@ type eventsClosed struct{}
 // Model 是 TUI 根模型。
 type Model struct {
 	a *agent.Agent
+
+	// 运行时扩展（技能 / 记忆 / MCP）
+	extras    *extras.Extras
+	cwd       string
+	skillCmds []*skills.Skill
 
 	ready  bool
 	width  int
@@ -66,7 +73,7 @@ type Model struct {
 }
 
 // New 构造 TUI 模型。
-func New(a *agent.Agent, sessionID, configPath string) *Model {
+func New(a *agent.Agent, sessionID, configPath string, ext *extras.Extras, cwd string) *Model {
 	ta := textarea.New()
 	ta.Placeholder = " 输入消息，Enter 发送，Alt+Enter 换行；/help 查看帮助"
 	// 仅首行显示 ❯，其余行（换行/自动折行）留空对齐
@@ -95,8 +102,11 @@ func New(a *agent.Agent, sessionID, configPath string) *Model {
 		sessionID:  sessionID,
 		startTime:  time.Now(),
 		configPath: configPath,
+		extras:     ext,
+		cwd:        cwd,
 		cfgInputs:  setupConfigInputs(),
 	}
+	m.reloadSkills()
 	if !a.HasProvider() {
 		m.openConfig()
 	}

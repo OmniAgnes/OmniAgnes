@@ -42,12 +42,17 @@ type Event struct {
 
 // Options 构造 Agent 的参数。
 type Options struct {
-	Model             string
-	Mode              Mode
-	Cwd               string
-	MaxIterations     int
-	MaxTokens         int
+	Model         string
+	Mode          Mode
+	Cwd           string
+	MaxIterations int
+	MaxTokens     int
+	// SystemPromptExtra 是静态附加段（来自配置）。
 	SystemPromptExtra string
+	// ExtraPrompt 每轮构建系统提示词时调用，返回动态附加段（技能清单、全局记忆等）；可为 nil。
+	ExtraPrompt func() string
+	// History 是初始消息历史（恢复持久化会话用）；为空则从空白开始。
+	History []llm.Message
 }
 
 // Agent 持有一个 LLM provider、工具注册表与消息历史。
@@ -62,6 +67,7 @@ type Agent struct {
 	maxIter  int
 	maxToken int
 	extra    string
+	extraPrompt func() string
 	history  []llm.Message
 	lastTurnStart int
 }
@@ -83,6 +89,8 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		maxIter:       opts.MaxIterations,
 		maxToken:      opts.MaxTokens,
 		extra:         opts.SystemPromptExtra,
+		extraPrompt:   opts.ExtraPrompt,
+		history:       opts.History,
 		lastTurnStart: -1,
 	}
 }
@@ -137,6 +145,11 @@ Agent 模式: %s
 6. 不要编造文件内容；以工具返回的真实内容为准。`, a.cwd, modeDesc)
 	if a.extra != "" {
 		p += "\n\n额外要求（来自配置）:\n" + a.extra
+	}
+	if a.extraPrompt != nil {
+		if dyn := a.extraPrompt(); dyn != "" {
+			p += dyn
+		}
 	}
 	return p
 }

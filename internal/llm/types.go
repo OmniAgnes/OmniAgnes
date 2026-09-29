@@ -25,17 +25,17 @@ type ToolCall struct {
 
 // ToolResult 是一次工具执行结果。
 type ToolResult struct {
-	CallID  string
-	Content string
-	IsError bool
+	CallID  string `json:"call_id"`
+	Content string `json:"content"`
+	IsError bool   `json:"is_error,omitempty"`
 }
 
 // Message 是多模态消息：文本或工具调用/结果的组合。
 type Message struct {
-	Role       Role
-	Text       string
-	ToolCalls  []ToolCall
-	ToolResult *ToolResult
+	Role       Role        `json:"role"`
+	Text       string      `json:"text,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolResult *ToolResult `json:"tool_result,omitempty"`
 }
 
 // NewTextMessage 便捷构造。

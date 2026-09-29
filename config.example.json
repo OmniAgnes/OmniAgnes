@@ -8,5 +8,11 @@
     { "type": "gemini", "model": "gemini-2.5-pro", "env_key": "GEMINI_API_KEY" }
   ],
   "max_tool_output": 4000,
-  "bash_timeout_seconds": 10
+  "bash_timeout_seconds": 10,
+  "theme": "dark",
+  "mcp_servers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "fetch": { "url": "http://127.0.0.1:8931/mcp" }
+  }
 }
+

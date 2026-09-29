@@ -11,19 +11,42 @@ type slashCmd struct {
 	desc string
 }
 
-var slashCommands = []slashCmd{
+// builtinSlashCommands 是内置命令；技能命令在运行时追加。
+var builtinSlashCommands = []slashCmd{
 	{"/help", "显示帮助"},
 	{"/new", "开启新会话（清空历史）"},
 	{"/config", "配置模型（类型/模型/API Key）"},
 	{"/model", "切换模型：/model <名称>"},
 	{"/mode", "切换模式：/mode build|plan"},
+	{"/skills", "列出并重新加载技能"},
+	{"/memory", "查看全局记忆"},
+	{"/mcp", "查看 MCP 服务器状态"},
 	{"/webui", "在浏览器打开网页版聊天"},
 	{"/quit", "退出"},
 }
 
-func filterSlashCommands(prefix string) []slashCmd {
+// slashCommands 返回内置命令 + 技能命令（/技能名）。
+func (m *Model) slashCommands() []slashCmd {
+	out := make([]slashCmd, 0, len(builtinSlashCommands)+len(m.skillCmds))
+	out = append(out, builtinSlashCommands...)
+	for _, s := range m.skillCmds {
+		out = append(out, slashCmd{"/" + s.Name, s.Description})
+	}
+	return out
+}
+
+// reloadSkills 重新扫描技能目录，刷新 slash 提示。
+func (m *Model) reloadSkills() {
+	m.skillCmds = nil
+	if m.extras == nil || m.extras.Skills == nil {
+		return
+	}
+	m.skillCmds = m.extras.Skills.For(m.cwd)
+}
+
+func filterSlashCommands(all []slashCmd, prefix string) []slashCmd {
 	var out []slashCmd
-	for _, c := range slashCommands {
+	for _, c := range all {
 		if strings.HasPrefix(c.name, prefix) {
 			out = append(out, c)
 		}
@@ -40,7 +63,7 @@ func (m *Model) slashMatches() []slashCmd {
 	if !strings.HasPrefix(v, "/") || strings.Contains(v, " ") {
 		return nil
 	}
-	matches := filterSlashCommands(v)
+	matches := filterSlashCommands(m.slashCommands(), v)
 	if len(matches) == 0 {
 		return nil
 	}

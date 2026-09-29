@@ -65,6 +65,23 @@ func NewRegistry(env *Env) *Registry {
 // Env 返回工具环境。
 func (r *Registry) Env() *Env { return r.env }
 
+// Register 动态注册一个工具（MCP、skill 等扩展用），同名覆盖。
+func (r *Registry) Register(t *Tool) {
+	if t == nil || t.Name == "" {
+		return
+	}
+	r.tools[t.Name] = t
+}
+
+// UnregisterByPrefix 删除所有名字以 prefix 开头的工具（刷新 MCP 工具列表用）。
+func (r *Registry) UnregisterByPrefix(prefix string) {
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+		}
+	}
+}
+
 // Names 列出全部工具名。
 func (r *Registry) Names() []string {
 	names := make([]string, 0, len(r.tools))
