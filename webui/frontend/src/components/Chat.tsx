@@ -161,19 +161,23 @@ export function Chat({
           </div>
         )}
 
-        {/* 本次提问引发的工具调用：折叠成一行，放在 AI 回复上方 */}
-        {b.tools.length > 0 && <ToolCallGroup tools={b.tools} onApprove={onApprove} />}
-
-        {b.replies.map((item) => (
-          <div key={item.id} className="flex flex-col gap-1.5">
-            {item.text && <Markdown text={item.text} />}
-            {item.error && (
-              <div className="text-destructive flex items-center gap-2 text-sm">
-                <AlertCircleIcon className="size-4" /> {item.error}
+        {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
+            不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。 */}
+        {(b.tools.length > 0 || b.replies.length > 0) && (
+          <div className="flex flex-col gap-1.5">
+            {b.tools.length > 0 && <ToolCallGroup tools={b.tools} onApprove={onApprove} />}
+            {b.replies.map((item) => (
+              <div key={item.id} className="flex flex-col gap-1.5">
+                {item.text && <Markdown text={item.text} />}
+                {item.error && (
+                  <div className="text-destructive flex items-center gap-2 text-sm">
+                    <AlertCircleIcon className="size-4" /> {item.error}
+                  </div>
+                )}
               </div>
-            )}
+            ))}
           </div>
-        ))}
+        )}
       </div>
     ))
   }
