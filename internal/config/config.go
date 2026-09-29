@@ -16,14 +16,31 @@ const (
 
 // ProviderConfig 描述单个 LLM 提供方。
 type ProviderConfig struct {
-	Name    string   `json:"name,omitempty"` // 显示名称
-	Type    string   `json:"type"`           // openai | anthropic | gemini | ollama
-	Model   string   `json:"model,omitempty"` // 主模型（与 models[0] 同步）
-	Models  []string `json:"models,omitempty"` // 该供应商可用模型（首个为主模型）
-	BaseURL string   `json:"base_url,omitempty"`
-	APIKey  string   `json:"api_key,omitempty"`
-	EnvKey  string   `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
-	Default bool     `json:"default,omitempty"`
+	Name            string   `json:"name,omitempty"`              // 显示名称
+	Type            string   `json:"type"`                        // openai | anthropic | gemini | ollama
+	Model           string   `json:"model,omitempty"`             // 主模型（与 models[0] 同步）
+	Models          []string `json:"models,omitempty"`            // 该供应商可用模型（首个为主模型）
+	BaseURL         string   `json:"base_url,omitempty"`
+	APIKey          string   `json:"api_key,omitempty"`
+	EnvKey          string   `json:"env_key,omitempty"`           // 从该环境变量读取 key，优先级高于 api_key
+	Default         bool     `json:"default,omitempty"`
+	ContextWindow   int      `json:"context_window,omitempty"`    // 上下文窗口（token）
+	MaxOutputTokens int      `json:"max_output_tokens,omitempty"` // 最大输出 token
+	InputTypes      []string `json:"input_types,omitempty"`       // 支持的输入类型：text/image/video/pdf
+	Reasoning       string   `json:"reasoning,omitempty"`         // 推理等级：default | off | on
+}
+
+// ProviderForModel 返回提供指定模型的供应商配置；找不到返回 nil。
+func (c *Config) ProviderForModel(model string) *ProviderConfig {
+	if model == "" {
+		return nil
+	}
+	for i := range c.Providers {
+		if c.Providers[i].HasModel(model) {
+			return &c.Providers[i]
+		}
+	}
+	return nil
 }
 
 // Normalize 同步 Model 与 Models 字段。
@@ -80,7 +97,8 @@ type Config struct {
 	Cwd               string                     `json:"cwd,omitempty"` // 工作目录；为空则取启动时目录
 	SessionDir        string                     `json:"session_dir,omitempty"`
 	SystemPromptExtra string                     `json:"system_prompt_extra,omitempty"`
-	Theme             string                     `json:"theme,omitempty"` // dark | light | system
+	Theme             string                     `json:"theme,omitempty"`           // dark | light | system
+	ThemeColor        string                     `json:"theme_color,omitempty"`     // 主题配色：zinc/violet/blue/emerald/amber/rose
 	MCPServers        map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
@@ -165,6 +183,11 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Theme != "light" && cfg.Theme != "system" {
 		cfg.Theme = "dark"
+	}
+	switch cfg.ThemeColor {
+	case "violet", "blue", "emerald", "amber", "rose":
+	default:
+		cfg.ThemeColor = "zinc"
 	}
 	for i := range cfg.Providers {
 		cfg.Providers[i].Normalize()

@@ -8,10 +8,11 @@
 - **网页版工作台**：`--web` 或 TUI 内 `/webui` 打开（127.0.0.1，SSE 流式）
   - 左侧「任务 / 项目」：任务即发出去的一条条对话；项目是本地文件夹，各自管理任务
   - 任务列表默认显示 5 条，更多折叠展开
-  - 设置：供应商与模型管理（URL / API Key / 多模型）、全局记忆、主题（深色/浅色/跟随系统）、技能与 MCP 状态
+  - 设置：供应商与模型管理（URL / API Key / 多模型 / 上下文窗口 / 最大输出 / 输入类型 / 推理等级）、全局记忆、主题模式与 6 套主题风格、技能与 MCP 状态
+  - 聊天底部可随时切换模型与 build/plan 模式，选择自动记住
   - 界面基于 [shadcn/ui](https://ui.shadcn.com/)，适配移动端（H5）
   - 任务与会话历史持久化在 `~/.local/share/omni/`
-  - 桌面版：Electron 壳，见 `webui/desktop`
+  - 桌面版：Electron 无边框窗口（自绘标题栏、原生文件夹选择），见 `webui/desktop`
 - **MCP 支持**：`mcp_servers` 配置 stdio / streamable HTTP 服务器，远端工具以 `mcp__服务器__工具` 注入
 - **技能（Skills）**：`SKILL.md` 定义技能，agent 自动调用，也可 `/技能名` 直接触发
 - **全局记忆**：跨会话长期记忆，agent 可通过 `memory` 工具自动沉淀，设置面板可编辑
@@ -59,21 +60,25 @@ export OLLAMA_MODEL=qwen2.5-coder
 
 ```json
 {
-  "provider": "gpt-4o",
+  "provider": "agnes-3.0-flash",
   "providers": [
     {
-      "name": "OpenAI 兼容",
+      "name": "agnes",
       "type": "openai",
-      "models": ["gpt-4o", "gpt-4o-mini"],
-      "base_url": "https://api.example.com/v1",
-      "env_key": "OPENAI_API_KEY",
+      "models": ["agnes-3.0-flash", "agnes-2.5-flash"],
+      "base_url": "https://api.agnes-ai.cn/v1",
+      "api_key": "sk-…",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "input_types": ["text", "image", "pdf"],
+      "reasoning": "default",
       "default": true
-    },
-    { "type": "ollama", "models": ["qwen2.5-coder"], "base_url": "http://localhost:11434/v1" }
+    }
   ],
   "max_tool_output": 4000,
   "bash_timeout_seconds": 10,
   "theme": "dark",
+  "theme_color": "zinc",
   "mcp_servers": {
     "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
     "fetch": { "url": "http://127.0.0.1:8931/mcp" }
@@ -81,7 +86,12 @@ export OLLAMA_MODEL=qwen2.5-coder
 }
 ```
 
-供应商也可以直接在网页版「设置 → 模型」中维护（名称 / 类型 / Base URL / API Key / 多模型）。
+- 供应商也可以直接在网页版「设置 → 模型」中维护（名称 / 类型 / Base URL / API Key / 多模型 / 上下文窗口 / 最大输出 / 输入类型 / 推理等级）；`max_output_tokens` 会作为该供应商模型的实际输出上限。
+- 聊天输入框右下角可随时切换模型，选择会写回配置文件。
+
+### 主题风格
+
+`theme_color` 提供 6 套配色：`zinc`（石墨）/ `violet`（紫罗兰）/ `blue`（海洋）/ `emerald`（翡翠）/ `amber`（琥珀）/ `rose`（玫瑰），配合 `theme`（dark/light/system）组合使用。
 
 ### MCP 服务器
 
@@ -175,6 +185,15 @@ cd webui/frontend
 npm install
 npm run build         # 产物输出到 internal/webui/dist，由 go:embed 打进二进制
 OMNI_URL=http://127.0.0.1:PORT npm run dev   # 调试：代理到正在运行的 omni
+```
+
+桌面版打包（webui/desktop，参照 opencode_desk 的 electron-builder 方案）：
+
+```sh
+go build -o webui/desktop/bin/omni.exe .   # 先编译内核
+cd webui/desktop
+npm install
+npm run dist        # 产出 NSIS 安装包（release/omni-Setup-x64.exe）
 ```
 
 ## 目录结构

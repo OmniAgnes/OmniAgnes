@@ -108,12 +108,16 @@ func main() {
 	if mode != agent.ModeBuild && mode != agent.ModePlan {
 		exitErr("未知 agent 模式: %s（可选 build / plan）", mode)
 	}
+	maxTokens := 8192
+	if p := cfg.ProviderForModel(model); p != nil && p.MaxOutputTokens > 0 {
+		maxTokens = p.MaxOutputTokens
+	}
 	a := agent.New(prov, reg, agent.Options{
 		Model:             model,
 		Mode:              mode,
 		Cwd:               absCwd,
 		MaxIterations:     32,
-		MaxTokens:         8192,
+		MaxTokens:         maxTokens,
 		SystemPromptExtra: cfg.SystemPromptExtra,
 		ExtraPrompt:       func() string { return ext.ExtraPrompt(absCwd) },
 	})

@@ -1,12 +1,13 @@
 // omni 桌面版：Electron 壳。
-// 启动时拉起 omni 二进制的 --web --no-open 服务，等待端口就绪后用 BrowserWindow 加载。
+// 无边框窗口（自绘标题栏）+ 拉起 omni --web --no-open 服务并加载。
 //
 // 用法：
-//   1) 先编译 omni 并放到 webui/desktop/bin/（omni.exe / omni），或设置 OMNI_BIN 指向二进制
-//   2) cd webui/desktop && npm install && npm start
+//   开发：先编译 omni 并放到 webui/desktop/bin/（omni.exe / omni），或设置 OMNI_BIN 指向二进制
+//        cd webui/desktop && npm install && npm start
+//   打包：npm run dist（NSIS 安装包，内核从 bin/ 经 extraResources 打进 resources/bin）
 //
 // 可选环境变量：OMNI_BIN（二进制完整路径）、OMNI_CWD（omni 工作目录，默认用户主目录）。
-const { app, BrowserWindow, Menu } = require("electron")
+const { app, BrowserWindow, Menu, dialog, ipcMain } = require("electron")
 const { spawn } = require("node:child_process")
 const { existsSync } = require("node:fs")
 const http = require("node:http")
@@ -18,6 +19,10 @@ let omni = null
 function resolveOmniBin() {
   if (process.env.OMNI_BIN) return process.env.OMNI_BIN
   const exe = process.platform === "win32" ? "omni.exe" : "omni"
+  if (app.isPackaged) {
+    // electron-builder extraResources：resources/bin/omni(.exe)
+    return path.join(process.resourcesPath, "bin", exe)
+  }
   const candidates = [
     path.join(__dirname, "bin", exe),
     path.join(__dirname, "..", "..", exe),
@@ -55,7 +60,7 @@ function waitFor(url, timeoutMs) {
 function startOmni() {
   const bin = resolveOmniBin()
   if (!bin) {
-    fail("找不到 omni 二进制。请先 go build -o omni.exe . 并复制到 webui/desktop/bin/，或设置 OMNI_BIN。")
+    fail("找不到 omni 内核。请先 go build -o webui/desktop/bin/omni.exe . （或设置 OMNI_BIN）。")
     return null
   }
   const cwd = process.env.OMNI_CWD || app.getPath("home")
@@ -76,6 +81,22 @@ function fail(msg) {
   dialog.showErrorBox("omni 桌面版", msg)
   app.quit()
 }
+
+// ---------- IPC：窗口控制与原生文件夹选择 ----------
+ipcMain.on("omni:win", (_e, action) => {
+  if (!win) return
+  if (action === "minimize") win.minimize()
+  else if (action === "maximize") {
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  } else if (action === "close") win.close()
+})
+
+ipcMain.handle("omni:pick-folder", async () => {
+  const opts = { properties: ["openDirectory", "createDirectory"] }
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+})
 
 async function createWindow() {
   omni = startOmni()
@@ -107,8 +128,13 @@ async function createWindow() {
     minHeight: 480,
     title: "omni",
     autoHideMenuBar: true,
+    frame: false, // 去原生标题栏，用自绘 Titlebar（跟随主题）
     backgroundColor: "#0a0a0a",
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   })
   Menu.setApplicationMenu(null)
   win.loadURL(url)

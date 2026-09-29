@@ -18,3 +18,7 @@ webui/desktop/node_modules/
 
 # ZCode 会话数据
 .zcode/
+
+# 桌面版打包产物与内核副本
+webui/desktop/bin/
+webui/desktop/release/

@@ -5,6 +5,7 @@ import {
   CheckCircle2Icon,
   CircleAlertIcon,
   CpuIcon,
+  ChevronRightIcon,
   PlusIcon,
   SunMoonIcon,
   Trash2Icon,
@@ -13,6 +14,11 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Dialog,
   DialogContent,
@@ -33,7 +39,7 @@ import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { MCPStatus, ProviderConfig, SkillInfo, StateInfo, Theme } from "@/types"
+import type { MCPStatus, ProviderConfig, SkillInfo, StateInfo, Theme, ThemeColor } from "@/types"
 
 const SECTIONS = [
   { id: "model", label: "模型", icon: CpuIcon },
@@ -51,6 +57,28 @@ const PROVIDER_TYPES = [
   { value: "ollama", label: "Ollama" },
 ] as const
 
+const THEME_COLORS = [
+  { id: "zinc", label: "石墨", light: "#18181b", dark: "#3f3f46" },
+  { id: "violet", label: "紫罗兰", light: "#7c5cff", dark: "#a78bfa" },
+  { id: "blue", label: "海洋", light: "#2f7cd6", dark: "#60a5fa" },
+  { id: "emerald", label: "翡翠", light: "#0e9f6e", dark: "#34d399" },
+  { id: "amber", label: "琥珀", light: "#d97706", dark: "#fbbf24" },
+  { id: "rose", label: "玫瑰", light: "#e11d48", dark: "#fb7185" },
+] as const satisfies ReadonlyArray<{ id: ThemeColor; label: string; light: string; dark: string }>
+
+const INPUT_TYPES = [
+  { value: "text", label: "文字" },
+  { value: "image", label: "图片" },
+  { value: "video", label: "视频" },
+  { value: "pdf", label: "PDF" },
+] as const
+
+const REASONING_LEVELS = [
+  { value: "default", label: "默认" },
+  { value: "off", label: "关闭" },
+  { value: "on", label: "开启" },
+] as const
+
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -63,6 +91,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [current, setCurrent] = useState(state?.model ?? "")
   const [theme, setTheme] = useState<Theme>(state?.theme ?? "dark")
+  const [themeColor, setThemeColor] = useState<ThemeColor>(state?.theme_color ?? "zinc")
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
   const [mcp, setMcp] = useState<MCPStatus[]>([])
@@ -77,6 +106,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
     api.settings().then((r) => {
       setTheme(r.theme)
       setCurrent(r.model)
+      if (r.theme_color) setThemeColor(r.theme_color)
     }).catch(() => {})
     api.memory().then((r) => setMemory(r.content)).catch(() => {})
     api.mcp().then((r) => setMcp(r.servers ?? [])).catch(() => {})
@@ -107,6 +137,12 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
     if (state) onStateChange({ ...state, theme: r.theme })
   }
 
+  const saveThemeColor = async (c: ThemeColor) => {
+    setThemeColor(c)
+    const r = await api.saveSettings({ theme_color: c })
+    if (state) onStateChange({ ...state, theme_color: r.theme_color })
+  }
+
   const saveMemory = async () => {
     await api.saveMemory(memory)
     setMemorySaved(true)
@@ -128,7 +164,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="grid-rows-[auto_minmax(0,1fr)] h-[85dvh] max-h-[720px] w-full gap-0 overflow-hidden p-0 sm:max-w-3xl md:h-[80vh]"
+        className="grid-rows-[auto_minmax(0,1fr)] h-[85dvh] max-h-[760px] w-full gap-0 overflow-hidden p-0 sm:max-w-4xl md:h-[82vh]"
         showCloseButton
       >
         <DialogHeader className="border-b px-5 py-4">
@@ -220,29 +256,54 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
               )}
 
               {section === "theme" && (
-                <div className="flex flex-col gap-3">
-                  <Label>外观</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(
-                      [
-                        { id: "dark", label: "深色" },
-                        { id: "light", label: "浅色" },
-                        { id: "system", label: "跟随系统" },
-                      ] as const
-                    ).map((t) => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => void saveTheme(t.id)}
-                        className={cn(
-                          "flex flex-col items-center gap-2 rounded-lg border p-3 text-sm cursor-pointer transition-colors",
-                          theme === t.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
-                        )}
-                      >
-                        <ThemePreview id={t.id} />
-                        {t.label}
-                      </button>
-                    ))}
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label>外观模式</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(
+                        [
+                          { id: "dark", label: "深色" },
+                          { id: "light", label: "浅色" },
+                          { id: "system", label: "跟随系统" },
+                        ] as const
+                      ).map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => void saveTheme(t.id)}
+                          className={cn(
+                            "flex flex-col items-center gap-2 rounded-lg border p-3 text-sm cursor-pointer transition-colors",
+                            theme === t.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
+                          )}
+                        >
+                          <ThemePreview id={t.id} />
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Label>主题风格</Label>
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                      {THEME_COLORS.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => void saveThemeColor(c.id)}
+                          className={cn(
+                            "flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-xs cursor-pointer transition-colors",
+                            themeColor === c.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
+                          )}
+                        >
+                          <span
+                            className="size-6 rounded-full border border-black/10 shadow-sm"
+                            style={{ background: `linear-gradient(135deg, ${c.light} 55%, ${c.dark} 55%)` }}
+                          />
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -453,6 +514,90 @@ function ProviderCard({
               className="min-w-32 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
           </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:col-span-2">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-muted-foreground text-xs">上下文窗口（token）</Label>
+            <Input
+              type="number"
+              min={0}
+              value={provider.context_window ?? ""}
+              onChange={(e) => onChange({ context_window: Number(e.target.value) || 0 })}
+              placeholder="如 128000"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-muted-foreground text-xs">最大输出（token）</Label>
+            <Input
+              type="number"
+              min={0}
+              value={provider.max_output_tokens ?? ""}
+              onChange={(e) => onChange({ max_output_tokens: Number(e.target.value) || 0 })}
+              placeholder="如 8192"
+            />
+          </div>
+        </div>
+
+        <div className="sm:col-span-2">
+          <Collapsible>
+            <CollapsibleTrigger className="text-muted-foreground group flex items-center gap-1 text-xs cursor-pointer hover:text-foreground">
+              <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
+              高级
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-3 flex flex-col gap-3 rounded-md bg-muted/40 p-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-muted-foreground text-xs">输入类型</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {INPUT_TYPES.map((t) => {
+                      const active = (provider.input_types ?? []).includes(t.value)
+                      return (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => {
+                            const cur = provider.input_types ?? []
+                            onChange({
+                              input_types: active
+                                ? cur.filter((x) => x !== t.value)
+                                : [...cur, t.value],
+                            })
+                          }}
+                          className={cn(
+                            "rounded-md border px-2.5 py-1 text-xs cursor-pointer transition-colors",
+                            active
+                              ? "bg-primary text-primary-foreground border-transparent"
+                              : "text-muted-foreground hover:bg-accent",
+                          )}
+                        >
+                          {t.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-muted-foreground text-xs">推理等级</Label>
+                  <Select
+                    value={provider.reasoning ?? "default"}
+                    onValueChange={(v) => onChange({ reasoning: v })}
+                  >
+                    <SelectTrigger size="sm" className="w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REASONING_LEVELS.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
       </div>
     </div>

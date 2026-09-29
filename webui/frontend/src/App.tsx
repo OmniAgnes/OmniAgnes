@@ -4,9 +4,12 @@ import { AddProjectDialog } from "@/components/AddProjectDialog"
 import { Chat, type ViewItem } from "@/components/Chat"
 import { Sidebar } from "@/components/Sidebar"
 import { SettingsDialog } from "@/components/SettingsDialog"
+import { Titlebar } from "@/components/Titlebar"
 import { Button } from "@/components/ui/button"
 import { api, streamChat } from "@/lib/api"
 import type { ChatEvent, Project, StateInfo, TaskFull, TaskMeta, Theme } from "@/types"
+
+const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
 export default function App() {
   const [state, setState] = useState<StateInfo | null>(null)
@@ -49,7 +52,7 @@ export default function App() {
     void refreshProjects()
   }, [refreshTasks, refreshProjects])
 
-  // 主题跟随设置
+  // 主题跟随设置（外观模式）
   useEffect(() => {
     const theme: Theme = state?.theme ?? "dark"
     const root = document.documentElement
@@ -64,6 +67,37 @@ export default function App() {
     apply(theme === "dark")
     return undefined
   }, [state?.theme])
+
+  useEffect(() => {
+    const color = state?.theme_color ?? "zinc"
+    const root = document.documentElement
+    for (const c of ["zinc", "violet", "blue", "emerald", "amber", "rose"]) {
+      root.classList.toggle(`theme-${c}`, c === color)
+    }
+  }, [state?.theme_color])
+
+  // 模型列表（聊天底部快速切换用）
+  const [models, setModels] = useState<string[]>([])
+  const refreshModels = useCallback(async () => {
+    try {
+      const r = await api.models()
+      setModels(r.models.map((m) => m.model))
+    } catch {
+      setModels([])
+    }
+  }, [])
+  useEffect(() => {
+    void refreshModels()
+  }, [refreshModels, state?.model])
+
+  const changeModel = async (m: string) => {
+    try {
+      const r = await api.saveSettings({ model: m })
+      if (state) setState({ ...state, model: r.model })
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const nextId = () => ++idRef.current
 
@@ -137,6 +171,18 @@ export default function App() {
     await api.deleteProject(id)
     await refreshProjects()
     await refreshTasks()
+  }
+
+  // 桌面端：直接弹原生文件夹选择
+  const addProjectNative = async () => {
+    const path = await window.omniDesktop?.pickFolder()
+    if (!path) return
+    try {
+      await api.addProject(path)
+      await refreshProjects()
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    }
   }
 
   const handleEvent = (ev: ChatEvent, taskId: string) => {
@@ -229,7 +275,7 @@ export default function App() {
       const ac = new AbortController()
       abortRef.current = ac
       try {
-        await streamChat(task.id, text, mode, (ev) => handleEvent(ev, task!.id), ac.signal)
+        await streamChat(task.id, text, mode, state?.model ?? "", (ev) => handleEvent(ev, task!.id), ac.signal)
       } catch (e) {
         if (!ac.signal.aborted) {
           const msg = e instanceof Error ? e.message : String(e)
@@ -284,35 +330,41 @@ export default function App() {
   )
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        state={state}
-        tasks={tasks}
-        projects={projects}
-        tasksByProject={tasksByProject}
-        activeTaskId={activeTask?.id ?? null}
-        activeProjectId={activeProjectId}
-        open={sidebarOpen}
-        onOpenTask={(id) => void openTask(id)}
-        onDeleteTask={(id) => void deleteTask(id)}
-        onNewTask={(projectId) => void newTask(projectId)}
-        onDeleteProject={(id) => void deleteProject(id)}
-        onAddProject={() => setAddProjectOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onClose={() => setSidebarOpen(false)}
-      />
-      <Chat
-        title={activeTask?.title || "新任务"}
-        subtitle={subtitle}
-        mode={mode}
-        items={items}
-        streaming={streaming}
-        emptyHint={emptyHint}
-        onSend={(text) => void send(text)}
-        onStop={stop}
-        onModeChange={setMode}
-        onOpenSidebar={() => setSidebarOpen(true)}
-      />
+    <div className="flex h-screen flex-col overflow-hidden">
+      {isDesktop && <Titlebar />}
+      <div className="flex min-h-0 flex-1">
+        <Sidebar
+          state={state}
+          tasks={tasks}
+          projects={projects}
+          tasksByProject={tasksByProject}
+          activeTaskId={activeTask?.id ?? null}
+          activeProjectId={activeProjectId}
+          open={sidebarOpen}
+          onOpenTask={(id) => void openTask(id)}
+          onDeleteTask={(id) => void deleteTask(id)}
+          onNewTask={(projectId) => void newTask(projectId)}
+          onDeleteProject={(id) => void deleteProject(id)}
+          onAddProject={() => (isDesktop ? void addProjectNative() : setAddProjectOpen(true))}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onClose={() => setSidebarOpen(false)}
+        />
+        <Chat
+          title={activeTask?.title || "新任务"}
+          subtitle={subtitle}
+          mode={mode}
+          items={items}
+          streaming={streaming}
+          models={models}
+          model={state?.model ?? ""}
+          emptyHint={emptyHint}
+          onSend={(text) => void send(text)}
+          onStop={stop}
+          onModeChange={setMode}
+          onModelChange={(m) => void changeModel(m)}
+          onOpenSidebar={() => setSidebarOpen(true)}
+        />
+      </div>
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

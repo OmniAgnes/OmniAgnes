@@ -116,6 +116,81 @@
   }
 }
 
+/* ---- 主题配色（只覆盖主色/焦点色，中性底色保持不变） ---- */
+.theme-violet {
+  --primary: oklch(0.52 0.22 293);
+  --ring: oklch(0.6 0.2 293);
+  --sidebar-primary: oklch(0.52 0.22 293);
+}
+.dark.theme-violet {
+  --primary: oklch(0.72 0.17 293);
+  --primary-foreground: oklch(0.16 0.03 293);
+  --ring: oklch(0.65 0.16 293);
+  --sidebar-primary: oklch(0.72 0.17 293);
+}
+.theme-blue {
+  --primary: oklch(0.54 0.19 255);
+  --ring: oklch(0.6 0.17 255);
+  --sidebar-primary: oklch(0.54 0.19 255);
+}
+.dark.theme-blue {
+  --primary: oklch(0.7 0.15 255);
+  --primary-foreground: oklch(0.15 0.03 255);
+  --ring: oklch(0.62 0.14 255);
+  --sidebar-primary: oklch(0.7 0.15 255);
+}
+.theme-emerald {
+  --primary: oklch(0.52 0.13 160);
+  --ring: oklch(0.58 0.12 160);
+  --sidebar-primary: oklch(0.52 0.13 160);
+}
+.dark.theme-emerald {
+  --primary: oklch(0.74 0.14 162);
+  --primary-foreground: oklch(0.15 0.03 162);
+  --ring: oklch(0.65 0.13 162);
+  --sidebar-primary: oklch(0.74 0.14 162);
+}
+.theme-amber {
+  --primary: oklch(0.66 0.15 68);
+  --ring: oklch(0.7 0.14 68);
+  --sidebar-primary: oklch(0.66 0.15 68);
+}
+.dark.theme-amber {
+  --primary: oklch(0.8 0.13 75);
+  --primary-foreground: oklch(0.2 0.04 75);
+  --ring: oklch(0.72 0.13 75);
+  --sidebar-primary: oklch(0.8 0.13 75);
+}
+.theme-rose {
+  --primary: oklch(0.56 0.2 17);
+  --ring: oklch(0.62 0.18 17);
+  --sidebar-primary: oklch(0.56 0.2 17);
+}
+.dark.theme-rose {
+  --primary: oklch(0.7 0.17 17);
+  --primary-foreground: oklch(0.16 0.03 17);
+  --ring: oklch(0.63 0.15 17);
+  --sidebar-primary: oklch(0.7 0.17 17);
+}
+
+/* 流式输出光标 */
+.stream-cursor::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.15em;
+  vertical-align: text-bottom;
+  background: var(--primary);
+  border-radius: 1px;
+  animation: stream-blink 1s steps(2, start) infinite;
+}
+@keyframes stream-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
 /* ---- Markdown 输出（助手消息） ---- */
 .md-output > :first-child {
   margin-top: 0;

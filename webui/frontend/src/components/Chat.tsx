@@ -19,6 +19,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
@@ -45,10 +46,13 @@ interface ChatProps {
   mode: "build" | "plan"
   items: ViewItem[]
   streaming: boolean
+  models: string[]
+  model: string
   emptyHint?: React.ReactNode
   onSend: (text: string) => void
   onStop: () => void
   onModeChange: (mode: "build" | "plan") => void
+  onModelChange: (model: string) => void
   onOpenSidebar: () => void
 }
 
@@ -58,10 +62,13 @@ export function Chat({
   mode,
   items,
   streaming,
+  models,
+  model,
   emptyHint,
   onSend,
   onStop,
   onModeChange,
+  onModelChange,
   onOpenSidebar,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -111,7 +118,7 @@ export function Chat({
       <ScrollArea className="flex-1">
         <div className="mx-auto flex max-w-3xl flex-col gap-6 px-3 py-6 md:px-6">
           {items.length === 0 && emptyHint}
-          {items.map((item) =>
+          {items.map((item, i) =>
             item.role === "user" ? (
               <div key={item.id} className="flex justify-end">
                 <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap">
@@ -120,7 +127,11 @@ export function Chat({
               </div>
             ) : (
               <div key={item.id} className="flex flex-col gap-2">
-                {item.text && <Markdown text={item.text} />}
+                {item.text && (
+                  <div className={cn(i === items.length - 1 && streaming && "stream-cursor")}>
+                    <Markdown text={item.text} />
+                  </div>
+                )}
                 {item.tools.map((t) => (
                   <ToolCallCard key={t.id} run={t} />
                 ))}
@@ -136,13 +147,13 @@ export function Chat({
         </div>
       </ScrollArea>
 
-      {/* 输入区 */}
-      <div className="border-t px-3 py-3 md:px-6 md:py-4">
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
+      {/* 输入区：无边框分隔，卡片式输入容器 */}
+      <div className="px-3 pb-3 md:px-6 md:pb-4">
+        <div className="bg-card mx-auto max-w-3xl rounded-2xl border p-2 shadow-xs">
           <Textarea
             ref={inputRef}
             placeholder="输入任务…（/技能名 可直接触发技能）"
-            className="max-h-40 min-h-11"
+            className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-0"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -150,15 +161,55 @@ export function Chat({
               }
             }}
           />
-          {streaming ? (
-            <Button variant="secondary" onClick={onStop} title="中断生成">
-              <SquareIcon /> 中断
-            </Button>
-          ) : (
-            <Button onClick={submit} title="发送">
-              <SendHorizontalIcon /> 发送
-            </Button>
-          )}
+          <div className="flex items-center justify-between gap-2 px-1 pt-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div className="bg-muted/60 flex items-center gap-0.5 rounded-md p-0.5">
+                {(["build", "plan"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={streaming}
+                    onClick={() => onModeChange(m)}
+                    className={cn(
+                      "rounded-[5px] px-2.5 py-1 text-xs cursor-pointer disabled:opacity-50",
+                      mode === m
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {m === "build" ? "构建" : "规划"}
+                  </button>
+                ))}
+              </div>
+              {models.length > 0 && (
+                <Select value={model || undefined} onValueChange={onModelChange}>
+                  <SelectTrigger
+                    size="sm"
+                    title="切换模型"
+                    className="bg-muted/60 max-w-32 shrink-0 gap-1 border-0 shadow-none sm:max-w-48"
+                  >
+                    <SelectValue placeholder="模型" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {streaming ? (
+              <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title="中断生成">
+                <SquareIcon />
+              </Button>
+            ) : (
+              <Button size="icon" className="rounded-full" onClick={submit} title="发送">
+                <SendHorizontalIcon />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

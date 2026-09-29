@@ -271,6 +271,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		TaskID string `json:"task_id"`
 		Text   string `json:"text"`
 		Mode   string `json:"mode"`
+		Model  string `json:"model"`
 	}](r)
 	if err != nil || strings.TrimSpace(req.Text) == "" {
 		writeErr(w, `请求体需为 {"task_id": "...", "text": "..."}`, http.StatusBadRequest)
@@ -294,6 +295,11 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == "plan" || req.Mode == "build" {
 		a.SetMode(agent.Mode(req.Mode))
 		t.Mode = req.Mode
+	}
+	// 每轮使用界面记住的模型（设置里已持久化）
+	if req.Model != "" && s.cfg.ProviderForModel(req.Model) != nil {
+		a.SetModel(req.Model)
+		t.Model = req.Model
 	}
 	if t.Title == "" || t.Title == "未命名任务" {
 		t.Title = store.TitleFromText(req.Text)
@@ -342,18 +348,20 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"model": s.cfg.Provider,
-		"theme": s.cfg.Theme,
+		"model":       s.cfg.Provider,
+		"theme":       s.cfg.Theme,
+		"theme_color": s.cfg.ThemeColor,
 	})
 }
 
 func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 	req, err := decode[struct {
-		Model string `json:"model"`
-		Theme string `json:"theme"`
+		Model      string `json:"model"`
+		Theme      string `json:"theme"`
+		ThemeColor string `json:"theme_color"`
 	}](r)
 	if err != nil {
-		writeErr(w, "请求体需为 {\"model\":..., \"theme\":...}", http.StatusBadRequest)
+		writeErr(w, `请求体需为 {"model":..., "theme":..., "theme_color":...}`, http.StatusBadRequest)
 		return
 	}
 	changed := false
@@ -380,13 +388,22 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Theme = req.Theme
 		changed = true
 	}
+	switch req.ThemeColor {
+	case "":
+	case "zinc", "violet", "blue", "emerald", "amber", "rose":
+		s.cfg.ThemeColor = req.ThemeColor
+		changed = true
+	default:
+		writeErr(w, "未知主题配色: "+req.ThemeColor, http.StatusBadRequest)
+		return
+	}
 	if changed {
 		if err := s.cfg.Save(s.opts.ConfigPath); err != nil {
 			writeErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"model": s.cfg.Provider, "theme": s.cfg.Theme})
+	writeJSON(w, map[string]any{"model": s.cfg.Provider, "theme": s.cfg.Theme, "theme_color": s.cfg.ThemeColor})
 }
 
 func (s *server) handleMemoryGet(w http.ResponseWriter, r *http.Request) {
@@ -480,13 +497,18 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 	if modelName == "" {
 		modelName = t.Model
 	}
+	// 最大输出 token 取供应商配置，缺省 8192
+	maxTokens := 8192
+	if p := s.cfg.ProviderForModel(modelName); p != nil && p.MaxOutputTokens > 0 {
+		maxTokens = p.MaxOutputTokens
+	}
 	reg := s.newRegistry(cwd)
 	a := agent.New(prov, reg, agent.Options{
 		Model:             modelName,
 		Mode:              mode,
 		Cwd:               cwd,
 		MaxIterations:     32,
-		MaxTokens:         8192,
+		MaxTokens:         maxTokens,
 		SystemPromptExtra: s.cfg.SystemPromptExtra,
 		ExtraPrompt: func() string {
 			return s.opts.Extras.ExtraPrompt(cwd)

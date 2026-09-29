@@ -2,12 +2,15 @@
   "name": "omni-desktop",
   "private": true,
   "version": "0.2.0",
-  "description": "omni 桌面版：Electron 壳 + omni --web",
+  "description": "omni 桌面版：Electron 壳 + omni --web 内核",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "check:bin": "node check-bin.mjs",
+    "dist": "npm run check:bin && electron-builder --win --publish never"
   },
   "devDependencies": {
-    "electron": "^38.0.0"
+    "electron": "^38.0.0",
+    "electron-builder": "^26.15.3"
   }
 }

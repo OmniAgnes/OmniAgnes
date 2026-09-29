@@ -9,6 +9,7 @@ import type {
   TaskFull,
   TaskMeta,
   Theme,
+  ThemeColor,
 } from "@/types"
 
 async function json<T>(res: Response): Promise<T> {
@@ -75,14 +76,15 @@ export const api = {
 
   deleteTask: (id: string) => fetch(`/api/tasks/${id}`, { method: "DELETE" }),
 
-  settings: () => fetch("/api/settings").then((r) => json<{ model: string; theme: Theme }>(r)),
+  settings: () =>
+    fetch("/api/settings").then((r) => json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r)),
 
-  saveSettings: (payload: { model?: string; theme?: Theme }) =>
+  saveSettings: (payload: { model?: string; theme?: Theme; theme_color?: ThemeColor }) =>
     fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).then((r) => json<{ model: string; theme: Theme }>(r)),
+    }).then((r) => json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r)),
 
   memory: () =>
     fetch("/api/memory").then((r) => json<{ path: string; content: string }>(r)),
@@ -104,13 +106,14 @@ export async function streamChat(
   taskId: string,
   text: string,
   mode: string,
+  model: string,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, text, mode }),
+    body: JSON.stringify({ task_id: taskId, text, mode, model }),
     signal,
   })
   if (!res.ok || !res.body) {

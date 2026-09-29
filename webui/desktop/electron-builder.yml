@@ -1,0 +1,28 @@
+# omni 桌面版打包说明
+# - 参照 opencode_desk 的方案：NSIS 安装包 + extraResources 携带 omni 内核二进制
+# - 版本号唯一来源是 package.json，不要在这里重复声明
+#
+# ⚠️ publish: null 是必需的：electron-builder 会从 package.json 的 repository 推断
+#    provider=github 并在生成 app-update.yml 时强取 GH_TOKEN 报错，--publish never
+#    拦不住该步骤；只有显式 null 才能短路（opencode_desk 2026-09-22 实测结论）。
+publish: null
+directories:
+  output: release
+files:
+  - main.js
+  - preload.js
+  - package.json
+extraResources:
+  # omni 内核二进制（主进程打包态从 resources/bin 读取）；
+  # 打包前先在仓库根目录执行 go build -o webui/desktop/bin/omni.exe .
+  - from: bin
+    to: bin
+win:
+  # 不指定 icon 时使用 Electron 默认图标；有图标后放入 build/icon.ico 即可生效
+  target:
+    - nsis
+  artifactName: omni-Setup-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always

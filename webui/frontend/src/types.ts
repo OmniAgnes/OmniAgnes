@@ -70,6 +70,8 @@ export interface BrowseResult {
 
 export type Theme = "dark" | "light" | "system"
 
+export type ThemeColor = "zinc" | "violet" | "blue" | "emerald" | "amber" | "rose"
+
 export interface ProviderConfig {
   name?: string
   type: string
@@ -79,11 +81,16 @@ export interface ProviderConfig {
   api_key?: string
   env_key?: string
   default?: boolean
+  context_window?: number
+  max_output_tokens?: number
+  input_types?: string[]
+  reasoning?: string
 }
 
 export interface StateInfo {
   model: string
   theme: Theme
+  theme_color?: ThemeColor
   configured: boolean
   version: string
   start_cwd: string

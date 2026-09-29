@@ -55,7 +55,9 @@ export function Sidebar(props: SidebarProps) {
       )}
       <aside
         className={cn(
-          "bg-sidebar text-sidebar-foreground fixed inset-y-0 left-0 z-40 flex h-full w-72 shrink-0 flex-col border-r transition-transform duration-200 md:static md:translate-x-0",
+          "bg-sidebar text-sidebar-foreground fixed left-0 bottom-0 z-40 flex h-full w-72 shrink-0 flex-col border-r transition-transform duration-200 md:static md:translate-x-0",
+          // 桌面端顶部让出自绘标题栏的高度
+          window.omniDesktop ? "top-9" : "top-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
