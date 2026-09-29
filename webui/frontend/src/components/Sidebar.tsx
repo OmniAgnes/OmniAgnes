@@ -14,13 +14,12 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { Project, StateInfo, TaskMeta } from "@/types"
+import type { Project, TaskMeta } from "@/types"
 
 /** 文件夹下任务每页条数（点「更多」再加载这么多） */
 const PAGE = 5
 
 interface SidebarProps {
-  state: StateInfo | null
   tasks: TaskMeta[]
   projects: Project[]
   tasksByProject: Record<string, TaskMeta[]>
@@ -33,12 +32,13 @@ interface SidebarProps {
   onOpenProject: (p: Project) => void
   onAddProject: () => void
   onOpenSettings: () => void
+  /** 点「任务」TAB：有任务选中最近一条，没任务则新建 */
+  onFocusTasksTab: () => void
   onClose: () => void
 }
 
 export function Sidebar(props: SidebarProps) {
   const {
-    state,
     tasks,
     projects,
     tasksByProject,
@@ -51,6 +51,7 @@ export function Sidebar(props: SidebarProps) {
     onOpenProject,
     onAddProject,
     onOpenSettings,
+    onFocusTasksTab,
     onClose,
   } = props
 
@@ -94,10 +95,7 @@ export function Sidebar(props: SidebarProps) {
         {/* 顶栏：桌面端由自绘标题栏承担品牌展示，不再重复 */}
         {!window.omniDesktop && (
           <div className="flex items-center justify-between px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-semibold">omni</span>
-              <span className="text-muted-foreground text-xs">{state?.version}</span>
-            </div>
+            <span className="text-base font-semibold tracking-tight">Omi</span>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onClose} title="收起">
               <XIcon />
             </Button>
@@ -122,7 +120,11 @@ export function Sidebar(props: SidebarProps) {
             <button
               key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                setTab(t.id)
+                // 点「任务」TAB 时：有任务就跳到最近的一条，没有就直接新建一个
+                if (t.id === "tasks") onFocusTasksTab()
+              }}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1.5 text-sm cursor-pointer transition-colors",
                 tab === t.id
@@ -350,7 +352,7 @@ function ProjectGroup(props: {
             className="text-muted-foreground hover:text-foreground h-6 justify-start px-2 text-xs"
             onClick={() => setLimit((n) => n + PAGE)}
           >
-            更多（还有 {rest} 条）
+            更多
           </Button>
         )}
       </div>

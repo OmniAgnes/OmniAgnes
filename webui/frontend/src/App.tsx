@@ -11,6 +11,12 @@ import type { ChatEvent, Project, StateInfo, TaskFull, TaskMeta, Theme } from "@
 
 const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
+/** 模型按供应商分组：一级 = 供应商名，二级 = 模型名 */
+interface ModelGroup {
+  provider: string
+  models: string[]
+}
+
 export default function App() {
   const [state, setState] = useState<StateInfo | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
@@ -25,6 +31,10 @@ export default function App() {
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loadErr, setLoadErr] = useState("")
+  // 递增即让右侧输入框聚焦（新建任务、打开任务、点「任务」TAB）
+  const [focusSignal, setFocusSignal] = useState(0)
+
+  const focusInput = useCallback(() => setFocusSignal((n) => n + 1), [])
 
   const abortRef = useRef<AbortController | null>(null)
   const idRef = useRef(0)
@@ -82,14 +92,26 @@ export default function App() {
     }
   }, [state?.theme_color])
 
-  // 模型列表（聊天底部快速切换用）
-  const [models, setModels] = useState<string[]>([])
+  // 模型列表：按供应商分组（一级 = 供应商名，二级 = 模型名），聊天底部二级联动选择
+  const [modelGroups, setModelGroups] = useState<ModelGroup[]>([])
   const refreshModels = useCallback(async () => {
     try {
       const r = await api.models()
-      setModels(r.models.map((m) => m.model))
+      const groups: ModelGroup[] = []
+      const byName = new Map<string, ModelGroup>()
+      for (const m of r.models) {
+        const provider = m.provider || "其他"
+        let g = byName.get(provider)
+        if (!g) {
+          g = { provider, models: [] }
+          byName.set(provider, g)
+          groups.push(g)
+        }
+        g.models.push(m.model)
+      }
+      setModelGroups(groups)
     } catch {
-      setModels([])
+      setModelGroups([])
     }
   }, [])
   useEffect(() => {
@@ -150,6 +172,7 @@ export default function App() {
       setActiveTask(r.task)
       setMode(r.task.mode === "plan" ? "plan" : "build")
       setItems(buildItems(r.task))
+      focusInput()
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
     }
@@ -165,9 +188,18 @@ export default function App() {
       setMode("build")
       roundBaseRef.current = 0
       lastRoundRef.current = -1
+      focusInput()
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  // 点「任务」TAB：已有任务就选中最近的一条，没有则直接新建
+  // tasks 已由后端按 UpdatedAt 降序返回，第一条即最近；这里直接过滤避免依赖后面定义的变量
+  const focusTasksTab = async () => {
+    const list = tasks.filter((t) => !t.project_id)
+    if (list.length > 0) await openTask(list[0].id)
+    else await newTask()
   }
 
   const deleteTask = async (id: string) => {
@@ -354,6 +386,8 @@ export default function App() {
       setItems((prev) => [...prev, userItem, asstItem])
       setStreaming(true)
       setThinking(true)
+      // 立即把焦点还给输入框，方便连续提问
+      focusInput()
       const ac = new AbortController()
       abortRef.current = ac
       const baseAtSend = roundBaseRef.current
@@ -437,7 +471,6 @@ export default function App() {
       {isDesktop && <Titlebar />}
       <div className="flex min-h-0 flex-1">
         <Sidebar
-          state={state}
           tasks={standaloneTasks}
           projects={projects}
           tasksByProject={tasksByProject}
@@ -450,6 +483,7 @@ export default function App() {
           onOpenProject={(p) => void openProject(p)}
           onAddProject={() => (isDesktop ? void addProjectNative() : setAddProjectOpen(true))}
           onOpenSettings={() => setSettingsOpen(true)}
+          onFocusTasksTab={() => void focusTasksTab()}
           onClose={() => setSidebarOpen(false)}
         />
         <Chat
@@ -458,15 +492,19 @@ export default function App() {
           items={items}
           streaming={streaming}
           thinking={thinking}
-          models={models}
+          models={modelGroups}
           model={state?.model ?? ""}
+          focusSignal={focusSignal}
           emptyHint={emptyHint}
           onSend={(text) => void send(text)}
           onStop={stop}
           onApprove={(id, allow) => void approve(id, allow)}
           onModeChange={setMode}
           onModelChange={(m) => void changeModel(m)}
-          onOpenSidebar={() => setSidebarOpen(true)}
+          onOpenSidebar={() => {
+            setSidebarOpen(true)
+            focusInput()
+          }}
         />
       </div>
       <SettingsDialog

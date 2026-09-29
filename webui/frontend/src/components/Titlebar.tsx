@@ -1,7 +1,5 @@
 import { MinusIcon, SquareIcon, XIcon } from "lucide-react"
 
-import logoUrl from "@/assets/logo.svg"
-
 // 自绘标题栏（仅桌面端渲染）：跟随主题。
 // 不画底边框，整体分左右两块，背景色分别与下方的侧边栏 / 对话区对齐。
 export function Titlebar() {
@@ -11,9 +9,8 @@ export function Titlebar() {
   return (
     <div className="flex h-9 shrink-0 select-none" style={drag}>
       {/* 左块：对应下方侧边栏（宽度与 border-r 与侧边栏一致） */}
-      <div className="bg-sidebar hidden w-72 shrink-0 items-center gap-2 border-r pl-3 md:flex">
-        <img src={logoUrl} alt="omni" className="size-4 rounded-[4px]" draggable={false} />
-        <span className="text-sm font-semibold">omni</span>
+      <div className="bg-sidebar hidden w-72 shrink-0 items-center border-r pl-3 md:flex">
+        <span className="text-base font-semibold tracking-tight">Omi</span>
       </div>
       {/* 右块：对应下方对话区 */}
       <div className="bg-background flex min-w-0 flex-1 items-center justify-end">
