@@ -19,7 +19,7 @@
 - 标题栏：自绘 Titlebar 无底边框，左右两块背景分别对齐下方侧边栏（bg-sidebar w-72 border-r）与对话区（bg-background）。
 - 对话头部只显示任务标题，**不显示模型名/目录路径**；模型选择只放在输入框右下角（发送按钮左边）。
 - 打开文件夹 API：`POST /api/projects/{id}/open`（explorer 在 Windows 成功也返回非 0，用 Start 不等待）。
-- 文件夹下任务**全部展开**，不再有「更多（N 条）」折叠。
+- 文件夹下任务**分页显示**：初始 5 条，底部「更多（还有 N 条）」按钮每次再加 5 条，加完按钮消失（`const PAGE = 5` + `useState` + `slice(0, limit)`）。
 - 「任务」TAB 只放**无 project_id 的默认任务**；项目内任务只在对应文件夹下出现。
 
 ## 滚动容器约定（重要，别再用 Radix ScrollArea）
@@ -39,8 +39,10 @@
   `waitApproval` 3 分钟超时视为拒绝。
 - 前端确认 UI 在 `ToolCallView` 里（琥珀色卡片 + 拒绝/允许按钮），挂在最近一张 running 工具卡上。
 
-## 工具卡片展示约定（不露 JSON）
+## 工具卡片展示约定（不露 JSON、不要边框）
 - 组件 `components/ToolCallView.tsx`：`META` 表把 read/write/edit/bash/grep/glob 映射成图标 + 中文标签（读取/写入/编辑/bash/搜索/查找）+ 一句话摘要。
+- **折叠行不要 border、不要常驻背景色**（用户明确要求「就是普通的」），只在 hover 时给 `bg-muted/50`；展开详情用 `bg-muted/40 rounded-md` 独立块区分，不靠 `border-t`。
+- 行内元素顺序：`工具图标 → 名称 → 摘要 → 状态图标(对号/叉/转圈，ml-auto) → 展开箭头`。状态图标靠右贴箭头，不要放最左。
 - 展开详情按工具定制：edit → `lib/diff.ts` 的 LCS 行级 diff（+绿/-红 + 增删计数）；write → 内容代码块；bash → 命令代码块；read/grep → 路径/参数；MCP 等未知工具 → 键值列表（不吐 JSON）。
 - 禁止在 UI 里直接 `JSON.stringify(args)` 给用户看。
 

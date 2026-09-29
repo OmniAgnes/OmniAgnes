@@ -123,20 +123,11 @@ export function ToolCallView({
   return (
     <Collapsible
       className={cn(
-        "overflow-hidden rounded-lg border",
-        waiting ? "border-amber-500/60 bg-amber-500/5" : "border-border/70 bg-muted/30",
+        "overflow-hidden rounded-lg",
+        waiting && "bg-amber-500/5 ring-1 ring-amber-500/50",
       )}
     >
-      <CollapsibleTrigger className="group hover:bg-muted/60 flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors cursor-pointer">
-        {run.running ? (
-          <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
-        ) : run.denied ? (
-          <CircleSlashIcon className="text-muted-foreground size-3.5 shrink-0" />
-        ) : run.isError ? (
-          <CircleXIcon className="text-destructive size-3.5 shrink-0" />
-        ) : (
-          <CircleCheckIcon className="text-muted-foreground size-3.5 shrink-0" />
-        )}
+      <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer">
         <Icon className="text-muted-foreground size-3.5 shrink-0" />
         <span className="font-medium">{meta.label}</span>
         {summary && (
@@ -144,13 +135,23 @@ export function ToolCallView({
             {run.name === "read" || run.name === "edit" || run.name === "write" ? fileName(summary) : summary}
           </span>
         )}
-        <ChevronRightIcon className="text-muted-foreground ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+        {/* 状态图标靠右，展开箭头在最右 */}
+        {run.running ? (
+          <Loader2Icon className="text-muted-foreground ml-auto size-3.5 shrink-0 animate-spin" />
+        ) : run.denied ? (
+          <CircleSlashIcon className="text-muted-foreground ml-auto size-3.5 shrink-0" />
+        ) : run.isError ? (
+          <CircleXIcon className="text-destructive ml-auto size-3.5 shrink-0" />
+        ) : (
+          <CircleCheckIcon className="text-muted-foreground ml-auto size-3.5 shrink-0" />
+        )}
+        <ChevronRightIcon className="text-muted-foreground size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
       </CollapsibleTrigger>
 
       {/* 普通访问模式：确认条 */}
       {run.approvalId != null &&
         (waiting ? (
-          <div className="flex items-center gap-2 border-t border-amber-500/30 bg-amber-500/8 px-3 py-2">
+          <div className="flex items-center gap-2 px-2.5 pb-1.5">
             <span className="text-amber-700 dark:text-amber-400 text-xs">需要你的确认</span>
             <div className="ml-auto flex gap-1.5">
               <Button
@@ -171,12 +172,12 @@ export function ToolCallView({
             </div>
           </div>
         ) : (
-          <div className="text-muted-foreground border-t px-3 py-1.5 text-[11px]">
+          <div className="text-muted-foreground px-2.5 pb-1.5 text-[11px]">
             {run.approvalChoice ? "你允许了该操作" : "你拒绝了这个操作"}
           </div>
         ))}
 
-      <CollapsibleContent className="border-border/60 border-t">
+      <CollapsibleContent>
         <ToolDetail name={run.name} args={args} output={run.output} isError={run.isError} denied={run.denied} />
       </CollapsibleContent>
     </Collapsible>
@@ -197,7 +198,7 @@ function ToolDetail({
   denied?: boolean
 }) {
   return (
-    <div className="flex flex-col gap-2 px-3 py-2 text-xs">
+    <div className="bg-muted/40 mx-1.5 mb-1.5 flex flex-col gap-2 rounded-md p-2 text-xs">
       {name === "edit" && <EditDiff args={args} />}
 
       {name === "write" && str(args.content) !== "" && (

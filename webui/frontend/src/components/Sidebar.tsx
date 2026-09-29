@@ -16,6 +16,9 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Project, StateInfo, TaskMeta } from "@/types"
 
+/** 文件夹下任务每页条数（点「更多」再加载这么多） */
+const PAGE = 5
+
 interface SidebarProps {
   state: StateInfo | null
   tasks: TaskMeta[]
@@ -280,6 +283,10 @@ function ProjectGroup(props: {
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const { project, tasks, activeTaskId, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
+  // 任务多时先显示 5 条，点「更多」每次再加载 5 条
+  const [limit, setLimit] = useState(PAGE)
+  const shown = tasks.slice(0, limit)
+  const rest = tasks.length - shown.length
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -303,7 +310,7 @@ function ProjectGroup(props: {
         </div>
       </div>
       <div className="border-sidebar-border ml-6 flex flex-col gap-0.5 border-l pl-2">
-        {tasks.map((t) => (
+        {shown.map((t) => (
           <div
             key={t.id}
             className={cn(
@@ -335,6 +342,16 @@ function ProjectGroup(props: {
           </div>
         ))}
         {tasks.length === 0 && <div className="text-muted-foreground px-2 py-1 text-xs">暂无任务</div>}
+        {rest > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground hover:text-foreground h-6 justify-start px-2 text-xs"
+            onClick={() => setLimit((n) => n + PAGE)}
+          >
+            更多（还有 {rest} 条）
+          </Button>
+        )}
       </div>
     </div>
   )
