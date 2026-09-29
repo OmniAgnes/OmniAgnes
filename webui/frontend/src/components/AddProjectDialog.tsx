@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { api } from "@/lib/api"
 import type { BrowseResult } from "@/types"
 
@@ -89,7 +88,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
                   <ArrowUpIcon className="size-3.5" /> 上一级
                 </Button>
               </div>
-              <ScrollArea className="h-48 rounded-md border">
+              <div className="omni-scroll h-48 overflow-y-auto rounded-md border">
                 <div className="flex flex-col p-1">
                   {browse.entries.map((e) => (
                     <button
@@ -108,7 +107,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
                     <div className="text-muted-foreground px-2 py-3 text-xs">没有子文件夹</div>
                   )}
                 </div>
-              </ScrollArea>
+              </div>
               <Button variant="secondary" size="sm" onClick={() => void add(browse.path)}>
                 把当前目录（{browse.path}）添加为项目
               </Button>

@@ -155,3 +155,119 @@ func Summary(skills []*Skill) string {
 	}
 	return b.String()
 }
+
+// ---------- 技能增删改（供 webui 设置界面使用） ----------
+
+// DirFor 返回技能所在目录：source=global 用全局目录；source=project 用 <projectDir>/.omni/skills。
+func (st *Store) DirFor(source, projectDir string) (string, error) {
+	switch source {
+	case "", "global":
+		if st.GlobalDir == "" {
+			return "", fmt.Errorf("全局技能目录未配置")
+		}
+		return st.GlobalDir, nil
+	case "project":
+		if projectDir == "" {
+			return "", fmt.Errorf("未指定项目目录")
+		}
+		return filepath.Join(projectDir, ".omni", "skills"), nil
+	default:
+		return "", fmt.Errorf("未知技能来源: %s", source)
+	}
+}
+
+// validName 校验技能名（同时用作目录名，禁止路径穿越与非法字符）。
+func validName(name string) error {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if name == "" {
+		return fmt.Errorf("技能名不能为空")
+	}
+	if name == "." || name == ".." || len(name) > 64 {
+		return fmt.Errorf("非法技能名: %q", name)
+	}
+	if strings.ContainsAny(name, `/\:*?"<>|`) {
+		return fmt.Errorf("技能名不能包含路径或非法字符: %q", name)
+	}
+	return nil
+}
+
+// Read 读取技能原始 SKILL.md 文本。
+func Read(dir, name string) (string, error) {
+	if err := validName(name); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, strings.TrimPrefix(name, "/"), "SKILL.md"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("技能不存在: %s", name)
+		}
+		return "", err
+	}
+	return string(data), nil
+}
+
+// render 组装带 frontmatter 的 SKILL.md 内容。
+func render(name, description, body string) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "name: %s\n", name)
+	fmt.Fprintf(&b, "description: %s\n", strings.ReplaceAll(strings.TrimSpace(description), "\n", " "))
+	b.WriteString("---\n\n")
+	b.WriteString(strings.TrimSpace(body))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// Create 在 dir 下新建技能（<dir>/<name>/SKILL.md），同名已存在时报错。
+func Create(dir, name, description, body string) (*Skill, error) {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if err := validName(name); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(description) == "" {
+		return nil, fmt.Errorf("技能描述不能为空")
+	}
+	path := filepath.Join(dir, name, "SKILL.md")
+	if _, err := os.Stat(path); err == nil {
+		return nil, fmt.Errorf("技能已存在: %s", name)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, []byte(render(name, description, body)), 0o644); err != nil {
+		return nil, err
+	}
+	return &Skill{Name: name, Description: strings.TrimSpace(description), Path: path, Source: "custom"}, nil
+}
+
+// Update 覆盖技能内容（技能名与目录保持不变）。
+func Update(dir, name, description, body string) error {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if err := validName(name); err != nil {
+		return err
+	}
+	if strings.TrimSpace(description) == "" {
+		return fmt.Errorf("技能描述不能为空")
+	}
+	path := filepath.Join(dir, name, "SKILL.md")
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("技能不存在: %s", name)
+		}
+		return err
+	}
+	return os.WriteFile(path, []byte(render(name, description, body)), 0o644)
+}
+
+// Delete 删除技能目录（含其下所有文件）。
+func Delete(dir, name string) error {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if err := validName(name); err != nil {
+		return err
+	}
+	target := filepath.Join(dir, name)
+	if st, err := os.Stat(target); err != nil || !st.IsDir() {
+		return fmt.Errorf("技能不存在: %s", name)
+	}
+	return os.RemoveAll(target)
+}

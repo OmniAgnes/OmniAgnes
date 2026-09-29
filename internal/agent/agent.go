@@ -13,8 +13,10 @@ import (
 type Mode string
 
 const (
+	// ModeBuild 完全访问：直接执行写文件、跑命令等操作。
 	ModeBuild Mode = "build"
-	ModePlan  Mode = "plan"
+	// ModePlan 普通访问：写文件、跑命令前需用户逐条确认。
+	ModePlan Mode = "plan"
 )
 
 // EventType 是 Agent 向 UI 发出的事件类型。
@@ -25,6 +27,7 @@ const (
 	EventToolStart  EventType = "tool_start" // 工具开始执行
 	EventToolOutput EventType = "tool_output"
 	EventToolEnd    EventType = "tool_end"
+	EventApproval   EventType = "approval" // 普通访问模式：等待用户确认写操作
 	EventError      EventType = "error"
 	EventDone       EventType = "done" // 本轮问答结束
 )
@@ -53,6 +56,10 @@ type Options struct {
 	ExtraPrompt func() string
 	// History 是初始消息历史（恢复持久化会话用）；为空则从空白开始。
 	History []llm.Message
+	// Approve 在普通访问（ModePlan）模式下于写操作前被调用，
+	// 返回 true 允许执行，false 拒绝。nil 表示不询问（完全访问）。
+	// callID 为本次工具调用 ID，便于 UI 把确认卡片与工具卡片对应起来。
+	Approve func(callID, name string, args map[string]any) bool
 }
 
 // Agent 持有一个 LLM provider、工具注册表与消息历史。
@@ -68,6 +75,7 @@ type Agent struct {
 	maxToken int
 	extra    string
 	extraPrompt func() string
+	approve  func(callID, name string, args map[string]any) bool
 	history  []llm.Message
 	lastTurnStart int
 }
@@ -90,6 +98,7 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		maxToken:      opts.MaxTokens,
 		extra:         opts.SystemPromptExtra,
 		extraPrompt:   opts.ExtraPrompt,
+		approve:       opts.Approve,
 		history:       opts.History,
 		lastTurnStart: -1,
 	}
@@ -110,6 +119,9 @@ func (a *Agent) Mode() Mode { return a.mode }
 // SetMode 切换模式。
 func (a *Agent) SetMode(m Mode) { a.mode = m }
 
+// SetApprove 设置普通访问模式下的写操作审批回调（webui 每轮聊天时注入）。
+func (a *Agent) SetApprove(fn func(callID, name string, args map[string]any) bool) { a.approve = fn }
+
 // Model 返回当前模型名。
 func (a *Agent) Model() string { return a.model }
 
@@ -128,9 +140,9 @@ func (a *Agent) ClearHistory() {
 
 // BuildSystemPrompt 组装系统提示词。
 func (a *Agent) BuildSystemPrompt() string {
-	modeDesc := "build：可以修改文件、执行命令并完成实际编码任务"
+	modeDesc := "完全访问：可以直接修改文件、执行命令并完成实际编码任务"
 	if a.mode == ModePlan {
-		modeDesc = "plan：只读模式，仅允许搜索和读取文件，禁止修改文件或执行非只读命令"
+		modeDesc = "普通访问：可以读取和分析文件；任何写文件、执行命令的操作前都会先征得用户确认，被拒绝时请改用其他方案"
 	}
 	p := fmt.Sprintf(`你是 omni，一个运行在终端里的 AI 编码智能体，风格类似 opencode。
 当前工作目录: %s
@@ -155,8 +167,10 @@ Agent 模式: %s
 }
 
 // toolDefs 按模式返回工具定义。
+// 普通访问模式（ModePlan）下若配置了审批回调，仍下发全部工具，
+// 由 Execute 在执行前逐条询问；否则退化为只读工具。
 func (a *Agent) toolDefs() []llm.ToolDef {
-	if a.mode == ModePlan {
+	if a.mode == ModePlan && a.approve == nil {
 		return a.tools.ReadOnlyDefinitions()
 	}
 	return a.tools.Definitions()
@@ -249,8 +263,26 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			emit(Event{Type: EventToolStart, Tool: &tc})
-			out, terr := a.tools.Execute(ctx, tc.Name, tc.Args, a.mode == ModePlan)
+			// 普通访问模式：先推卡片再问用户，UI 可在原位显示「允许/拒绝」
+			if a.mode == ModePlan && a.approve != nil && !a.tools.IsReadOnly(tc.Name) {
+				emit(Event{Type: EventToolStart, Tool: &tc})
+				emit(Event{Type: EventApproval, Tool: &tc})
+				if !a.approve(tc.ID, tc.Name, tc.Args) {
+					msg := "用户拒绝了该操作，未执行。请换一种方案或先向用户说明。"
+					emit(Event{Type: EventToolOutput, Tool: &tc, Output: msg, IsError: true})
+					emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true})
+					a.history = append(a.history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolResult: &llm.ToolResult{CallID: tc.ID, Content: msg, IsError: true},
+					})
+					continue
+				}
+			} else {
+				emit(Event{Type: EventToolStart, Tool: &tc})
+			}
+			// 无审批回调的普通访问模式退化为强制只读
+			forceRO := a.mode == ModePlan && a.approve == nil
+			out, terr := a.tools.Execute(ctx, tc.Name, tc.Args, forceRO)
 			if terr != nil {
 				emit(Event{Type: EventToolOutput, Tool: &tc, Output: "错误: " + terr.Error(), IsError: true})
 				emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true})

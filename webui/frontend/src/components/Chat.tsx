@@ -1,35 +1,27 @@
 import { useEffect, useRef } from "react"
 import {
   AlertCircleIcon,
-  ChevronRightIcon,
-  CircleCheckIcon,
-  CircleXIcon,
   Loader2Icon,
   MenuIcon,
   SendHorizontalIcon,
   SquareIcon,
-  WrenchIcon,
 } from "lucide-react"
 
 import { Markdown } from "@/components/Markdown"
+import { ToolCallView, type ToolRun } from "@/components/ToolCallView"
 import { Button } from "@/components/ui/button"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
-export interface ToolRun {
+export type { ToolRun } from "@/components/ToolCallView"
+
+/** 一次待确认的写操作 */
+export interface PendingApproval {
   id: string
+  callId: string
   name: string
   args: string
-  output: string
-  isError: boolean
-  running: boolean
 }
 
 export interface ViewItem {
@@ -42,15 +34,17 @@ export interface ViewItem {
 
 interface ChatProps {
   title: string
-  subtitle: string
   mode: "build" | "plan"
   items: ViewItem[]
   streaming: boolean
+  /** 收到用户消息后、模型首个 token 前的「思考中」状态 */
+  thinking: boolean
   models: string[]
   model: string
   emptyHint?: React.ReactNode
   onSend: (text: string) => void
   onStop: () => void
+  onApprove: (id: string, allow: boolean) => void
   onModeChange: (mode: "build" | "plan") => void
   onModelChange: (model: string) => void
   onOpenSidebar: () => void
@@ -58,25 +52,47 @@ interface ChatProps {
 
 export function Chat({
   title,
-  subtitle,
   mode,
   items,
   streaming,
+  thinking,
   models,
   model,
   emptyHint,
   onSend,
   onStop,
+  onApprove,
   onModeChange,
   onModelChange,
   onOpenSidebar,
 }: ChatProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // 用户手动上滚后不再强行拉回底部，直到重新滚到底
+  const stickRef = useRef(true)
+
+  // 记录是否贴近底部：贴底才自动跟随新内容
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
+  // 滚到底（切任务、首次渲染）时立刻归位
+  const jumpToBottom = () => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [items])
+    jumpToBottom()
+  }, [])
+
+  useEffect(() => {
+    if (!stickRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [items, thinking])
 
   const submit = () => {
     const text = inputRef.current?.value.trim()
@@ -85,21 +101,24 @@ export function Chat({
     onSend(text)
   }
 
+  // 最后一条助手消息是否还完全空白（用于决定是否显示思考动画）
+  const last = items[items.length - 1]
+  const showThinking = thinking && (!last || last.role !== "assistant" || (!last.text && last.tools.length === 0))
+
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col">
-      {/* 头部 */}
-      <div className="flex items-center gap-2 border-b px-3 py-3 md:px-6">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+      {/* 头部：只显示任务标题 */}
+      <div className="flex items-center gap-2 px-3 py-3 md:px-6">
         <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onOpenSidebar} title="菜单">
           <MenuIcon />
         </Button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{title}</div>
-          <div className="text-muted-foreground truncate text-xs">{subtitle}</div>
         </div>
       </div>
 
-      {/* 消息流 */}
-      <ScrollArea className="flex-1">
+      {/* 消息流：原生滚动容器（min-h-0 保证在 flex 里能收缩） */}
+      <div ref={scrollRef} onScroll={onScroll} className="omni-scroll min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-3xl flex-col gap-6 px-3 py-6 md:px-6">
           {items.length === 0 && emptyHint}
           {items.map((item, i) =>
@@ -117,7 +136,7 @@ export function Chat({
                   </div>
                 )}
                 {item.tools.map((t) => (
-                  <ToolCallCard key={t.id} run={t} />
+                  <ToolCallView key={t.id} run={t} onApprove={onApprove} />
                 ))}
                 {item.error && (
                   <div className="text-destructive flex items-center gap-2 text-sm">
@@ -127,11 +146,11 @@ export function Chat({
               </div>
             ),
           )}
-          <div ref={bottomRef} />
+          {showThinking && <ThinkingIndicator />}
         </div>
-      </ScrollArea>
+      </div>
 
-      {/* 输入区：无边框分隔，卡片式输入容器 */}
+      {/* 输入区：左=访问模式，右=模型选择 + 发送 */}
       <div className="px-3 pb-3 md:px-6 md:pb-4">
         <div className="bg-card mx-auto max-w-3xl rounded-2xl border p-2 shadow-xs">
           <Textarea
@@ -146,12 +165,12 @@ export function Chat({
             }}
           />
           <div className="flex items-center justify-between gap-2 px-1 pt-1">
-            <div className="flex min-w-0 items-center gap-1.5">
+            {/* 左：访问模式 */}
             <div className="bg-muted/60 flex items-center gap-0.5 rounded-md p-0.5">
               {(
                 [
-                  { id: "build", label: "可写", tip: "构建模式：可修改文件、执行命令" },
-                  { id: "plan", label: "只读", tip: "规划模式：仅读取和分析，不做任何修改" },
+                  { id: "build", label: "完全访问", tip: "完全访问：可直接修改文件、执行命令" },
+                  { id: "plan", label: "普通访问", tip: "普通访问：写文件、执行命令前会先询问你" },
                 ] as const
               ).map((m) => (
                 <button
@@ -171,12 +190,15 @@ export function Chat({
                 </button>
               ))}
             </div>
+
+            {/* 右：模型选择 + 发送/中断 */}
+            <div className="flex shrink-0 items-center gap-1.5">
               {models.length > 0 && (
                 <Select value={model || undefined} onValueChange={onModelChange}>
                   <SelectTrigger
                     size="sm"
                     title="切换模型"
-                    className="bg-muted/60 max-w-32 shrink-0 gap-1 border-0 shadow-none sm:max-w-48"
+                    className="bg-muted/60 max-w-28 shrink-0 gap-1 border-0 shadow-none sm:max-w-44"
                   >
                     <SelectValue placeholder="模型" />
                   </SelectTrigger>
@@ -189,16 +211,16 @@ export function Chat({
                   </SelectContent>
                 </Select>
               )}
+              {streaming ? (
+                <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title="中断生成">
+                  <SquareIcon />
+                </Button>
+              ) : (
+                <Button size="icon" className="rounded-full" onClick={submit} title="发送">
+                  <SendHorizontalIcon />
+                </Button>
+              )}
             </div>
-            {streaming ? (
-              <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title="中断生成">
-                <SquareIcon />
-              </Button>
-            ) : (
-              <Button size="icon" className="rounded-full" onClick={submit} title="发送">
-                <SendHorizontalIcon />
-              </Button>
-            )}
           </div>
         </div>
       </div>
@@ -206,29 +228,12 @@ export function Chat({
   )
 }
 
-function ToolCallCard({ run }: { run: ToolRun }) {
+/** 模型首个 token 前的「思考中」动画 */
+function ThinkingIndicator() {
   return (
-    <Collapsible className="border-bg-border rounded-lg border bg-muted/40">
-      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left text-xs cursor-pointer">
-        {run.running ? (
-          <Loader2Icon className="text-muted-foreground size-3.5 animate-spin" />
-        ) : run.isError ? (
-          <CircleXIcon className="text-destructive size-3.5" />
-        ) : (
-          <CircleCheckIcon className="text-muted-foreground size-3.5" />
-        )}
-        <WrenchIcon className="text-muted-foreground size-3.5" />
-        <span className="truncate font-medium">{run.name}</span>
-        <ChevronRightIcon className="text-muted-foreground ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="flex flex-col gap-2 border-t px-3 py-2 font-mono text-xs">
-          {run.args && run.args !== "{}" && (
-            <pre className="text-muted-foreground overflow-x-auto whitespace-pre-wrap">{run.args}</pre>
-          )}
-          {run.output && <pre className="overflow-x-auto whitespace-pre-wrap">{run.output}</pre>}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+    <div className="text-muted-foreground flex items-center gap-2 text-sm">
+      <Loader2Icon className="size-3.5 animate-spin" />
+      <span>思考中…</span>
+    </div>
   )
 }

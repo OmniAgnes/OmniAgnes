@@ -19,6 +19,8 @@ export default function App() {
   const [items, setItems] = useState<ViewItem[]>([])
   const [mode, setMode] = useState<"build" | "plan">("build")
   const [streaming, setStreaming] = useState(false)
+  // 已发出请求但模型还没吐出首个 token：显示「思考中」动画
+  const [thinking, setThinking] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -201,6 +203,7 @@ export default function App() {
         setMode(ev.mode === "plan" ? "plan" : "build")
         break
       case "text":
+        setThinking(false)
         setItems((prev) => {
           const next = [...prev]
           const cur = next[next.length - 1]
@@ -209,6 +212,7 @@ export default function App() {
         })
         break
       case "tool_start":
+        setThinking(false)
         setItems((prev) => {
           const next = [...prev]
           let cur = next[next.length - 1]
@@ -251,6 +255,37 @@ export default function App() {
           return next
         })
         break
+      case "approval_pending":
+        // 工具卡片已出现，这里只清掉思考动画
+        setThinking(false)
+        break
+      case "approval":
+        // 普通访问模式：把待确认请求挂到最近一张运行中的工具卡片上
+        setItems((prev) => {
+          const next = [...prev]
+          const cur = next[next.length - 1]
+          const run = cur?.tools.filter((t) => t.running).at(-1)
+          if (run) {
+            run.approvalId = ev.id
+            run.approvalChoice = null
+          }
+          return next
+        })
+        break
+      case "approval_result":
+        setItems((prev) => {
+          const next = [...prev]
+          for (const it of next) {
+            for (const run of it.tools) {
+              if (run.approvalId === ev.id) {
+                run.approvalChoice = ev.allowed
+                run.denied = !ev.allowed
+              }
+            }
+          }
+          return next
+        })
+        break
       case "error":
         setItems((prev) => {
           const next = [...prev]
@@ -281,6 +316,7 @@ export default function App() {
       const asstItem: ViewItem = { id: nextId(), role: "assistant", text: "", tools: [] }
       setItems((prev) => [...prev, userItem, asstItem])
       setStreaming(true)
+      setThinking(true)
       const ac = new AbortController()
       abortRef.current = ac
       try {
@@ -297,28 +333,48 @@ export default function App() {
         }
       } finally {
         setStreaming(false)
+        setThinking(false)
         abortRef.current = null
         await refreshTasks()
       }
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
       setStreaming(false)
+      setThinking(false)
     }
   }
 
   const stop = () => {
     abortRef.current?.abort()
     setStreaming(false)
+    setThinking(false)
   }
 
+  // 答复一次写操作确认（普通访问模式）
+  const approve = async (id: string, allow: boolean) => {
+    setItems((prev) => {
+      const next = [...prev]
+      for (const it of next) {
+        for (const run of it.tools) {
+          if (run.approvalId === id) run.approvalChoice = allow
+        }
+      }
+      return next
+    })
+    try {
+      await api.approval(id, allow)
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // 项目内任务归到项目下；无项目归属的任务才进「任务」TAB
   const tasksByProject: Record<string, TaskMeta[]> = {}
   for (const t of tasks) {
     if (!t.project_id) continue
     ;(tasksByProject[t.project_id] ??= []).push(t)
   }
-
-  // 对话头部只展示模型名，不显示目录路径
-  const subtitle = state?.model || "未配置"
+  const standaloneTasks = tasks.filter((t) => !t.project_id)
 
   const emptyHint = (
     <div className="text-muted-foreground flex flex-col items-center gap-3 py-24 text-center">
@@ -342,11 +398,10 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         <Sidebar
           state={state}
-          tasks={tasks}
+          tasks={standaloneTasks}
           projects={projects}
           tasksByProject={tasksByProject}
           activeTaskId={activeTask?.id ?? null}
-          activeProjectId={activeProjectId}
           open={sidebarOpen}
           onOpenTask={(id) => void openTask(id)}
           onDeleteTask={(id) => void deleteTask(id)}
@@ -359,15 +414,16 @@ export default function App() {
         />
         <Chat
           title={activeTask?.title || "新任务"}
-          subtitle={subtitle}
           mode={mode}
           items={items}
           streaming={streaming}
+          thinking={thinking}
           models={models}
           model={state?.model ?? ""}
           emptyHint={emptyHint}
           onSend={(text) => void send(text)}
           onStop={stop}
+          onApprove={(id, allow) => void approve(id, allow)}
           onModeChange={setMode}
           onModelChange={(m) => void changeModel(m)}
           onOpenSidebar={() => setSidebarOpen(true)}

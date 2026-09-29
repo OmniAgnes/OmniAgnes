@@ -11,12 +11,14 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"omni/internal/agent"
 	"omni/internal/config"
 	"omni/internal/extras"
 	"omni/internal/llm"
 	"omni/internal/store"
+	"omni/internal/tools"
 )
 
 //go:embed all:dist
@@ -59,6 +61,8 @@ func Start(opts Options) (string, error) {
 		cfg:    cfg,
 		store:  store.New(config.DefaultDataDir()),
 		agents: map[string]*agent.Agent{},
+		regs:   map[string]*tools.Registry{},
+		approvals: map[string]*approvalReq{},
 	}
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
@@ -98,12 +102,19 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleTaskGet)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleTaskDelete)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("POST /api/approvals/{id}", s.handleApproval)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsSet)
 	mux.HandleFunc("GET /api/memory", s.handleMemoryGet)
 	mux.HandleFunc("PUT /api/memory", s.handleMemorySet)
 	mux.HandleFunc("GET /api/mcp", s.handleMCP)
+	mux.HandleFunc("GET /api/mcp/config", s.handleMCPConfigGet)
+	mux.HandleFunc("PUT /api/mcp/config", s.handleMCPConfigPut)
 	mux.HandleFunc("GET /api/skills", s.handleSkills)
+	mux.HandleFunc("GET /api/skills/{name}", s.handleSkillGet)
+	mux.HandleFunc("POST /api/skills", s.handleSkillCreate)
+	mux.HandleFunc("PUT /api/skills/{name}", s.handleSkillUpdate)
+	mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillDelete)
 	return mux
 }
 
@@ -114,8 +125,22 @@ type server struct {
 	store  *store.Store
 	mu     sync.Mutex
 	agents map[string]*agent.Agent
+	// regs 与 agents 一一对应：MCP 配置变更后据此把新工具重新注册进各任务。
+	regs map[string]*tools.Registry
+	// approvals 保存等待用户确认的写操作（普通访问模式）。
+	approvals map[string]*approvalReq
+	// approvalSeq 生成审批请求 ID。
+	approvalSeq atomic.Int64
 	// provider 非空时优先使用（测试注入口），否则按 cfg 解析。
 	provider llm.Provider
+}
+
+// approvalReq 是一次待用户确认的工具调用。
+type approvalReq struct {
+	id   string
+	name string
+	args map[string]any
+	ch   chan bool
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

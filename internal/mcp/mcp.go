@@ -188,6 +188,14 @@ func (m *Manager) Close() {
 	}
 }
 
+// Reset 关闭全部会话并清空状态（配置变更后重新连接前调用）。
+func (m *Manager) Reset() {
+	m.Close()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.statuses = map[string]*Status{}
+}
+
 func (m *Manager) status(name string) *Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()

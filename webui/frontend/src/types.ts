@@ -56,6 +56,22 @@ export interface SkillInfo {
   source: string
 }
 
+// 技能详情（含 SKILL.md 原文，供编辑）
+export interface SkillDetail {
+  name: string
+  description: string
+  content: string
+  path: string
+}
+
+export interface MCPServerConfig {
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  disabled?: boolean
+}
+
 export interface BrowseEntry {
   name: string
   path: string
@@ -103,5 +119,8 @@ export type ChatEvent =
   | { type: "tool_start"; name: string; args: string }
   | { type: "tool_output"; name: string; output: string; is_error: boolean }
   | { type: "tool_end"; name: string; is_error: boolean }
+  | { type: "approval_pending"; name: string }
+  | { type: "approval"; id: string; call_id: string; name: string; args: string }
+  | { type: "approval_result"; id: string; call_id: string; allowed: boolean }
   | { type: "error"; error: string }
   | { type: "done"; model?: string }

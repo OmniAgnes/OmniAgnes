@@ -13,11 +13,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import type { Project, StateInfo, TaskMeta } from "@/types"
-
-const VISIBLE = 5
 
 interface SidebarProps {
   state: StateInfo | null
@@ -25,7 +22,6 @@ interface SidebarProps {
   projects: Project[]
   tasksByProject: Record<string, TaskMeta[]>
   activeTaskId: string | null
-  activeProjectId: string | null
   open: boolean
   onOpenTask: (id: string) => void
   onDeleteTask: (id: string) => void
@@ -44,7 +40,6 @@ export function Sidebar(props: SidebarProps) {
     projects,
     tasksByProject,
     activeTaskId,
-    activeProjectId,
     open,
     onOpenTask,
     onDeleteTask,
@@ -87,7 +82,7 @@ export function Sidebar(props: SidebarProps) {
       )}
       <aside
         className={cn(
-          "bg-sidebar text-sidebar-foreground fixed left-0 bottom-0 z-40 flex h-full w-72 shrink-0 flex-col border-r transition-transform duration-200 md:static md:translate-x-0",
+          "bg-sidebar text-sidebar-foreground fixed left-0 bottom-0 z-40 flex h-full min-h-0 w-72 shrink-0 flex-col border-r transition-transform duration-200 md:static md:translate-x-0",
           // 桌面端顶部让出自绘标题栏的高度
           window.omniDesktop ? "top-9" : "top-0",
           open ? "translate-x-0" : "-translate-x-full",
@@ -138,11 +133,12 @@ export function Sidebar(props: SidebarProps) {
           ))}
         </div>
 
-        <ScrollArea className="flex-1">
+        {/* 列表：原生滚动容器（min-h-0 保证在 flex 里能收缩） */}
+        <div className="omni-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="flex flex-col gap-1 px-3 pb-6">
             {tab === "tasks" ? (
               <>
-                <SectionTitle>全部任务（最近优先）</SectionTitle>
+                <SectionTitle>默认任务（最近优先）</SectionTitle>
                 <TaskList
                   tasks={tasks}
                   activeTaskId={activeTaskId}
@@ -173,12 +169,12 @@ export function Sidebar(props: SidebarProps) {
                     project={p}
                     tasks={tasksByProject[p.id] ?? []}
                     activeTaskId={activeTaskId}
-                    active={activeProjectId === p.id}
                     onOpenTask={(id) => {
                       onOpenTask(id)
                       onClose()
                     }}
                     onNewTask={() => onNewTask(p.id)}
+                    onDeleteTask={onDeleteTask}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       // 视口边缘时向内收，避免菜单被截断
@@ -191,7 +187,7 @@ export function Sidebar(props: SidebarProps) {
               </>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* 底部：设置入口 */}
         <div className="flex items-center justify-end border-t px-3 py-1.5">
@@ -278,23 +274,17 @@ function ProjectGroup(props: {
   project: Project
   tasks: TaskMeta[]
   activeTaskId: string | null
-  active: boolean
   onOpenTask: (id: string) => void
   onNewTask: () => void
+  onDeleteTask: (id: string) => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
-  const { project, tasks, activeTaskId, active, onOpenTask, onNewTask, onContextMenu } = props
-  const [expanded, setExpanded] = useState(false)
-  const shown = expanded ? tasks : tasks.slice(0, VISIBLE)
-  const hidden = tasks.length - VISIBLE
+  const { project, tasks, activeTaskId, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
 
   return (
     <div className="flex flex-col gap-0.5">
       <div
-        className={cn(
-          "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1.5",
-          active && "bg-sidebar-accent",
-        )}
+        className="group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1.5"
         onContextMenu={onContextMenu}
       >
         <button
@@ -302,11 +292,7 @@ function ProjectGroup(props: {
           className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm cursor-pointer"
           title={project.path}
         >
-          {active ? (
-            <FolderOpenIcon className="text-muted-foreground size-4 shrink-0" />
-          ) : (
-            <FolderIcon className="text-muted-foreground size-4 shrink-0" />
-          )}
+          <FolderIcon className="text-muted-foreground size-4 shrink-0" />
           <span className="truncate">{project.name}</span>
         </button>
         {/* 悬停只显示「新建任务」添加图标；打开/移除走右键菜单 */}
@@ -317,30 +303,38 @@ function ProjectGroup(props: {
         </div>
       </div>
       <div className="border-sidebar-border ml-6 flex flex-col gap-0.5 border-l pl-2">
-        {shown.map((t) => (
-          <button
+        {tasks.map((t) => (
+          <div
             key={t.id}
-            type="button"
-            onClick={() => onOpenTask(t.id)}
             className={cn(
-              "hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-left text-xs cursor-pointer",
+              "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-xs",
               activeTaskId === t.id && "bg-sidebar-accent",
             )}
           >
-            <span className="truncate">{t.title}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => onOpenTask(t.id)}
+              className="min-w-0 flex-1 truncate text-left cursor-pointer"
+              title={t.title}
+            >
+              {t.title}
+            </button>
+            {/* 悬停显示删除按钮 */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteTask(t.id)
+              }}
+              title="删除任务"
+            >
+              <Trash2Icon />
+            </Button>
+          </div>
         ))}
         {tasks.length === 0 && <div className="text-muted-foreground px-2 py-1 text-xs">暂无任务</div>}
-        {hidden > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground h-6 justify-start px-2 text-xs"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? "收起" : `更多（${hidden} 条）`}
-          </Button>
-        )}
       </div>
     </div>
   )

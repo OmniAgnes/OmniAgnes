@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -49,14 +49,14 @@ export function TaskList({ tasks, activeTaskId, onOpen, onDelete, emptyText }: T
           <Button
             variant="ghost"
             size="icon-sm"
-            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
             onClick={(e) => {
               e.stopPropagation()
               onDelete(t.id, t.title)
             }}
             title="删除任务"
           >
-            ×
+            <XIcon />
           </Button>
         </div>
       ))}

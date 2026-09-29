@@ -2,8 +2,10 @@ import type {
   BrowseResult,
   ChatEvent,
   MCPStatus,
+  MCPServerConfig,
   Project,
   ProviderConfig,
+  SkillDetail,
   SkillInfo,
   StateInfo,
   TaskFull,
@@ -101,7 +103,49 @@ export const api = {
 
   mcp: () => fetch("/api/mcp").then((r) => json<{ servers: MCPStatus[] }>(r)),
 
+  mcpConfig: () =>
+    fetch("/api/mcp/config").then((r) =>
+      json<{ servers: Record<string, MCPServerConfig> }>(r),
+    ),
+
+  saveMcpConfig: (servers: Record<string, MCPServerConfig>) =>
+    fetch("/api/mcp/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ servers }),
+    }).then((r) => json<{ servers: Record<string, MCPServerConfig> }>(r)),
+
   skills: () => fetch("/api/skills").then((r) => json<{ skills: SkillInfo[] }>(r)),
+
+  skill: (name: string, source = "global") =>
+    fetch(`/api/skills/${encodeURIComponent(name)}?source=${source}`).then((r) =>
+      json<{ skill: SkillDetail }>(r),
+    ),
+
+  createSkill: (payload: { name: string; description: string; content: string }) =>
+    fetch("/api/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then((r) => json<{ skill: SkillInfo }>(r)),
+
+  updateSkill: (name: string, payload: { description: string; content: string }) =>
+    fetch(`/api/skills/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then((r) => json<{ ok: boolean }>(r)),
+
+  deleteSkill: (name: string, source = "global") =>
+    fetch(`/api/skills/${encodeURIComponent(name)}?source=${source}`, { method: "DELETE" }),
+
+  /** 答复一次写操作确认（普通访问模式） */
+  approval: (id: string, allow: boolean) =>
+    fetch(`/api/approvals/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ allow }),
+    }).then((r) => json<{ ok: boolean }>(r)),
 }
 
 // streamChat 发起 SSE 聊天；onEvent 收到每条事件，返回时流已结束。abort 信号可中断。

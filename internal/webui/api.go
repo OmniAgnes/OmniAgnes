@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,7 +16,9 @@ import (
 	"omni/internal/agent"
 	"omni/internal/config"
 	"omni/internal/llm"
+	"omni/internal/mcp"
 	"omni/internal/memory"
+	"omni/internal/skills"
 	"omni/internal/store"
 	"omni/internal/tools"
 )
@@ -289,6 +292,7 @@ func (s *server) handleTaskDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	delete(s.agents, id)
+	delete(s.regs, id)
 	s.mu.Unlock()
 	writeJSON(w, map[string]any{"ok": true})
 }
@@ -350,6 +354,12 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	send(map[string]any{"type": "start", "task_id": t.ID, "title": t.Title, "mode": string(a.Mode())})
 
+	// 普通访问模式：写操作通过 SSE 推给前端确认，这里阻塞等待用户答复。
+	a.SetApprove(func(callID, name string, args map[string]any) bool {
+		return s.waitApproval(r.Context(), send, callID, name, args)
+	})
+	defer a.SetApprove(nil)
+
 	// 不用 Run（失败即回滚）：webui 保留失败轮次已产生的内容（至少保留提问），便于回溯
 	rollback := a.Prepare(text)
 	_ = rollback
@@ -363,6 +373,8 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 			send(map[string]any{"type": "tool_output", "name": ev.Tool.Name, "output": ev.Output, "is_error": ev.IsError})
 		case agent.EventToolEnd:
 			send(map[string]any{"type": "tool_end", "name": ev.Tool.Name, "is_error": ev.IsError})
+		case agent.EventApproval:
+			send(map[string]any{"type": "approval_pending", "name": ev.Tool.Name})
 		case agent.EventError:
 			send(map[string]any{"type": "error", "error": ev.Err.Error()})
 		case agent.EventDone:
@@ -484,6 +496,187 @@ func (s *server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"servers": statuses})
 }
 
+// skillDir 按 source（global|project）与 project_dir 解析技能目录。
+func (s *server) skillDir(r *http.Request, source string) (string, string, error) {
+	if s.opts.Extras == nil || s.opts.Extras.Skills == nil {
+		return "", "", fmt.Errorf("技能功能不可用")
+	}
+	projectDir := r.URL.Query().Get("project_dir")
+	if projectDir == "" {
+		projectDir = s.opts.StartCwd
+	}
+	dir, err := s.opts.Extras.Skills.DirFor(source, projectDir)
+	if err != nil {
+		return "", "", err
+	}
+	return dir, projectDir, nil
+}
+
+// handleSkillGet 返回技能原始 SKILL.md 内容，供编辑。
+func (s *server) handleSkillGet(w http.ResponseWriter, r *http.Request) {
+	dir, projectDir, err := s.skillDir(r, r.URL.Query().Get("source"))
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimPrefix(r.PathValue("name"), "/")
+	content, err := skills.Read(dir, name)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	desc := ""
+	if sk, ok := s.opts.Extras.Skills.Lookup(projectDir, name); ok {
+		desc = sk.Description
+	}
+	writeJSON(w, map[string]any{"skill": map[string]any{
+		"name":        name,
+		"description": desc,
+		"content":     content,
+		"path":        filepath.Join(dir, name, "SKILL.md"),
+	}})
+}
+
+// handleSkillCreate 新建技能。
+func (s *server) handleSkillCreate(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+		Source      string `json:"source"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"name":..., "description":..., "content":...}`, http.StatusBadRequest)
+		return
+	}
+	dir, _, err := s.skillDir(r, req.Source)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sk, err := skills.Create(dir, req.Name, req.Description, req.Content)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"skill": sk})
+}
+
+// handleSkillUpdate 覆盖技能描述与正文（技能名与目录不变）。
+func (s *server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Description string `json:"description"`
+		Content     string `json:"content"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"description":..., "content":...}`, http.StatusBadRequest)
+		return
+	}
+	dir, _, err := s.skillDir(r, r.URL.Query().Get("source"))
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimPrefix(r.PathValue("name"), "/")
+	if err := skills.Update(dir, name, req.Description, req.Content); err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleSkillDelete 删除技能目录及其文件。
+func (s *server) handleSkillDelete(w http.ResponseWriter, r *http.Request) {
+	dir, _, err := s.skillDir(r, r.URL.Query().Get("source"))
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimPrefix(r.PathValue("name"), "/")
+	if err := skills.Delete(dir, name); err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleMCPConfigGet 返回 MCP 服务器的原始配置（供设置界面编辑）。
+func (s *server) handleMCPConfigGet(w http.ResponseWriter, r *http.Request) {
+	servers := s.cfg.MCPServers
+	if servers == nil {
+		servers = map[string]config.MCPServerConfig{}
+	}
+	writeJSON(w, map[string]any{"servers": servers})
+}
+
+// handleMCPConfigPut 整体替换 MCP 服务器配置并重连。
+func (s *server) handleMCPConfigPut(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Servers map[string]config.MCPServerConfig `json:"servers"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"servers": {...}}`, http.StatusBadRequest)
+		return
+	}
+	servers := map[string]config.MCPServerConfig{}
+	for name, cfg := range req.Servers {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			writeErr(w, "MCP 服务器名称不能为空", http.StatusBadRequest)
+			return
+		}
+		cfg.Command = strings.TrimSpace(cfg.Command)
+		cfg.URL = strings.TrimSpace(cfg.URL)
+		if cfg.Command == "" && cfg.URL == "" {
+			writeErr(w, fmt.Sprintf("MCP 服务器 %s 需要填写启动命令或 URL", name), http.StatusBadRequest)
+			return
+		}
+		if cfg.URL != "" {
+			// HTTP 模式只用 url，忽略 command/args
+			cfg.Command, cfg.Args = "", nil
+		}
+		servers[name] = cfg
+	}
+	s.cfg.MCPServers = servers
+	if err := s.cfg.Save(s.opts.ConfigPath); err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// 重连耗时较长，放后台执行，随后把新工具刷进所有在线任务
+	if mgr := s.mcpManager(); mgr != nil {
+		go func() {
+			mgr.Reset()
+			mgr.Start(context.Background(), servers)
+			s.refreshMCPTools()
+		}()
+	}
+	writeJSON(w, map[string]any{"servers": servers})
+}
+
+func (s *server) mcpManager() *mcp.Manager {
+	if s.opts.Extras == nil {
+		return nil
+	}
+	return s.opts.Extras.MCP
+}
+
+// refreshMCPTools 把最新 MCP 工具重新注册进所有在线任务的注册表。
+func (s *server) refreshMCPTools() {
+	mgr := s.mcpManager()
+	if mgr == nil {
+		return
+	}
+	s.mu.Lock()
+	regs := make([]*tools.Registry, 0, len(s.regs))
+	for _, r := range s.regs {
+		regs = append(regs, r)
+	}
+	s.mu.Unlock()
+	for _, r := range regs {
+		mgr.RegisterInto(r)
+	}
+}
+
 func (s *server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	var skills []any
 	if s.opts.Extras != nil && s.opts.Extras.Skills != nil {
@@ -565,6 +758,10 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 		return existing, nil
 	}
 	s.agents[t.ID] = a
+	if s.regs == nil {
+		s.regs = map[string]*tools.Registry{}
+	}
+	s.regs[t.ID] = reg
 	s.mu.Unlock()
 	return a, nil
 }
@@ -579,4 +776,71 @@ func (s *server) newRegistry(cwd string) *tools.Registry {
 	reg := tools.NewRegistry(env)
 	s.opts.Extras.RegisterTools(reg, cwd)
 	return reg
+}
+
+// ---------- 写操作确认（普通访问模式） ----------
+
+// waitApproval 通过 SSE 推送一条待确认事件，并阻塞等待前端答复。
+// 3 分钟内未答复视为拒绝，避免请求永久挂起。
+func (s *server) waitApproval(ctx context.Context, send func(map[string]any), callID, name string, args map[string]any) bool {
+	req := &approvalReq{
+		id:   fmt.Sprintf("ap-%d", s.approvalSeq.Add(1)),
+		name: name,
+		args: args,
+		ch:   make(chan bool, 1),
+	}
+	s.mu.Lock()
+	if s.approvals == nil {
+		s.approvals = map[string]*approvalReq{}
+	}
+	s.approvals[req.id] = req
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.approvals, req.id)
+		s.mu.Unlock()
+	}()
+
+	send(map[string]any{
+		"type":    "approval",
+		"id":      req.id,
+		"call_id": callID,
+		"name":    name,
+		"args":    llm.MarshalToolArgs(args),
+	})
+
+	select {
+	case ok := <-req.ch:
+		send(map[string]any{"type": "approval_result", "id": req.id, "call_id": callID, "allowed": ok})
+		return ok
+	case <-ctx.Done():
+		return false
+	case <-time.After(3 * time.Minute):
+		return false
+	}
+}
+
+// handleApproval 接收前端对某次写操作的确认结果。
+func (s *server) handleApproval(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Allow bool `json:"allow"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"allow": true|false}`, http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	s.mu.Lock()
+	ar, ok := s.approvals[id]
+	s.mu.Unlock()
+	if !ok {
+		writeErr(w, "确认请求已失效", http.StatusNotFound)
+		return
+	}
+	select {
+	case ar.ch <- req.Allow:
+	default:
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
