@@ -71,6 +71,10 @@ var (
 			Foreground(colorMuted).
 			Italic(true)
 
+	styleHintSel = lipgloss.NewStyle().
+			Foreground(colorBg).
+			Background(colorAccent2)
+
 	styleTimestamp = lipgloss.NewStyle().Foreground(colorMuted).Faint(true)
 )
 

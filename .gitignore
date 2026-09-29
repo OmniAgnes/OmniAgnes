@@ -8,3 +8,4 @@ go.sum.bak
 
 # 本地会话
 .omni-sessions/
+/omni.exe~

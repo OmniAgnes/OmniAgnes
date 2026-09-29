@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"omni/internal/llm"
 	"omni/internal/tools"
@@ -50,16 +51,18 @@ type Options struct {
 }
 
 // Agent 持有一个 LLM provider、工具注册表与消息历史。
+// TUI 与 webui 可能共用同一实例，历史相关操作以 mu 串行化。
 type Agent struct {
-	provider      llm.Provider
-	tools         *tools.Registry
-	model         string
-	mode          Mode
-	cwd           string
-	maxIter       int
-	maxToken      int
-	extra         string
-	history       []llm.Message
+	mu       sync.Mutex
+	provider llm.Provider
+	tools    *tools.Registry
+	model    string
+	mode     Mode
+	cwd      string
+	maxIter  int
+	maxToken int
+	extra    string
+	history  []llm.Message
 	lastTurnStart int
 }
 
@@ -109,7 +112,11 @@ func (a *Agent) SetModel(m string) { a.model = m }
 func (a *Agent) History() []llm.Message { return a.history }
 
 // ClearHistory 清除历史。
-func (a *Agent) ClearHistory() { a.history = nil }
+func (a *Agent) ClearHistory() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = nil
+}
 
 // BuildSystemPrompt 组装系统提示词。
 func (a *Agent) BuildSystemPrompt() string {
@@ -154,14 +161,24 @@ func (a *Agent) Run(ctx context.Context, userInput string, emit func(Event)) err
 
 // Prepare 记录本轮起点并追加 user 消息，返回可回滚当前轮的函数。
 func (a *Agent) Prepare(userInput string) func() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	start := len(a.history)
 	a.lastTurnStart = start
 	a.history = append(a.history, llm.NewTextMessage(llm.RoleUser, userInput))
-	return func() { a.history = a.history[:start] }
+	return func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if len(a.history) >= start {
+			a.history = a.history[:start]
+		}
+	}
 }
 
 // RollbackLastTurn 回滚到上一轮开始之前，用于"重新生成"。
 func (a *Agent) RollbackLastTurn() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.lastTurnStart >= 0 {
 		a.history = a.history[:a.lastTurnStart]
 		a.lastTurnStart = -1
@@ -174,7 +191,10 @@ func (a *Agent) SetLastTurnStart() {
 }
 
 // Execute 在已 Prepare 的上下文上运行迭代循环。
+// 整轮执行期间持有 mu：TUI 与 webui 的并发请求将在此排队。
 func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if emit == nil {
 		emit = func(Event) {}
 	}

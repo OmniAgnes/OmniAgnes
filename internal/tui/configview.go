@@ -91,7 +91,7 @@ func (m *Model) submitConfig() tea.Cmd {
 		return nil
 	}
 	m.a.SetProvider(p, model)
-	if err := saveProviderConfig(m.configPath, typ, model, baseURL, apiKey); err != nil {
+	if err := config.SaveProviderConfig(m.configPath, typ, model, baseURL, apiKey); err != nil {
 		m.addSystemMsg("已连接，但写入配置文件失败: " + err.Error())
 	} else {
 		m.addSystemMsg(fmt.Sprintf("模型已配置: %s (%s)，配置已保存到 %s", model, typ, m.configPath))
@@ -99,28 +99,6 @@ func (m *Model) submitConfig() tea.Cmd {
 	m.configOpen = false
 	m.cfgErr = ""
 	return nil
-}
-
-// saveProviderConfig 将表单配置合并进配置文件，下次启动直接生效。
-func saveProviderConfig(path, typ, model, baseURL, apiKey string) error {
-	cfg, err := config.Load(path)
-	if err != nil {
-		return err
-	}
-	for i := range cfg.Providers {
-		if cfg.Providers[i].Type == typ && cfg.Providers[i].Model == model {
-			cfg.Providers[i].BaseURL = baseURL
-			cfg.Providers[i].APIKey = apiKey
-			cfg.Providers[i].Default = true
-			cfg.Provider = model
-			return cfg.Save(path)
-		}
-	}
-	cfg.Providers = append(cfg.Providers, config.ProviderConfig{
-		Type: typ, Model: model, BaseURL: baseURL, APIKey: apiKey, Default: true,
-	})
-	cfg.Provider = model
-	return cfg.Save(path)
 }
 
 // renderConfig 渲染全屏配置表单。

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"omni/internal/agent"
+	"omni/internal/webui"
 )
 
 const helpText = `omni 终端 AI 编码智能体
@@ -20,12 +21,13 @@ const helpText = `omni 终端 AI 编码智能体
   Ctrl+R         重新生成最后一条回复
   Ctrl+L         滚动到底部
 
-Slash 命令:
+Slash 命令（输入 / 出现提示，↑↓ 选择 · Tab 补全）:
   /help          显示本帮助
   /new           开启新会话（清空历史）
   /config        打开模型配置表单（类型/模型/Base URL/API Key）
   /model <名称>   切换模型（如 /model gpt-4o）
   /mode <模式>    build=可修改文件/执行命令；plan=只读
+  /webui         在浏览器打开网页版聊天
   /quit          退出
 
 工具: read · write · edit · bash · grep · glob
@@ -79,6 +81,13 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		default:
 			m.addSystemMsg("未知模式: " + args[1] + "（可选 build / plan）")
 		}
+	case "/webui":
+		url, err := webui.Launch(m.a)
+		if err != nil {
+			m.addSystemMsg("启动网页版失败: " + err.Error())
+			return nil
+		}
+		m.addSystemMsg("网页版已打开: " + url)
 	case "/quit", "/exit", "/q":
 		return tea.Quit
 	default:

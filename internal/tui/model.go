@@ -58,13 +58,24 @@ type Model struct {
 	cfgInputs  []textinput.Model
 	cfgFocus   int
 	cfgErr     string
+
+	// slash 命令提示
+	hintIdx      int
+	hintDismissed bool
+	hintLines    int
 }
 
 // New 构造 TUI 模型。
 func New(a *agent.Agent, sessionID, configPath string) *Model {
 	ta := textarea.New()
 	ta.Placeholder = " 输入消息，Enter 发送，Alt+Enter 换行；/help 查看帮助"
-	ta.Prompt = "❯ "
+	// 仅首行显示 ❯，其余行（换行/自动折行）留空对齐
+	ta.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return "❯ "
+		}
+		return ""
+	})
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 100000
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
@@ -107,11 +118,12 @@ func (m *Model) View() string {
 	if m.configOpen {
 		return m.renderConfig()
 	}
-	header := m.renderHeader()
-	status := m.renderStatus()
-	inputBox := m.renderInputBox()
-	body := m.viewport.View()
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, status, inputBox)
+	parts := []string{m.renderHeader(), m.viewport.View(), m.renderStatus()}
+	if hint := m.renderSlashHint(); hint != "" {
+		parts = append(parts, hint)
+	}
+	parts = append(parts, m.renderInputBox())
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m *Model) renderHeader() string {
@@ -160,10 +172,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.textarea.SetWidth(m.width - 8)
 		m.viewport.Width = m.width - 2
-		m.viewport.Height = m.height - 2 - inputHeight
 		for i := range m.cfgInputs {
 			m.cfgInputs[i].Width = m.width - 20
 		}
+		m.layoutViewport()
 		m.setViewportContent()
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
@@ -195,6 +207,28 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if m.configOpen {
 		return m.handleConfigKey(msg)
 	}
+	// slash 提示菜单的导航键
+	if matches := m.slashMatches(); matches != nil {
+		switch msg.String() {
+		case "up":
+			m.hintIdx--
+			if m.hintIdx < 0 {
+				m.hintIdx = len(matches) - 1
+			}
+			return nil
+		case "down":
+			m.hintIdx = (m.hintIdx + 1) % len(matches)
+			return nil
+		case "tab":
+			m.textarea.SetValue(matches[m.hintIdx].name + " ")
+			m.updateSlashHint()
+			return nil
+		case "esc":
+			m.hintDismissed = true
+			m.updateSlashHint()
+			return nil
+		}
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return m.handleCtrlC()
@@ -212,6 +246,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	default:
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
+		m.hintDismissed = false
+		m.updateSlashHint()
 		return cmd
 	}
 	return nil
@@ -247,7 +283,16 @@ func (m *Model) handleEnter() tea.Cmd {
 	if text == "" {
 		return nil
 	}
+	// 命令未输入完整时，Enter 先补全
+	if strings.HasPrefix(text, "/") {
+		if matches := m.slashMatches(); matches != nil && text != matches[m.hintIdx].name {
+			m.textarea.SetValue(matches[m.hintIdx].name + " ")
+			m.updateSlashHint()
+			return nil
+		}
+	}
 	m.textarea.Reset()
+	m.updateSlashHint()
 	if strings.HasPrefix(text, "/") {
 		return m.handleCommand(text)
 	}

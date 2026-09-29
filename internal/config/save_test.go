@@ -1,12 +1,10 @@
-package tui
+package config
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"omni/internal/config"
 )
 
 func TestSaveProviderConfigAppends(t *testing.T) {
@@ -16,12 +14,12 @@ func TestSaveProviderConfigAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = saveProviderConfig(path, "ollama", "qwen2.5-coder", "http://localhost:11434/v1", "")
+	err = SaveProviderConfig(path, "ollama", "qwen2.5-coder", "http://localhost:11434/v1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cfg, err := config.Load(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +40,11 @@ func TestSaveProviderConfigAppends(t *testing.T) {
 
 func TestSaveProviderConfigUpdatesExisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	err := saveProviderConfig(path, "openai", "gpt-4o", "https://api.example.com/v1", "sk-test")
+	err := SaveProviderConfig(path, "openai", "gpt-4o", "https://api.example.com/v1", "sk-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = saveProviderConfig(path, "openai", "gpt-4o", "https://api2.example.com/v1", "sk-new")
+	err = SaveProviderConfig(path, "openai", "gpt-4o", "https://api2.example.com/v1", "sk-new")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +53,7 @@ func TestSaveProviderConfigUpdatesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg config.Config
+	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}

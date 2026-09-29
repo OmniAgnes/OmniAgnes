@@ -5,6 +5,8 @@
 ## 特性
 
 - **TUI 聊天界面**：Bubble Tea 构建，消息流、流式输出、工具调用树（可折叠）
+- **网页版**：`/webui` 在浏览器打开本地网页聊天（127.0.0.1，SSE 流式）
+- **Slash 提示**：输入 `/` 弹出命令列表，↑↓ 选择、Tab 补全
 - **多 Provider**：OpenAI 兼容 / Anthropic / Gemini / Ollama 等
 - **Agent 模式**：`build`（可写文件、执行命令）与 `plan`（只读）
 - **内置工具**：`read` / `write` / `edit` / `bash` / `grep` / `glob`
@@ -86,7 +88,7 @@ export OLLAMA_MODEL=qwen2.5-coder
 
 ## Slash 命令
 
-`/help` `/new` `/config` `/model <名称>` `/mode build|plan` `/quit`
+`/help` `/new` `/config` `/model <名称>` `/mode build|plan` `/webui` `/quit`
 
 ## 工具
 
