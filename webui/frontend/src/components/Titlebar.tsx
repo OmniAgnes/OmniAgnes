@@ -10,7 +10,7 @@ export function Titlebar() {
     <div className="flex h-9 shrink-0 select-none" style={drag}>
       {/* 左块：对应下方侧边栏（宽度与 border-r 与侧边栏一致） */}
       <div className="bg-sidebar hidden w-72 shrink-0 items-center border-r pl-3 md:flex">
-        <span className="text-base font-semibold tracking-tight">Omi</span>
+        <span className="text-base font-semibold tracking-tight">OmniAgens</span>
       </div>
       {/* 右块：对应下方对话区 */}
       <div className="bg-background flex min-w-0 flex-1 items-center justify-end">

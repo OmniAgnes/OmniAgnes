@@ -95,7 +95,7 @@ export function Sidebar(props: SidebarProps) {
         {/* 顶栏：桌面端由自绘标题栏承担品牌展示，不再重复 */}
         {!window.omniDesktop && (
           <div className="flex items-center justify-between px-4 py-3">
-            <span className="text-base font-semibold tracking-tight">Omi</span>
+            <span className="text-base font-semibold tracking-tight">OmniAgens</span>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onClose} title="收起">
               <XIcon />
             </Button>
