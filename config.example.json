@@ -1,0 +1,12 @@
+{
+  "provider": "gpt-4o",
+  "model": "gpt-4o",
+  "providers": [
+    { "type": "openai", "model": "gpt-4o", "env_key": "OPENAI_API_KEY", "default": true },
+    { "type": "ollama", "model": "qwen2.5-coder", "base_url": "http://localhost:11434/v1" },
+    { "type": "anthropic", "model": "claude-sonnet-4-20250514", "env_key": "ANTHROPIC_API_KEY" },
+    { "type": "gemini", "model": "gemini-2.5-pro", "env_key": "GEMINI_API_KEY" }
+  ],
+  "max_tool_output": 4000,
+  "bash_timeout_seconds": 10
+}

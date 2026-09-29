@@ -1,0 +1,10 @@
+# 二进制
+omni
+/omni
+omni.exe
+
+# 依赖
+go.sum.bak
+
+# 本地会话
+.omni-sessions/
