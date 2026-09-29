@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "check:bin": "node check-bin.mjs",
-    "dist": "npm run check:bin && electron-builder --win --publish never"
+    "dist": "npm run check:bin && electron-builder --win --publish never",
+    "dist:mac": "npm run check:bin && electron-builder --mac --publish never"
   },
   "devDependencies": {
     "electron": "^38.0.0",

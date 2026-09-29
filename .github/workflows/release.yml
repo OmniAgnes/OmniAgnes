@@ -1,0 +1,336 @@
+# 发版（打 tag 自动出 Windows / macOS 安装包并挂到 Release）
+#
+# 项目结构：Go 单体（omni --web 内核，前端经 go:embed 打进二进制）+ Electron 壳（webui/desktop）。
+# 与 opencode_desk（yarn + opencode-ai npm 内核）的差异：
+#   - 依赖管理用 npm（package-lock.json），没有 yarn.lock / 腾讯源要改写
+#   - 内核是 Go 交叉编译产物（GOOS/GOARCH），不是 npm 平台包，
+#     不需要 postinstall / npm pack / beforePack 换内核那一整套
+#
+# 用法：
+#   1. 改 webui/desktop/package.json 的 version（如 0.3.0）——必须先改再打 tag，
+#      安装包名里的版本号（CI 注入）与包内 package.json 要对得上。
+#   2. git commit && git push
+#   3. git tag -a v0.3.0 -m "release v0.3.0" && git push origin v0.3.0
+#      → 本工作流自动跑：Windows / macOS 上分别构建安装包，上传到对应 Release 的附件。
+#
+# ⚠️ 附件文件名固定、不带版本号（QingNiao-Setup.exe 同款规则）：
+#   应用内「一键下载」类直链是
+#     https://github.com/<owner>/<repo>/releases/latest/download/<固定名>
+#   这条路不经过 api.github.com，是国内能直连的下载方式；代价是每次发版覆盖同名附件，
+#   历史版本靠 git tag 与各自的 Release 页面追溯。
+#   ⚠️ 名字一律用英文 `omni`：GitHub 附件名与 releases/latest/download/<名> 直链对
+#   非 ASCII 字符要 URL 转义，中文名在下载端表现不稳。
+#
+# 两个平台的附件名（由 electron-builder.yml 的 artifactName 决定，改一处即可）：
+#   · Windows：omni-Setup.exe（x64，固定名维持直链）+ omni-Setup-arm64.exe（ARM64）
+#   · macOS  ：omni-Setup-arm64.dmg + omni-Setup-x64.dmg（未签名，见 build-mac 注释）
+#
+# ⚠️ 继承自 opencode_desk 的已验证经验（别改回去）：
+#   1) electron-builder.yml 的 `publish: null` 是必需的。不写它时 electron-builder 会从
+#      package.json 的 repository 推断 provider=github，写 app-update.yml 时构造
+#      GitHubPublisher → 没 GH_TOKEN 直接抛错，且 `--publish never` 拦不住该步骤。
+#      也不能写 `publish: generic`（会强制校验 url，换一个错继续抛）。
+#   2) 不要在 electron-builder.yml 里写 `extraMetadata: { version: "${version}" }`——
+#      该字段不展开占位符，会被原样写进 app 的 package.json，最后写 exe 资源版本号时
+#      抛「Invalid major number in: ${version}」。
+#   3) 上传步骤 `fail_on_unmatched_files: true` 是护栏，但要求 files 里只列
+#      **确定会产出的文件**。本项目 publish: null → 不生成 latest.yml，所以不列它。
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # 允许手动跑一次（补传、或某个 tag 的构建失败了要重跑）
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补建的 tag（如 v0.2.0）'
+        required: true
+
+# 上传附件到 Release 需要写权限（默认 token 只有读权限）
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Windows：主发版线。这个 job 失败就是发版失败。
+  # ---------------------------------------------------------------------------
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            webui/frontend/package-lock.json
+            webui/desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 构建前端（→ internal/webui/dist，go:embed 消费）
+        run: |
+          npm ci
+          npm run build
+        working-directory: webui/frontend
+
+      # Electron 二进制体积大（~100MB），npm install 阶段的 postinstall 负责下载它，
+      # 镜像变量必须挂在**安装步骤**而不是构建步骤上才生效。
+      - name: 安装桌面端依赖
+        run: npm ci
+        working-directory: webui/desktop
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      # 单条 go build 只出一个二进制；这里为每个目标架构各跑一次。
+      # ⚠️ 两个架构都编成「备料名」，再把本机架构那份拷成正式名 bin/omni.exe：
+      #    beforePack 钩子按目标架构**无条件**从备料覆盖正式名（opencode_desk 实测教训：
+      #    若本机架构轮没有备料、靠短路沿用正式名，双架构轮次先后顺序一变，
+      #    交叉轮先跑就会把错架构内核留进本机轮的安装包——顺序相关、必炸）。
+      # 版本号注入（-X main.version）让 omni.exe --version 与安装包版本一致。
+      - name: 交叉编译 omni 内核（windows amd64/arm64）
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          LDFLAGS="-s -w -X main.version=${TAG}"
+          mkdir -p webui/desktop/bin
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-windows-x64.exe .
+          GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-windows-arm64.exe .
+          # runner 是 x64：正式名先放 x64 那份（钩子会按每轮目标架构无条件从备料重覆盖）
+          cp webui/desktop/bin/omni-windows-x64.exe webui/desktop/bin/omni.exe
+          ls -l webui/desktop/bin
+
+      # dist 脚本里已串 check-bin + --publish never；这里再显式传一遍发布参数。
+      # --x64 --arm64：一次出双架构包（两个 flag 都要写——只传一个就只出那一个架构）。
+      # 产物：omni-Setup-x64.exe + omni-Setup-arm64.exe（artifactName 带 ${arch}），
+      # arm64 包的内核由 beforePack 钩子从 omni-windows-arm64.exe 换入。
+      - name: 构建 Windows 安装包（x64 + arm64）
+        run: npx electron-builder --win --x64 --arm64 --publish never
+        working-directory: webui/desktop
+        env:
+          # electron 二进制体积大（~100MB），走官方 GitHub Release 直连
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/eb-cache
+
+      # ⚠️ 打包后的产物校验，不能省：
+      #   1) 两个架构的安装包都必须产出（没产出会在上传步骤炸或静默漏传）；
+      #   2) 包内内核必须是真二进制且架构与包一致——读 PE 头 machine 字段断言
+      #      （0x8664=x64、0xaa64=arm64），防止「交叉轮没换内核」的包混上 Release。
+      #   注：x64 的 unpacked 目录叫 win-unpacked（默认架构无后缀），arm64 叫 win-arm64-unpacked。
+      - name: 校验双架构安装包与内核
+        shell: bash
+        run: |
+          for ARCH in x64 arm64; do
+            if [ "$ARCH" = x64 ]; then APPDIR="webui/desktop/release/win-unpacked"; else APPDIR="webui/desktop/release/win-$ARCH-unpacked"; fi
+            if [ ! -d "$APPDIR" ]; then
+              echo "::error::未产出 $APPDIR——检查 electron-builder.yml 的 win 配置与 --x64 --arm64 参数"
+              ls -l webui/desktop/release
+              exit 1
+            fi
+            BIN="$APPDIR/resources/bin/omni.exe"
+            if [ ! -f "$BIN" ]; then
+              echo "::error::[$ARCH] 安装包内缺少内核二进制：$BIN"
+              exit 1
+            fi
+            SIZE=$(stat -c%s "$BIN")
+            echo "[$ARCH] 内核二进制：$BIN（$SIZE 字节，预期 >10MB）"
+            if [ "$SIZE" -lt 10000000 ]; then
+              echo "::error::[$ARCH] 只有 $SIZE 字节，疑似占位/未编译产物"
+              exit 1
+            fi
+            KIND=$(node -p "const fs=require('fs');const b=Buffer.alloc(4096);const f=fs.openSync(process.argv[1],'r');fs.readSync(f,b,0,4096,0);fs.closeSync(f);'0x'+b.readUInt16LE(b.readUInt32LE(0x3c)+4).toString(16)" "$BIN")
+            echo "[$ARCH] 内核 PE machine：$KIND"
+            case "$ARCH" in
+              x64)   if [ "$KIND" != "0x8664" ]; then echo "::error::[$ARCH] 包里的内核不是 x64（$KIND）——beforePack 钩子未生效"; exit 1; fi ;;
+              arm64) if [ "$KIND" != "0xaa64" ]; then echo "::error::[$ARCH] 包里的内核不是 arm64（$KIND）——内核没编出来或钩子未生效"; exit 1; fi ;;
+            esac
+          done
+          echo "✓ 双架构安装包与内核均正常"
+
+      # artifactName 带 ${arch} 后 x64 产物叫 omni-Setup-x64.exe；应用内下载承诺的固定直链是
+      # releases/latest/download/omni-Setup.exe。把 x64 包重命名上传，直链不中断（历史版本靠 tag 追溯）。
+      - name: 重命名 x64 包为固定名（维持更新直链）
+        shell: bash
+        run: |
+          set -e
+          ls -l webui/desktop/release/*.exe
+          for f in webui/desktop/release/omni-Setup-x64.exe webui/desktop/release/omni-Setup-arm64.exe; do
+            if [ ! -f "$f" ]; then
+              echo "::error::未找到 $f——检查 electron-builder.yml 的 win.artifactName 是否带 \${arch}"
+              exit 1
+            fi
+          done
+          mv webui/desktop/release/omni-Setup-x64.exe webui/desktop/release/omni-Setup.exe
+          echo "✓ x64 包已重命名为 omni-Setup.exe"
+
+      - name: 上传 Windows 安装包到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            webui/desktop/release/omni-Setup.exe
+            webui/desktop/release/omni-Setup-arm64.exe
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+          # 没有手写说明时自动用提交信息生成；有 Release 说明就先建好 Release 再跑本流程
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 构建日志里留一份产物清单：发版后想确认"到底传上去了什么"时不用翻 UI
+      - name: 列出产物
+        shell: bash
+        run: ls -l webui/desktop/release
+
+  # ---------------------------------------------------------------------------
+  # macOS：与 Windows 并行构建，产物是各架构的 dmg。
+  #
+  # ⚠️ `continue-on-error: true` 是刻意的：
+  #   没有 Apple Developer 账号，dmg 出的是**未签名**包（用户首次打开需右键→打开
+  #   绕过 Gatekeeper），且 mac 构建更容易受 runner 环境波动影响。
+  #   发版主体是 Windows 包（国内用户为主），不该让 mac 的失败把整个 Release 拦下。
+  #   想收紧时删掉这一行即可（那样 mac 构建失败 = 发版失败）。
+  # ---------------------------------------------------------------------------
+  build-mac:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            webui/frontend/package-lock.json
+            webui/desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 构建前端（→ internal/webui/dist，go:embed 消费）
+        run: |
+          npm ci
+          npm run build
+        working-directory: webui/frontend
+
+      - name: 安装桌面端依赖
+        run: npm ci
+        working-directory: webui/desktop
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: 交叉编译 omni 内核（darwin arm64/amd64）
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          LDFLAGS="-s -w -X main.version=${TAG}"
+          mkdir -p webui/desktop/bin
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-darwin-arm64 .
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-darwin-x64 .
+          # runner（macos-latest）是 Apple Silicon：正式名先放 arm64 那份（钩子按轮次无条件重覆盖）
+          cp webui/desktop/bin/omni-darwin-arm64 webui/desktop/bin/omni
+          chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-darwin-*
+          ls -l webui/desktop/bin
+
+      # icon.icns 不入库（二进制产物），CI 上从已入库的 build/icon.png 现场生成
+      # （icon.png 由 make_icon.py 从 icon.svg 渲染）。
+      - name: 生成 macOS 图标 icon.icns
+        shell: bash
+        run: |
+          set -e
+          cd webui/desktop
+          mkdir -p build/icon.iconset
+          for S in 16 32 128 256 512; do
+            sips -z $S $S build/icon.png --out build/icon.iconset/icon_${S}x${S}.png >/dev/null
+            D=$((S*2))
+            sips -z $D $D build/icon.png --out build/icon.iconset/icon_${S}x${S}@2x.png >/dev/null
+          done
+          iconutil -c icns build/icon.iconset -o build/icon.icns
+          ls -l build/icon.icns
+
+      # dist:mac 已串 check-bin。这里额外关掉签名自动发现，
+      # 否则没有钥匙串证书时 electron-builder 会要求签名而失败。
+      # --arm64 --x64：一次出双架构包（mac.artifactName 带 ${arch}，互不覆盖）。
+      # 产物：omni-Setup-arm64.dmg + omni-Setup-x64.dmg（不出 zip：它是
+      # electron-updater 的 mac 自动更新格式，本项目不用）。
+      # x64 包的内核由 beforePack 钩子从 omni-darwin-x64 换入（上一步编好）。
+      - name: 构建 macOS 安装包（未签名，arm64 + x64）
+        run: npx electron-builder --mac --arm64 --x64 --publish never
+        working-directory: webui/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/eb-cache
+
+      # ⚠️ mac 专属断言，Windows 上测不出来（Windows 不看可执行位）：
+      #   打包进 app 的内核必须带 x 位，否则主进程 spawn 它会被系统拒绝。
+      #   同时验架构没打岔（file 输出含 cputype）：防止「arm64 机器上打 x64 包
+      #   却忘了换内核」——Mach-O 文件头两种架构相同，只有 cputype 能区分。
+      #   unpacked 目录名规则：默认架构 x64 → release/mac，arm64 → release/mac-arm64。
+      - name: 校验双架构内核已打进安装包且架构正确
+        shell: bash
+        run: |
+          for ARCH in arm64 x64; do
+            case "$ARCH" in
+              arm64) APPDIR="webui/desktop/release/mac-arm64" ;;
+              x64)   APPDIR="webui/desktop/release/mac" ;;
+            esac
+            if [ ! -d "$APPDIR" ]; then
+              echo "::error::未产出 $APPDIR"
+              ls -l webui/desktop/release
+              exit 1
+            fi
+            BIN=$(find "$APPDIR" -path '*/Contents/Resources/bin/omni' -type f 2>/dev/null | head -1)
+            if [ -z "$BIN" ]; then
+              echo "::error::[$ARCH] .app 包内找不到内核二进制（Contents/Resources/bin/omni）"
+              echo "::error::检查 electron-builder.yml 的 extraResources 与 beforePack 钩子"
+              exit 1
+            fi
+            SIZE=$(stat -f%z "$BIN")
+            echo "[$ARCH] 内核二进制：$BIN（$SIZE 字节，预期 >10MB）"
+            if [ "$SIZE" -lt 10000000 ]; then
+              echo "::error::[$ARCH] 只有 $SIZE 字节，疑似未编译产物"
+              exit 1
+            fi
+            KIND=$(file -b "$BIN")
+            echo "  类型：$KIND"
+            case "$ARCH" in
+              arm64) case "$KIND" in *arm64*) echo "  ✓ 架构匹配" ;; *) echo "::error::[$ARCH] 包里装的不是 arm64 内核（$KIND）"; exit 1 ;; esac ;;
+              x64)   case "$KIND" in *x86_64*) echo "  ✓ 架构匹配" ;; *) echo "::error::[$ARCH] 包里装的不是 x64 内核（$KIND）——beforePack 钩子未生效"; exit 1 ;; esac ;;
+            esac
+            if [ ! -x "$BIN" ]; then
+              echo "::error::[$ARCH] 内核二进制没有可执行权限——mac 上主进程无法 spawn 它"
+              echo "::error::该文件权限：$(ls -l "$BIN")"
+              exit 1
+            fi
+          done
+          echo "✓ 双架构内核均正常且可执行"
+
+      - name: 列出产物
+        shell: bash
+        run: ls -l webui/desktop/release
+
+      - name: 上传 macOS 安装包到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            webui/desktop/release/omni-Setup-arm64.dmg
+            webui/desktop/release/omni-Setup-x64.dmg
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,10 +1,15 @@
 # omni 桌面版打包说明
-# - 参照 opencode_desk 的方案：NSIS 安装包 + extraResources 携带 omni 内核二进制
+# - 参照 opencode_desk 的方案：Windows NSIS / macOS dmg + extraResources 携带 omni 内核二进制
 # - 版本号唯一来源是 package.json，不要在这里重复声明
+# - 发版由 .github/workflows/release.yml 驱动：CI 交叉编译各架构内核放进 bin/，
+#   beforePack 钩子按目标架构把对应内核换入 resources/bin（本地单架构打包时钩子自动跳过）
 #
 # ⚠️ publish: null 是必需的：electron-builder 会从 package.json 的 repository 推断
 #    provider=github 并在生成 app-update.yml 时强取 GH_TOKEN 报错，--publish never
 #    拦不住该步骤；只有显式 null 才能短路（opencode_desk 2026-09-22 实测结论）。
+#
+# ⚠️ 不要写 extraMetadata: { version: "${version}" }——该字段不展开占位符，
+#    会原样写进包内 package.json，最后写 exe 资源版本号时抛 Invalid major number。
 publish: null
 directories:
   output: release
@@ -12,18 +17,34 @@ files:
   - main.js
   - preload.js
   - package.json
+beforePack: scripts/electron-before-pack.cjs
 extraResources:
   # omni 内核二进制（主进程打包态从 resources/bin 读取）；
   # 打包前先在仓库根目录执行 go build -o webui/desktop/bin/omni.exe .
+  # （CI 上由各架构交叉编译产物填入，见 release.yml）
+  # filter 排除交叉架构的备料文件，防止把两份内核都打进安装包。
   - from: bin
     to: bin
+    filter:
+      - "!omni-windows-*"
+      - "!omni-darwin-*"
 win:
   # 应用图标：build/icon.ico（由 make_icon.py 生成，源图为 build/icon.svg）
   icon: build/icon.ico
   target:
     - nsis
   artifactName: omni-Setup-${arch}.${ext}
+mac:
+  # 未签名发布（无 Apple Developer 账号）：用户首次打开需右键→打开绕过 Gatekeeper。
+  # CI 上只出 dmg、不出 zip（zip 是 electron-updater 的 mac 自动更新格式，本项目不用）。
+  # 图标：优先 build/icon.icns（CI 从 icon.png 现场生成，见 release.yml）；
+  # 本地 mac 打包没有 icns 时 electron-builder 会自动从 icon.png 转换。
+  target:
+    - dmg
+  artifactName: omni-Setup-${arch}.${ext}
+  category: public.app-category.developer-tools
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
+
