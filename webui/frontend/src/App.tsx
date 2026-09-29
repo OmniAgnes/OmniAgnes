@@ -173,6 +173,15 @@ export default function App() {
     await refreshTasks()
   }
 
+  // 在系统文件管理器中打开项目文件夹
+  const openProject = async (p: Project) => {
+    try {
+      await api.openProject(p.id)
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   // 桌面端：直接弹原生文件夹选择
   const addProjectNative = async () => {
     const path = await window.omniDesktop?.pickFolder()
@@ -308,10 +317,8 @@ export default function App() {
     ;(tasksByProject[t.project_id] ??= []).push(t)
   }
 
-  const activeProject = projects.find((p) => p.id === activeProjectId) ?? null
-  const subtitle = activeProject
-    ? `${activeProject.path} · ${state?.model || "未配置"}`
-    : `${state?.start_cwd || ""} · ${state?.model || "未配置"}`
+  // 对话头部只展示模型名，不显示目录路径
+  const subtitle = state?.model || "未配置"
 
   const emptyHint = (
     <div className="text-muted-foreground flex flex-col items-center gap-3 py-24 text-center">
@@ -345,6 +352,7 @@ export default function App() {
           onDeleteTask={(id) => void deleteTask(id)}
           onNewTask={(projectId) => void newTask(projectId)}
           onDeleteProject={(id) => void deleteProject(id)}
+          onOpenProject={(p) => void openProject(p)}
           onAddProject={() => (isDesktop ? void addProjectNative() : setAddProjectOpen(true))}
           onOpenSettings={() => setSettingsOpen(true)}
           onClose={() => setSidebarOpen(false)}

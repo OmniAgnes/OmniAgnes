@@ -12,7 +12,7 @@ interface TaskListProps {
   tasks: TaskMeta[]
   activeTaskId: string | null
   onOpen: (id: string) => void
-  onDelete: (id: string) => void
+  onDelete: (id: string, title: string) => void
   emptyText?: string
 }
 
@@ -52,8 +52,9 @@ export function TaskList({ tasks, activeTaskId, onOpen, onDelete, emptyText }: T
             className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
             onClick={(e) => {
               e.stopPropagation()
-              if (window.confirm(`删除任务「${t.title}」？`)) onDelete(t.id)
+              onDelete(t.id, t.title)
             }}
+            title="删除任务"
           >
             ×
           </Button>

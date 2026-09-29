@@ -1,6 +1,8 @@
 import { MinusIcon, SquareIcon, XIcon } from "lucide-react"
 
-// 自绘标题栏（仅桌面端渲染）：跟随主题，左侧应用名，右侧窗口控制按钮。
+import logoUrl from "@/assets/logo.svg"
+
+// 自绘标题栏（仅桌面端渲染）：跟随主题，左侧品牌 LOGO + 应用名，右侧窗口控制按钮。
 export function Titlebar() {
   const drag = { WebkitAppRegion: "drag" } as React.CSSProperties
   const noDrag = { WebkitAppRegion: "no-drag" } as React.CSSProperties
@@ -11,6 +13,7 @@ export function Titlebar() {
       style={drag}
     >
       <div className="flex items-center gap-2">
+        <img src={logoUrl} alt="omni" className="size-4 rounded-[4px]" draggable={false} />
         <span className="text-sm font-semibold">omni</span>
       </div>
       <div className="flex h-full" style={noDrag}>

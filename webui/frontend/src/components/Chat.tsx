@@ -96,22 +96,6 @@ export function Chat({
           <div className="truncate text-sm font-medium">{title}</div>
           <div className="text-muted-foreground truncate text-xs">{subtitle}</div>
         </div>
-        <div className="flex items-center gap-1 rounded-md border p-0.5">
-          {(["build", "plan"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              disabled={streaming}
-              onClick={() => onModeChange(m)}
-              className={cn(
-                "rounded px-2 py-1 text-xs cursor-pointer disabled:opacity-50 md:px-2.5",
-                mode === m ? "bg-primary text-primary-foreground" : "hover:bg-accent text-muted-foreground",
-              )}
-            >
-              {m === "build" ? "build" : "plan"}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* 消息流 */}
@@ -163,24 +147,30 @@ export function Chat({
           />
           <div className="flex items-center justify-between gap-2 px-1 pt-1">
             <div className="flex min-w-0 items-center gap-1.5">
-              <div className="bg-muted/60 flex items-center gap-0.5 rounded-md p-0.5">
-                {(["build", "plan"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    disabled={streaming}
-                    onClick={() => onModeChange(m)}
-                    className={cn(
-                      "rounded-[5px] px-2.5 py-1 text-xs cursor-pointer disabled:opacity-50",
-                      mode === m
-                        ? "bg-background text-foreground shadow-xs"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {m === "build" ? "构建" : "规划"}
-                  </button>
-                ))}
-              </div>
+            <div className="bg-muted/60 flex items-center gap-0.5 rounded-md p-0.5">
+              {(
+                [
+                  { id: "build", label: "可写", tip: "构建模式：可修改文件、执行命令" },
+                  { id: "plan", label: "只读", tip: "规划模式：仅读取和分析，不做任何修改" },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={streaming}
+                  title={m.tip}
+                  onClick={() => onModeChange(m.id)}
+                  className={cn(
+                    "rounded-[5px] px-2.5 py-1 text-xs cursor-pointer disabled:opacity-50",
+                    mode === m.id
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
               {models.length > 0 && (
                 <Select value={model || undefined} onValueChange={onModelChange}>
                   <SelectTrigger

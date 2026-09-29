@@ -130,6 +130,10 @@ async function createWindow() {
     autoHideMenuBar: true,
     frame: false, // 去原生标题栏，用自绘 Titlebar（跟随主题）
     backgroundColor: "#0a0a0a",
+    // 开发态窗口/任务栏图标（打包态直接用 exe 内置的 build/icon.ico）
+    icon: existsSync(path.join(__dirname, "build", "icon.png"))
+      ? path.join(__dirname, "build", "icon.png")
+      : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

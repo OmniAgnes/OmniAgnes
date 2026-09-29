@@ -1,7 +1,17 @@
-import { useState } from "react"
-import { FolderIcon, FolderOpenIcon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, XIcon } from "lucide-react"
+import { useEffect, useState } from "react"
+import { FolderIcon, FolderOpenIcon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { TaskList } from "@/components/TaskList"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -21,6 +31,7 @@ interface SidebarProps {
   onDeleteTask: (id: string) => void
   onNewTask: (projectId?: string) => void
   onDeleteProject: (id: string) => void
+  onOpenProject: (p: Project) => void
   onAddProject: () => void
   onOpenSettings: () => void
   onClose: () => void
@@ -39,6 +50,7 @@ export function Sidebar(props: SidebarProps) {
     onDeleteTask,
     onNewTask,
     onDeleteProject,
+    onOpenProject,
     onAddProject,
     onOpenSettings,
     onClose,
@@ -46,6 +58,26 @@ export function Sidebar(props: SidebarProps) {
 
   // 默认展示「项目」tab
   const [tab, setTab] = useState<"projects" | "tasks">("projects")
+  // 文件夹右键菜单与移除确认
+  const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null)
+  const [confirmProject, setConfirmProject] = useState<Project | null>(null)
+
+  // 右键菜单打开期间：任意点击 / Esc / 窗口变化时关闭
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null)
+    }
+    window.addEventListener("click", close)
+    window.addEventListener("resize", close)
+    window.addEventListener("keydown", onKey)
+    return () => {
+      window.removeEventListener("click", close)
+      window.removeEventListener("resize", close)
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [menu])
 
   return (
     <>
@@ -61,21 +93,18 @@ export function Sidebar(props: SidebarProps) {
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        {/* 顶栏 */}
-        <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="text-base font-semibold">omni</span>
-            <span className="text-muted-foreground text-xs">{state?.version}</span>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title="设置">
-              <SettingsIcon />
-            </Button>
+        {/* 顶栏：桌面端由自绘标题栏承担品牌展示，不再重复 */}
+        {!window.omniDesktop && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base font-semibold">omni</span>
+              <span className="text-muted-foreground text-xs">{state?.version}</span>
+            </div>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onClose} title="收起">
               <XIcon />
             </Button>
           </div>
-        </div>
+        )}
 
         <div className="px-3 pb-2">
           <Button className="w-full" onClick={() => onNewTask()}>
@@ -150,7 +179,13 @@ export function Sidebar(props: SidebarProps) {
                       onClose()
                     }}
                     onNewTask={() => onNewTask(p.id)}
-                    onDelete={() => onDeleteProject(p.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      // 视口边缘时向内收，避免菜单被截断
+                      const x = Math.min(e.clientX, window.innerWidth - 170)
+                      const y = Math.min(e.clientY, window.innerHeight - 110)
+                      setMenu({ project: p, x, y })
+                    }}
                   />
                 ))}
               </>
@@ -158,11 +193,74 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </ScrollArea>
 
-        {/* 底部：当前模型 */}
-        <div className="text-muted-foreground border-t px-4 py-2 text-xs">
-          模型：{state?.model || "未配置"} · {state?.configured ? "已就绪" : "未配置"}
+        {/* 底部：设置入口 */}
+        <div className="flex items-center justify-end border-t px-3 py-1.5">
+          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title="设置">
+            <SettingsIcon />
+          </Button>
         </div>
       </aside>
+
+      {/* 文件夹右键菜单 */}
+      {menu && (
+        <div
+          role="menu"
+          className="bg-popover text-popover-foreground fixed z-50 min-w-40 rounded-md border p-1 shadow-md"
+          style={{ left: menu.x, top: menu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer"
+            onClick={() => {
+              onOpenProject(menu.project)
+              setMenu(null)
+            }}
+          >
+            <FolderOpenIcon className="text-muted-foreground size-4" />
+            打开文件夹
+          </button>
+          <button
+            type="button"
+            className="text-destructive hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer"
+            onClick={() => {
+              setConfirmProject(menu.project)
+              setMenu(null)
+            }}
+          >
+            <Trash2Icon className="size-4" />
+            移除文件夹
+          </button>
+        </div>
+      )}
+
+      {/* 移除文件夹确认弹窗 */}
+      <AlertDialog
+        open={confirmProject !== null}
+        onOpenChange={(o) => {
+          if (!o) setConfirmProject(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>移除文件夹？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将「{confirmProject?.name}」从列表中移除。不会删除磁盘上的文件，其中的任务也会保留。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmProject) onDeleteProject(confirmProject.id)
+                setConfirmProject(null)
+              }}
+            >
+              移除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
@@ -183,9 +281,9 @@ function ProjectGroup(props: {
   active: boolean
   onOpenTask: (id: string) => void
   onNewTask: () => void
-  onDelete: () => void
+  onContextMenu: (e: React.MouseEvent) => void
 }) {
-  const { project, tasks, activeTaskId, active, onOpenTask, onNewTask, onDelete } = props
+  const { project, tasks, activeTaskId, active, onOpenTask, onNewTask, onContextMenu } = props
   const [expanded, setExpanded] = useState(false)
   const shown = expanded ? tasks : tasks.slice(0, VISIBLE)
   const hidden = tasks.length - VISIBLE
@@ -197,6 +295,7 @@ function ProjectGroup(props: {
           "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1.5",
           active && "bg-sidebar-accent",
         )}
+        onContextMenu={onContextMenu}
       >
         <button
           type="button"
@@ -209,22 +308,11 @@ function ProjectGroup(props: {
             <FolderIcon className="text-muted-foreground size-4 shrink-0" />
           )}
           <span className="truncate">{project.name}</span>
-          <span className="text-muted-foreground text-[11px]">{tasks.length}</span>
         </button>
+        {/* 悬停只显示「新建任务」添加图标；打开/移除走右键菜单 */}
         <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
           <Button variant="ghost" size="icon-sm" onClick={onNewTask} title="在这个项目里新建任务">
             <PlusIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-destructive"
-            onClick={() => {
-              if (window.confirm(`移除项目「${project.name}」？（任务保留）`)) onDelete()
-            }}
-            title="移除项目"
-          >
-            ×
           </Button>
         </div>
       </div>

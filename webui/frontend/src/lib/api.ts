@@ -57,6 +57,9 @@ export const api = {
 
   deleteProject: (id: string) => fetch(`/api/projects/${id}`, { method: "DELETE" }),
 
+  openProject: (id: string) =>
+    fetch(`/api/projects/${id}/open`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+
   browse: (path: string) =>
     fetch(`/api/browse?path=${encodeURIComponent(path)}`).then((r) => json<BrowseResult>(r)),
 

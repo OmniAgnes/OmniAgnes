@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -32,11 +34,12 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		model = m
 	}
 	writeJSON(w, map[string]any{
-		"model":      model,
-		"theme":      s.cfg.Theme,
-		"configured": configured,
-		"version":    s.opts.Version,
-		"start_cwd":  s.opts.StartCwd,
+		"model":       model,
+		"theme":       s.cfg.Theme,
+		"theme_color": s.cfg.ThemeColor,
+		"configured":  configured,
+		"version":     s.opts.Version,
+		"start_cwd":   s.opts.StartCwd,
 	})
 }
 
@@ -151,6 +154,33 @@ func (s *server) handleProjectsAdd(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteProject(r.PathValue("id")); err != nil {
 		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleProjectOpen 在系统文件管理器中打开项目文件夹。
+func (s *server) handleProjectOpen(w http.ResponseWriter, r *http.Request) {
+	p, err := s.store.GetProject(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if st, err := os.Stat(p.Path); err != nil || !st.IsDir() {
+		writeErr(w, "文件夹不存在: "+p.Path, http.StatusBadRequest)
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", p.Path) // explorer 成功也返回非 0，用 Start 不等待
+	case "darwin":
+		cmd = exec.Command("open", p.Path)
+	default:
+		cmd = exec.Command("xdg-open", p.Path)
+	}
+	if err := cmd.Start(); err != nil {
+		writeErr(w, "打开文件夹失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
@@ -320,7 +350,10 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	send(map[string]any{"type": "start", "task_id": t.ID, "title": t.Title, "mode": string(a.Mode())})
 
-	runErr := a.Run(r.Context(), text, func(ev agent.Event) {
+	// 不用 Run（失败即回滚）：webui 保留失败轮次已产生的内容（至少保留提问），便于回溯
+	rollback := a.Prepare(text)
+	_ = rollback
+	runErr := a.Execute(r.Context(), func(ev agent.Event) {
 		switch ev.Type {
 		case agent.EventText:
 			send(map[string]any{"type": "text", "text": ev.Text})
@@ -341,6 +374,15 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// 持久化消息（无论成功失败都保存已有内容）
 	t.Messages = a.History()
+	if len(t.Messages) == 0 && runErr != nil {
+		// 首轮即失败且没有任何内容：移除这个空任务，避免列表里出现打不开的任务
+		_ = s.store.DeleteTask(t.ID)
+		s.mu.Lock()
+		delete(s.agents, t.ID)
+		s.mu.Unlock()
+		send(map[string]any{"type": "task_removed"})
+		return
+	}
 	_ = s.store.SaveTask(t)
 }
 
@@ -510,6 +552,8 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 		MaxIterations:     32,
 		MaxTokens:         maxTokens,
 		SystemPromptExtra: s.cfg.SystemPromptExtra,
+		// 恢复持久化的历史消息：重启后继续对话时模型仍记得之前的内容
+		History: t.Messages,
 		ExtraPrompt: func() string {
 			return s.opts.Extras.ExtraPrompt(cwd)
 		},
