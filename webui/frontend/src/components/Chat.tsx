@@ -109,12 +109,8 @@ export function Chat({
   // ② streaming：模型还在输出（哪怕正在流式吐字），末尾始终有个"还在忙"的提示。
   const showThinking = streaming || thinking
 
-  // 所有轮次的工具调用汇总成一组，统一折叠在消息流末尾——用户不关心内部细节。
+  // 所有轮次的工具调用汇总成一组，统一折叠在消息流最上方——用户不关心内部细节。
   const allTools = useMemo(() => items.flatMap((it) => it.tools), [items])
-
-  // 正在流式输出的那条消息（最后一条助手消息），光标只挂这一条，
-  // 否则按轮次分组后光标会闪在历史消息上。
-  const streamingId = streaming ? (items[items.length - 1]?.role === "assistant" ? items[items.length - 1].id : null) : null
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -131,6 +127,9 @@ export function Chat({
       {/* 消息流：原生滚动容器（min-h-0 保证在 flex 里能收缩） */}
       <div ref={scrollRef} onScroll={onScroll} className="omni-scroll min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-6 md:px-6">
+          {/* 顶部固定区：工具调用折叠组，默认收起 */}
+          {allTools.length > 0 && <ToolCallGroup tools={allTools} onApprove={onApprove} />}
+
           {items.length === 0 && emptyHint}
           {items.map((item) =>
             item.role === "user" ? (
@@ -141,11 +140,7 @@ export function Chat({
               </div>
             ) : (
               <div key={item.id} className="flex flex-col gap-1.5">
-                {item.text && (
-                  <div className={cn(item.id === streamingId && "stream-cursor")}>
-                    <Markdown text={item.text} />
-                  </div>
-                )}
+                {item.text && <Markdown text={item.text} />}
                 {item.error && (
                   <div className="text-destructive flex items-center gap-2 text-sm">
                     <AlertCircleIcon className="size-4" /> {item.error}
@@ -155,13 +150,8 @@ export function Chat({
             ),
           )}
 
-          {/* 底部固定区：工具调用折叠组 + 处理中动画，永远在消息流最后 */}
-          {(allTools.length > 0 || showThinking) && (
-            <div className="flex flex-col gap-2">
-              {allTools.length > 0 && <ToolCallGroup tools={allTools} onApprove={onApprove} />}
-              {showThinking && <ProcessingIndicator />}
-            </div>
-          )}
+          {/* 底部固定区：处理中动画，永远在消息流最后 */}
+          {showThinking && <ProcessingIndicator />}
         </div>
       </div>
 

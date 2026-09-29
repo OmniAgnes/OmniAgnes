@@ -85,9 +85,9 @@ export function Sidebar(props: SidebarProps) {
       )}
       <aside
         className={cn(
-          "bg-sidebar text-sidebar-foreground fixed left-0 bottom-0 z-40 flex h-full min-h-0 w-72 shrink-0 flex-col border-r transition-transform duration-200 md:static md:translate-x-0",
-          // 桌面端顶部让出自绘标题栏的高度
-          window.omniDesktop ? "top-9" : "top-0",
+          // 窄屏抽屉：fixed 覆盖整个视口（top-0 起、h-full 到底），顶部与标题栏窗口按钮那一行齐平。
+          // md 以上切回 static，宽度固定常驻。
+          "bg-sidebar text-sidebar-foreground fixed inset-y-0 left-0 z-40 flex min-h-0 w-72 shrink-0 flex-col border-r transition-transform duration-200 md:static md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -104,7 +104,8 @@ export function Sidebar(props: SidebarProps) {
           </div>
         )}
 
-        <div className="px-3 pb-2">
+        {/* 桌面端没有顶栏品牌区，给「新建任务」留出顶部间距，别贴着标题栏 */}
+        <div className={cn("px-3 pb-2", window.omniDesktop ? "pt-2.5" : "")}>
           <Button className="w-full" onClick={() => onNewTask()}>
             <SquarePenIcon /> 新建任务
           </Button>
