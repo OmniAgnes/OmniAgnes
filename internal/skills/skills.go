@@ -271,3 +271,104 @@ func Delete(dir, name string) error {
 	}
 	return os.RemoveAll(target)
 }
+
+// HasFrontmatter 判断文本是否已带 `---` frontmatter 头。
+func HasFrontmatter(text string) bool {
+	norm := strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.HasPrefix(norm, "---\n")
+}
+
+// Import 把一段完整的 SKILL.md 文本写入 <dir>/<name>/SKILL.md。
+// 文本自带 frontmatter 时原样落盘（保真），返回解析出的 name/description；
+// 同名已存在则覆盖（用户明确是「粘贴导入」，覆盖比报错更符合预期）。
+func Import(dir, content string) (string, string, error) {
+	fm, body := splitFrontmatter(content)
+	name := strings.TrimSpace(fm["name"])
+	if name == "" {
+		name = GuessName(body)
+	}
+	if name == "" {
+		return "", "", fmt.Errorf("无法从内容中解析技能名，请在导入时手动填写名称")
+	}
+	if err := validName(name); err != nil {
+		return "", "", err
+	}
+	desc := strings.TrimSpace(fm["description"])
+	if desc == "" {
+		desc = GuessDescription(body)
+	}
+	if desc == "" {
+		desc = name
+	}
+	// 补齐缺失字段，保证落盘后是合法技能
+	normalized := render(name, desc, body)
+	path := filepath.Join(dir, name, "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(path, []byte(normalized), 0o644); err != nil {
+		return "", "", err
+	}
+	return name, desc, nil
+}
+
+// GuessName 从正文猜测技能名：优先一级标题，否则取首个非空行的前若干字符。
+func GuessName(body string) string {
+	norm := strings.ReplaceAll(body, "\r\n", "\n")
+	for _, line := range strings.Split(norm, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "#") {
+			t = strings.TrimSpace(strings.TrimLeft(t, "#"))
+			if t = sanitizeName(t); t != "" {
+				return t
+			}
+			continue
+		}
+		// 正文第一行不是标题就不猜了，避免生成奇怪的名字
+		return ""
+	}
+	return ""
+}
+
+// GuessDescription 取正文首个非标题、非空行作为描述。
+func GuessDescription(body string) string {
+	_, b := splitFrontmatter(body)
+	for _, line := range strings.Split(strings.ReplaceAll(b, "\r\n", "\n"), "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "---") {
+			continue
+		}
+		if len([]rune(t)) > 120 {
+			t = string([]rune(t)[:120]) + "…"
+		}
+		return t
+	}
+	return ""
+}
+
+// sanitizeName 把任意标题转成合法技能名：小写、非字母数字换成连字符、去首尾连字符。
+func sanitizeName(s string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			// 中日韩等非 ASCII 字符无法作为目录名，退化为分隔符
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 64 {
+		out = strings.Trim(out[:64], "-")
+	}
+	return out
+}

@@ -72,6 +72,19 @@ export interface MCPServerConfig {
   disabled?: boolean
 }
 
+// 技能 / MCP 的落盘位置（供「打开目录」与粘贴导入用）
+export interface SkillDirInfo {
+  path?: string
+  dir?: string
+  error?: string
+}
+
+export interface SkillDirs {
+  global?: SkillDirInfo
+  project?: SkillDirInfo
+  mcp?: SkillDirInfo
+}
+
 export interface BrowseEntry {
   name: string
   path: string
@@ -113,14 +126,16 @@ export interface StateInfo {
 }
 
 // SSE 聊天事件
+// round = LLM 迭代轮次（从 0 开始）。一次提问会跑多轮，
+// 每轮 = 一段文本 + 若干工具调用，UI 按 round 拆成独立消息。
 export type ChatEvent =
   | { type: "start"; task_id: string; title: string; mode: string }
-  | { type: "text"; text: string }
-  | { type: "tool_start"; name: string; args: string }
-  | { type: "tool_output"; name: string; output: string; is_error: boolean }
-  | { type: "tool_end"; name: string; is_error: boolean }
-  | { type: "approval_pending"; name: string }
+  | { type: "text"; text: string; round: number }
+  | { type: "tool_start"; round: number; id: string; name: string; args: string }
+  | { type: "tool_output"; round: number; id: string; name: string; output: string; is_error: boolean }
+  | { type: "tool_end"; round: number; id: string; name: string; is_error: boolean }
+  | { type: "approval_pending"; round: number; id: string }
   | { type: "approval"; id: string; call_id: string; name: string; args: string }
   | { type: "approval_result"; id: string; call_id: string; allowed: boolean }
-  | { type: "error"; error: string }
-  | { type: "done"; model?: string }
+  | { type: "error"; error: string; round: number }
+  | { type: "done"; model?: string; round: number }

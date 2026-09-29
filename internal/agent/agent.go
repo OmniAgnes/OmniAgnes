@@ -41,6 +41,10 @@ type Event struct {
 	IsError bool
 	Err     error
 	Model   string
+	// Round 是 LLM 迭代轮次（从 0 开始）。
+	// 一次提问会跑多轮：每轮 = 一段文本 + 若干工具调用。
+	// UI 据此把每轮拆成独立消息，否则各轮文本与工具会全部堆在一起。
+	Round int
 }
 
 // Options 构造 Agent 的参数。
@@ -227,6 +231,7 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 	}
 
 	for i := 0; i < a.maxIter; i++ {
+		round := i // 本轮序号，供 UI 分组
 		req := llm.ChatRequest{
 			Model:     a.model,
 			System:    a.BuildSystemPrompt(),
@@ -237,14 +242,14 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		resp, err := a.provider.Chat(ctx, req, func(ev llm.StreamEvent) error {
 			switch ev.Type {
 			case llm.EventText:
-				emit(Event{Type: EventText, Text: ev.Text})
+				emit(Event{Type: EventText, Text: ev.Text, Round: round})
 			case llm.EventError:
-				emit(Event{Type: EventError, Err: ev.Err})
+				emit(Event{Type: EventError, Err: ev.Err, Round: round})
 			}
 			return nil
 		})
 		if err != nil {
-			emit(Event{Type: EventError, Err: err})
+			emit(Event{Type: EventError, Err: err, Round: round})
 			return err
 		}
 
@@ -255,7 +260,7 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		})
 
 		if len(resp.ToolCalls) == 0 {
-			emit(Event{Type: EventDone, Model: a.model})
+			emit(Event{Type: EventDone, Model: a.model, Round: round})
 			return nil
 		}
 
@@ -265,12 +270,12 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			}
 			// 普通访问模式：先推卡片再问用户，UI 可在原位显示「允许/拒绝」
 			if a.mode == ModePlan && a.approve != nil && !a.tools.IsReadOnly(tc.Name) {
-				emit(Event{Type: EventToolStart, Tool: &tc})
-				emit(Event{Type: EventApproval, Tool: &tc})
+				emit(Event{Type: EventToolStart, Tool: &tc, Round: round})
+				emit(Event{Type: EventApproval, Tool: &tc, Round: round})
 				if !a.approve(tc.ID, tc.Name, tc.Args) {
 					msg := "用户拒绝了该操作，未执行。请换一种方案或先向用户说明。"
-					emit(Event{Type: EventToolOutput, Tool: &tc, Output: msg, IsError: true})
-					emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true})
+					emit(Event{Type: EventToolOutput, Tool: &tc, Output: msg, IsError: true, Round: round})
+					emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true, Round: round})
 					a.history = append(a.history, llm.Message{
 						Role:       llm.RoleTool,
 						ToolResult: &llm.ToolResult{CallID: tc.ID, Content: msg, IsError: true},
@@ -278,22 +283,22 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 					continue
 				}
 			} else {
-				emit(Event{Type: EventToolStart, Tool: &tc})
+				emit(Event{Type: EventToolStart, Tool: &tc, Round: round})
 			}
 			// 无审批回调的普通访问模式退化为强制只读
 			forceRO := a.mode == ModePlan && a.approve == nil
 			out, terr := a.tools.Execute(ctx, tc.Name, tc.Args, forceRO)
 			if terr != nil {
-				emit(Event{Type: EventToolOutput, Tool: &tc, Output: "错误: " + terr.Error(), IsError: true})
-				emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true})
+				emit(Event{Type: EventToolOutput, Tool: &tc, Output: "错误: " + terr.Error(), IsError: true, Round: round})
+				emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true, Round: round})
 				a.history = append(a.history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolResult: &llm.ToolResult{CallID: tc.ID, Content: "错误: " + terr.Error(), IsError: true},
 				})
 				continue
 			}
-			emit(Event{Type: EventToolOutput, Tool: &tc, Output: out})
-			emit(Event{Type: EventToolEnd, Tool: &tc})
+			emit(Event{Type: EventToolOutput, Tool: &tc, Output: out, Round: round})
+			emit(Event{Type: EventToolEnd, Tool: &tc, Round: round})
 			a.history = append(a.history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolResult: &llm.ToolResult{CallID: tc.ID, Content: out},

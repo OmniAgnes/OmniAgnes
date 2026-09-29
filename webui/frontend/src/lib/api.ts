@@ -6,6 +6,7 @@ import type {
   Project,
   ProviderConfig,
   SkillDetail,
+  SkillDirs,
   SkillInfo,
   StateInfo,
   TaskFull,
@@ -138,6 +139,34 @@ export const api = {
 
   deleteSkill: (name: string, source = "global") =>
     fetch(`/api/skills/${encodeURIComponent(name)}?source=${source}`, { method: "DELETE" }),
+
+  /** 技能目录 / MCP 配置文件位置（后端会确保目录已创建） */
+  skillDirs: (projectDir?: string) =>
+    fetch(`/api/skills/dirs?project_dir=${encodeURIComponent(projectDir ?? "")}`).then((r) =>
+      json<{ dirs: SkillDirs }>(r),
+    ),
+
+  /** 在系统文件管理器中打开技能目录 */
+  openSkillDir: (source: string, name?: string) =>
+    fetch("/api/skills/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, name: name ?? "" }),
+    }).then((r) => json<{ ok: boolean; path: string }>(r)),
+
+  /** 在文件管理器中定位 MCP 配置文件 */
+  openMcpFile: () =>
+    fetch("/api/mcp/open", { method: "POST" }).then((r) =>
+      json<{ ok: boolean; path: string; exists: boolean }>(r),
+    ),
+
+  /** 粘贴 SKILL.md 全文导入（自动解析 frontmatter / 推断名称） */
+  importSkill: (payload: { content: string; name?: string; description?: string; source?: string }) =>
+    fetch("/api/skills/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "global", ...payload }),
+    }).then((r) => json<{ ok: boolean; name?: string; description?: string; skill?: SkillInfo }>(r)),
 
   /** 答复一次写操作确认（普通访问模式） */
   approval: (id: string, allow: boolean) =>

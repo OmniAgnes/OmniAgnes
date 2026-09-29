@@ -127,7 +127,7 @@ export function ToolCallView({
         waiting && "bg-amber-500/5 ring-1 ring-amber-500/50",
       )}
     >
-      <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer">
+      <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs transition-colors cursor-pointer">
         <Icon className="text-muted-foreground size-3.5 shrink-0" />
         <span className="font-medium">{meta.label}</span>
         {summary && (
@@ -198,7 +198,7 @@ function ToolDetail({
   denied?: boolean
 }) {
   return (
-    <div className="bg-muted/40 mx-1.5 mb-1.5 flex flex-col gap-2 rounded-md p-2 text-xs">
+    <div className="bg-muted/40 mx-1.5 mb-1 flex flex-col gap-2 rounded-md p-2 text-xs">
       {name === "edit" && <EditDiff args={args} />}
 
       {name === "write" && str(args.content) !== "" && (

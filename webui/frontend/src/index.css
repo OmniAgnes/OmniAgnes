@@ -223,7 +223,7 @@
   margin-bottom: 0;
 }
 .md-output p {
-  margin: 0.5rem 0;
+  margin: 0.35rem 0;
 }
 .md-output h1,
 .md-output h2,
@@ -243,7 +243,7 @@
 }
 .md-output ul,
 .md-output ol {
-  margin: 0.5rem 0;
+  margin: 0.35rem 0;
   padding-left: 1.4rem;
 }
 .md-output ul {

@@ -366,19 +366,28 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	runErr := a.Execute(r.Context(), func(ev agent.Event) {
 		switch ev.Type {
 		case agent.EventText:
-			send(map[string]any{"type": "text", "text": ev.Text})
+			send(map[string]any{"type": "text", "text": ev.Text, "round": ev.Round})
 		case agent.EventToolStart:
-			send(map[string]any{"type": "tool_start", "name": ev.Tool.Name, "args": llm.MarshalToolArgs(ev.Tool.Args)})
+			send(map[string]any{
+				"type": "tool_start", "round": ev.Round,
+				"id": ev.Tool.ID, "name": ev.Tool.Name, "args": llm.MarshalToolArgs(ev.Tool.Args),
+			})
 		case agent.EventToolOutput:
-			send(map[string]any{"type": "tool_output", "name": ev.Tool.Name, "output": ev.Output, "is_error": ev.IsError})
+			send(map[string]any{
+				"type": "tool_output", "round": ev.Round, "id": ev.Tool.ID,
+				"name": ev.Tool.Name, "output": ev.Output, "is_error": ev.IsError,
+			})
 		case agent.EventToolEnd:
-			send(map[string]any{"type": "tool_end", "name": ev.Tool.Name, "is_error": ev.IsError})
+			send(map[string]any{
+				"type": "tool_end", "round": ev.Round, "id": ev.Tool.ID,
+				"name": ev.Tool.Name, "is_error": ev.IsError,
+			})
 		case agent.EventApproval:
-			send(map[string]any{"type": "approval_pending", "name": ev.Tool.Name})
+			send(map[string]any{"type": "approval_pending", "round": ev.Round, "id": ev.Tool.ID})
 		case agent.EventError:
-			send(map[string]any{"type": "error", "error": ev.Err.Error()})
+			send(map[string]any{"type": "error", "error": ev.Err.Error(), "round": ev.Round})
 		case agent.EventDone:
-			send(map[string]any{"type": "done", "model": ev.Model})
+			send(map[string]any{"type": "done", "model": ev.Model, "round": ev.Round})
 		}
 	})
 	if runErr != nil {
@@ -689,6 +698,195 @@ func (s *server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{"skills": skills})
+}
+
+// ---------- 目录直达（技能 / MCP 粘贴导入） ----------
+
+// openInFileManager 在系统文件管理器中打开目录或定位文件。
+func openInFileManager(path string, selectFile bool) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		if selectFile {
+			cmd = exec.Command("explorer", "/select,"+path)
+		} else {
+			cmd = exec.Command("explorer", path)
+		}
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
+}
+
+// ensureDir 确保目录存在（不存在则创建），返回绝对路径。
+func ensureDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+// handleSkillDirs 返回全局/项目技能目录，并确保目录已创建。
+// 前端拿到路径后提供「打开目录」按钮，用户直接把 SKILL.md 粘进去即可。
+func (s *server) handleSkillDirs(w http.ResponseWriter, r *http.Request) {
+	projectDir := r.URL.Query().Get("project_dir")
+	if projectDir == "" {
+		projectDir = s.opts.StartCwd
+	}
+	out := map[string]any{}
+	for _, source := range []string{"global", "project"} {
+		dir, _, err := s.skillDir(r, source)
+		if err != nil {
+			out[source] = map[string]any{"error": err.Error()}
+			continue
+		}
+		abs, err := ensureDir(dir)
+		if err != nil {
+			out[source] = map[string]any{"error": err.Error(), "path": dir}
+			continue
+		}
+		out[source] = map[string]any{"path": abs}
+	}
+	// MCP 配置文件所在目录
+	mcpPath := s.opts.ConfigPath
+	if mcpPath == "" {
+		mcpPath = filepath.Join(config.DefaultDataDir(), "config.json")
+	}
+	dir, err := ensureDir(filepath.Dir(mcpPath))
+	if err != nil {
+		out["mcp"] = map[string]any{"error": err.Error(), "path": mcpPath}
+	} else {
+		out["mcp"] = map[string]any{"path": mcpPath, "dir": dir}
+	}
+	writeJSON(w, map[string]any{"dirs": out})
+}
+
+// handleSkillOpen 在文件管理器中打开技能目录或定位某个 SKILL.md。
+func (s *server) handleSkillOpen(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Source string `json:"source"`
+		Name   string `json:"name"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"source":"global|project", "name":"技能名"}`, http.StatusBadRequest)
+		return
+	}
+	dir, _, err := s.skillDir(r, req.Source)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	abs, err := ensureDir(dir)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	target := abs
+	if n := strings.TrimSpace(req.Name); n != "" {
+		target = filepath.Join(abs, n)
+		if st, err := os.Stat(target); err == nil && st.IsDir() {
+			target = filepath.Join(target, "SKILL.md")
+		}
+	}
+	if err := openInFileManager(target, false); err != nil {
+		writeErr(w, "打开目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "path": abs})
+}
+
+// handleMCPOpen 在文件管理器中打开 MCP 配置文件。
+func (s *server) handleMCPOpen(w http.ResponseWriter, r *http.Request) {
+	path := s.opts.ConfigPath
+	if path == "" {
+		path = filepath.Join(config.DefaultDataDir(), "config.json")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := os.Stat(abs); err != nil {
+		// 文件还不存在：打开所在目录
+		if err := openInFileManager(filepath.Dir(abs), false); err != nil {
+			writeErr(w, "打开目录失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "path": abs, "exists": false})
+		return
+	}
+	if err := openInFileManager(abs, true); err != nil {
+		writeErr(w, "打开文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "path": abs, "exists": true})
+}
+
+// ---------- 技能导入（粘贴 SKILL.md 全文） ----------
+
+// handleSkillImport 从粘贴的 Markdown 文本导入技能。
+// 自动解析 frontmatter 里的 name/description；缺 name 时用 name 参数或从标题推断。
+func (s *server) handleSkillImport(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Name        string `json:"name"`
+		Source      string `json:"source"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"content":"SKILL.md 全文", ...}`, http.StatusBadRequest)
+		return
+	}
+	content := strings.ReplaceAll(req.Content, "\r\n", "\n")
+	if strings.TrimSpace(content) == "" {
+		writeErr(w, "内容为空", http.StatusBadRequest)
+		return
+	}
+	dir, _, err := s.skillDir(r, req.Source)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	abs, err := ensureDir(dir)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	desc := strings.TrimSpace(req.Description)
+	// 文本里已带 frontmatter 就原样落盘（保真用户粘贴的内容）
+	if skills.HasFrontmatter(content) {
+		n, d, err := skills.Import(abs, content)
+		if err != nil {
+			writeErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "name": n, "description": d, "path": filepath.Join(abs, n, "SKILL.md")})
+		return
+	}
+	// 纯正文：补上 frontmatter 后写入
+	if name == "" {
+		name = skills.GuessName(content)
+	}
+	if name == "" {
+		writeErr(w, "无法确定技能名，请手动填写", http.StatusBadRequest)
+		return
+	}
+	if desc == "" {
+		desc = skills.GuessDescription(content)
+	}
+	sk, err := skills.Create(abs, name, desc, content)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "skill": sk})
 }
 
 // ---------- Agent 池 ----------

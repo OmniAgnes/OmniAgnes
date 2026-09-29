@@ -8,7 +8,8 @@ import {
 } from "lucide-react"
 
 import { Markdown } from "@/components/Markdown"
-import { ToolCallView, type ToolRun } from "@/components/ToolCallView"
+import { ToolCallGroup } from "@/components/ToolCallGroup"
+import type { ToolRun } from "@/components/ToolCallView"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -30,6 +31,8 @@ export interface ViewItem {
   text: string
   tools: ToolRun[]
   error?: string
+  /** LLM 迭代轮次：一次提问会跑多轮，每轮 = 一段文本 + 若干工具调用 */
+  round?: number
 }
 
 interface ChatProps {
@@ -101,9 +104,10 @@ export function Chat({
     onSend(text)
   }
 
-  // 最后一条助手消息是否还完全空白（用于决定是否显示思考动画）
-  const last = items[items.length - 1]
-  const showThinking = thinking && (!last || last.role !== "assistant" || (!last.text && last.tools.length === 0))
+  // 思考动画：thinking 为真时显示。
+  // 两种场景：① 刚发出提问、等首个 token；② 一轮工具跑完、等模型下一轮输出。
+  // 收到 text / tool_start / done 时会把 thinking 置回 false。
+  const showThinking = thinking
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -119,7 +123,7 @@ export function Chat({
 
       {/* 消息流：原生滚动容器（min-h-0 保证在 flex 里能收缩） */}
       <div ref={scrollRef} onScroll={onScroll} className="omni-scroll min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-3xl flex-col gap-6 px-3 py-6 md:px-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-6 md:px-6">
           {items.length === 0 && emptyHint}
           {items.map((item, i) =>
             item.role === "user" ? (
@@ -129,15 +133,14 @@ export function Chat({
                 </div>
               </div>
             ) : (
-              <div key={item.id} className="flex flex-col gap-2">
+              <div key={item.id} className="flex flex-col gap-1.5">
                 {item.text && (
                   <div className={cn(i === items.length - 1 && streaming && "stream-cursor")}>
                     <Markdown text={item.text} />
                   </div>
                 )}
-                {item.tools.map((t) => (
-                  <ToolCallView key={t.id} run={t} onApprove={onApprove} />
-                ))}
+                {/* 工具调用整组折叠成一行，用户不关心细节时只占一行 */}
+                {item.tools.length > 0 && <ToolCallGroup tools={item.tools} onApprove={onApprove} />}
                 {item.error && (
                   <div className="text-destructive flex items-center gap-2 text-sm">
                     <AlertCircleIcon className="size-4" /> {item.error}

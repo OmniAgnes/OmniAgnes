@@ -28,6 +28,10 @@ export default function App() {
 
   const abortRef = useRef<AbortController | null>(null)
   const idRef = useRef(0)
+  // 已加载历史里最大的 round 序号：新提问的实时轮次从它之后接着数
+  const roundBaseRef = useRef(0)
+  // 本次请求中收到的最大 round（用于结束后推进 base）
+  const lastRoundRef = useRef(-1)
   const activeProjectId = activeTask?.project_id ?? null
 
   const refreshTasks = useCallback(async () => {
@@ -103,16 +107,19 @@ export default function App() {
 
   const nextId = () => ++idRef.current
 
-  // 从持久化消息构建视图
+  // 从持久化消息构建视图。
+  // 持久化结构本身就是「每条 assistant 消息 = 一轮」，天然按轮次拆开；
+  // 同时记录最大轮次，后续实时事件的 round 从它之后接着数，避免与历史撞号。
   const buildItems = (t: TaskFull): ViewItem[] => {
     const out: ViewItem[] = []
     let cur: ViewItem | null = null
+    let round = 0
     for (const m of t.messages ?? []) {
       if (m.role === "user") {
         cur = { id: nextId(), role: "user", text: m.text ?? "", tools: [] }
         out.push(cur)
       } else if (m.role === "assistant") {
-        cur = { id: nextId(), role: "assistant", text: m.text ?? "", tools: [] }
+        cur = { id: nextId(), role: "assistant", text: m.text ?? "", tools: [], round: round++ }
         for (const tc of m.tool_calls ?? []) {
           cur.tools.push({
             id: tc.id,
@@ -132,6 +139,7 @@ export default function App() {
         }
       }
     }
+    roundBaseRef.current = round
     return out
   }
 
@@ -155,6 +163,8 @@ export default function App() {
       setActiveTask({ ...r.task, messages: [] })
       setItems([])
       setMode("build")
+      roundBaseRef.current = 0
+      lastRoundRef.current = -1
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
     }
@@ -196,7 +206,30 @@ export default function App() {
     }
   }
 
+  // 取（或创建）某一轮的 assistant 消息项。
+  // 后端 round 从 0 开始，这里加上历史偏移量，保证与已加载的消息不冲突。
+  const slotOf = (next: ViewItem[], round: number): ViewItem => {
+    const r = roundBaseRef.current + round
+    let cur = next[next.length - 1]
+    if (!cur || cur.role !== "assistant" || cur.round !== r) {
+      cur = { id: nextId(), role: "assistant", text: "", tools: [], round: r }
+      next.push(cur)
+    }
+    return cur
+  }
+
+  // 在指定轮次里找工具卡片：优先按 call_id 精确匹配，否则退回该轮最后一张
+  const findRun = (next: ViewItem[], round: number, callId: string) => {
+    const r = roundBaseRef.current + round
+    const cur = next.find((it) => it.role === "assistant" && it.round === r)
+    if (!cur) return undefined
+    return cur.tools.find((t) => t.id === callId) ?? cur.tools.at(-1)
+  }
+
   const handleEvent = (ev: ChatEvent, taskId: string) => {
+    if ("round" in ev) {
+      lastRoundRef.current = Math.max(lastRoundRef.current, ev.round)
+    }
     switch (ev.type) {
       case "start":
         setActiveTask((prev) => (prev && prev.id === taskId ? { ...prev, title: ev.title, mode: ev.mode } : prev))
@@ -206,8 +239,7 @@ export default function App() {
         setThinking(false)
         setItems((prev) => {
           const next = [...prev]
-          const cur = next[next.length - 1]
-          if (cur && cur.role === "assistant") cur.text += ev.text
+          slotOf(next, ev.round).text += ev.text
           return next
         })
         break
@@ -215,13 +247,11 @@ export default function App() {
         setThinking(false)
         setItems((prev) => {
           const next = [...prev]
-          let cur = next[next.length - 1]
-          if (!cur || cur.role !== "assistant") {
-            cur = { id: nextId(), role: "assistant", text: "", tools: [] }
-            next.push(cur)
-          }
+          const cur = slotOf(next, ev.round)
+          // 同一 id 重复到达时不要重复插入
+          if (cur.tools.some((t) => t.id === ev.id)) return next
           cur.tools.push({
-            id: `${Date.now()}-${cur.tools.length}`,
+            id: ev.id,
             name: ev.name,
             args: ev.args,
             output: "",
@@ -234,8 +264,7 @@ export default function App() {
       case "tool_output":
         setItems((prev) => {
           const next = [...prev]
-          const cur = next[next.length - 1]
-          const run = cur?.tools.filter((t) => t.running).at(-1) ?? cur?.tools.at(-1)
+          const run = findRun(next, ev.round, ev.id)
           if (run) {
             run.output = ev.output
             run.isError = ev.is_error
@@ -244,10 +273,11 @@ export default function App() {
         })
         break
       case "tool_end":
+        // 一轮工具跑完，模型要重新推理下一轮：重新显示思考动画，避免空窗期看着像卡住
+        setThinking(true)
         setItems((prev) => {
           const next = [...prev]
-          const cur = next[next.length - 1]
-          const run = cur?.tools.filter((t) => t.running).at(-1)
+          const run = findRun(next, ev.round, ev.id)
           if (run) {
             run.running = false
             run.isError = ev.is_error
@@ -260,14 +290,18 @@ export default function App() {
         setThinking(false)
         break
       case "approval":
-        // 普通访问模式：把待确认请求挂到最近一张运行中的工具卡片上
+        // 普通访问模式：把待确认请求挂到对应工具卡片上
         setItems((prev) => {
           const next = [...prev]
-          const cur = next[next.length - 1]
-          const run = cur?.tools.filter((t) => t.running).at(-1)
-          if (run) {
-            run.approvalId = ev.id
-            run.approvalChoice = null
+          for (let i = next.length - 1; i >= 0; i--) {
+            const cur = next[i]
+            if (cur.role !== "assistant") continue
+            const run = cur.tools.find((t) => t.id === ev.call_id) ?? cur.tools.at(-1)
+            if (run) {
+              run.approvalId = ev.id
+              run.approvalChoice = null
+            }
+            break
           }
           return next
         })
@@ -289,12 +323,8 @@ export default function App() {
       case "error":
         setItems((prev) => {
           const next = [...prev]
-          const cur = next[next.length - 1]
-          if (cur && cur.role === "assistant") {
-            cur.error = ev.error
-          } else {
-            next.push({ id: nextId(), role: "assistant", text: "", tools: [], error: ev.error })
-          }
+          const cur = slotOf(next, ev.round)
+          cur.error = ev.error
           return next
         })
         break
@@ -313,12 +343,20 @@ export default function App() {
         await refreshTasks()
       }
       const userItem: ViewItem = { id: nextId(), role: "user", text, tools: [] }
-      const asstItem: ViewItem = { id: nextId(), role: "assistant", text: "", tools: [] }
+      // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上
+      const asstItem: ViewItem = {
+        id: nextId(),
+        role: "assistant",
+        text: "",
+        tools: [],
+        round: roundBaseRef.current,
+      }
       setItems((prev) => [...prev, userItem, asstItem])
       setStreaming(true)
       setThinking(true)
       const ac = new AbortController()
       abortRef.current = ac
+      const baseAtSend = roundBaseRef.current
       try {
         await streamChat(task.id, text, mode, state?.model ?? "", (ev) => handleEvent(ev, task!.id), ac.signal)
       } catch (e) {
@@ -332,6 +370,8 @@ export default function App() {
           })
         }
       } finally {
+        // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
+        roundBaseRef.current = Math.max(roundBaseRef.current, baseAtSend + lastRoundRef.current + 1)
         setStreaming(false)
         setThinking(false)
         abortRef.current = null

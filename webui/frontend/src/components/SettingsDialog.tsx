@@ -4,10 +4,13 @@ import {
   BrainIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
+  ClipboardPasteIcon,
   CpuIcon,
   ChevronRightIcon,
+  FolderOpenIcon,
   PencilIcon,
   PlusIcon,
+  RefreshCwIcon,
   SunMoonIcon,
   Trash2Icon,
   XIcon,
@@ -52,6 +55,7 @@ import type {
   MCPStatus,
   MCPServerConfig,
   ProviderConfig,
+  SkillDirs,
   SkillInfo,
   StateInfo,
   Theme,
@@ -123,6 +127,11 @@ interface MCPDraft {
   isNew: boolean
 }
 
+// 技能粘贴导入草稿：直接把 SKILL.md 全文贴进来
+interface SkillPaste {
+  content: string
+}
+
 function emptyMcpDraft(): MCPDraft {
   return {
     name: "",
@@ -168,6 +177,9 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
   const [pluginTab, setPluginTab] = useState<"skills" | "mcp">("skills")
   const [skillDraft, setSkillDraft] = useState<SkillDraft | null>(null)
   const [mcpDraft, setMcpDraft] = useState<MCPDraft | null>(null)
+  const [skillPaste, setSkillPaste] = useState<SkillPaste | null>(null)
+  const [dirs, setDirs] = useState<SkillDirs>({})
+  const [toast, setToast] = useState("")
   const [confirm, setConfirm] = useState<{ kind: "skill" | "mcp"; name: string } | null>(null)
   const [err, setErr] = useState("")
   const [saving, setSaving] = useState(false)
@@ -205,9 +217,12 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
     api.memory().then((r) => setMemory(r.content)).catch(() => {})
     void refreshMcp()
     void refreshSkills()
+    void loadDirs()
     setErr("")
+    setToast("")
     setSkillDraft(null)
     setMcpDraft(null)
+    setSkillPaste(null)
   }, [open])
 
   const saveProviders = async () => {
@@ -367,6 +382,56 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
     }
   }
 
+  // ---------- 打开技能 / MCP 目录，粘贴即自动加载 ----------
+
+  const loadDirs = async () => {
+    try {
+      const r = await api.skillDirs()
+      setDirs(r.dirs ?? {})
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  // 打开后延迟自动刷新：用户粘完文件回到界面即可看到新技能
+  const openSkillFolder = async (source: "global" | "project", name?: string) => {
+    setErr("")
+    try {
+      await api.openSkillDir(source, name)
+      setToast("已打开目录，粘贴 SKILL.md 后点「刷新」即可加载")
+      setTimeout(() => void refreshSkills(), 1500)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const openMcpConfig = async () => {
+    setErr("")
+    try {
+      const r = await api.openMcpFile()
+      setToast(r.exists ? "已打开配置文件，改完点「刷新」即可重连" : "配置文件还不存在，已打开所在目录")
+      setTimeout(() => void refreshMcp(1200), 1500)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const savePastedSkill = async () => {
+    if (!skillPaste || !skillPaste.content.trim()) return
+    setErr("")
+    setSaving(true)
+    try {
+      const r = await api.importSkill({ content: skillPaste.content, source: "global" })
+      setSkillPaste(null)
+      await refreshSkills()
+      setToast(`已导入技能 /${r.name ?? ""}`)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -417,9 +482,27 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
 
                   {err && <div className="text-destructive text-sm">{err}</div>}
 
+                  {toast && (
+                    <div className="text-muted-foreground flex items-center gap-2 text-sm">
+                      <span>{toast}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setToast("")
+                          void refreshSkills()
+                          void refreshMcp(1200)
+                        }}
+                      >
+                        <RefreshCwIcon /> 刷新
+                      </Button>
+                    </div>
+                  )}
+
                   {(providers ?? []).length === 0 && (
                     <div className="text-muted-foreground text-sm">暂无供应商</div>
                   )}
+
 
                   {(providers ?? []).map((p, i) => (
                     <ProviderCard
@@ -531,19 +614,90 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
 
                   {pluginTab === "skills" && (
                     <div className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <Label>技能（对话中用 /名称 触发）</Label>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setErr("")
-                            setSkillDraft({ name: "", description: "", content: "", isNew: true })
-                          }}
-                        >
-                          <PlusIcon /> 添加技能
-                        </Button>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void openSkillFolder("global")}
+                            title={dirs.global?.path ?? "打开全局技能目录"}
+                          >
+                            <FolderOpenIcon /> 打开目录
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setErr("")
+                              setSkillDraft(null)
+                              setSkillPaste({ content: "" })
+                            }}
+                            title="把 SKILL.md 全文粘进来，自动解析名称和描述"
+                          >
+                            <ClipboardPasteIcon /> 粘贴导入
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setErr("")
+                              setSkillPaste(null)
+                              setSkillDraft({ name: "", description: "", content: "", isNew: true })
+                            }}
+                          >
+                            <PlusIcon /> 添加技能
+                          </Button>
+                        </div>
                       </div>
+
+                      {dirs.global?.path && (
+                        <div className="text-muted-foreground truncate text-xs">
+                          全局技能目录：<code className="font-mono">{dirs.global.path}</code>
+                          <span className="ml-1.5">
+                            每个技能一个子目录，内含 SKILL.md
+                          </span>
+                        </div>
+                      )}
+
+                      {skillPaste && (
+                        <div className="flex flex-col gap-2.5 rounded-lg border p-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium">粘贴 SKILL.md</span>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => setSkillPaste(null)}
+                              title="取消"
+                            >
+                              <XIcon />
+                            </Button>
+                          </div>
+                          <Textarea
+                            value={skillPaste.content}
+                            onChange={(e) => setSkillPaste({ content: e.target.value })}
+                            className="min-h-40 font-mono text-xs"
+                            placeholder={
+                              "---\nname: pdf-report\ndescription: 把 PDF 整理成结构化报告\n---\n\n# 执行步骤\n1. …"
+                            }
+                          />
+                          <p className="text-muted-foreground text-xs">
+                            带 frontmatter 就原样保存；没有的话自动从正文推断名称和描述。
+                          </p>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setSkillPaste(null)}>
+                              取消
+                            </Button>
+                            <Button
+                              size="sm"
+                              disabled={saving || !skillPaste.content.trim()}
+                              onClick={() => void savePastedSkill()}
+                            >
+                              导入
+                            </Button>
+                          </div>
+                        </div>
+                      )}
 
                       {skillDraft && (
                         <div className="flex flex-col gap-2.5 rounded-lg border p-3">
@@ -616,29 +770,39 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                               </div>
                               <div className="text-muted-foreground truncate text-xs">{s.description}</div>
                             </div>
-                            {s.source === "project" ? (
-                              <span className="text-muted-foreground shrink-0 text-xs">项目内只读</span>
-                            ) : (
-                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() => void startEditSkill(s)}
-                                  title="编辑技能"
-                                >
-                                  <PencilIcon />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  className="text-muted-foreground hover:text-destructive"
-                                  onClick={() => setConfirm({ kind: "skill", name: s.name })}
-                                  title="删除技能"
-                                >
-                                  <Trash2Icon />
-                                </Button>
-                              </div>
-                            )}
+                            <div className="flex shrink-0 items-center gap-1">
+                              {s.source === "project" ? (
+                                <span className="text-muted-foreground text-xs">项目内只读</span>
+                              ) : (
+                                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() => void openSkillFolder("global", s.name)}
+                                    title="在文件管理器中打开"
+                                  >
+                                    <FolderOpenIcon />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() => void startEditSkill(s)}
+                                    title="编辑技能"
+                                  >
+                                    <PencilIcon />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="text-muted-foreground hover:text-destructive"
+                                    onClick={() => setConfirm({ kind: "skill", name: s.name })}
+                                    title="删除技能"
+                                  >
+                                    <Trash2Icon />
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -647,19 +811,36 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
 
                   {pluginTab === "mcp" && (
                     <div className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <Label>MCP 服务器</Label>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setErr("")
-                            setMcpDraft(emptyMcpDraft())
-                          }}
-                        >
-                          <PlusIcon /> 添加服务器
-                        </Button>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void openMcpConfig()}
+                            title={dirs.mcp?.path ?? "打开 MCP 配置文件"}
+                          >
+                            <FolderOpenIcon /> 打开配置
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setErr("")
+                              setMcpDraft(emptyMcpDraft())
+                            }}
+                          >
+                            <PlusIcon /> 添加服务器
+                          </Button>
+                        </div>
                       </div>
+
+                      {dirs.mcp?.path && (
+                        <div className="text-muted-foreground truncate text-xs">
+                          配置文件：<code className="font-mono">{dirs.mcp.path}</code>
+                          <span className="ml-1.5">按 JSON 结构加 servers，改完点刷新重连</span>
+                        </div>
+                      )}
 
                       {mcpDraft && (
                         <div className="flex flex-col gap-2.5 rounded-lg border p-3">
