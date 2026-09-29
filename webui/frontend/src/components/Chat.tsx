@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import {
   AlertCircleIcon,
   Loader2Icon,
@@ -104,10 +104,17 @@ export function Chat({
     onSend(text)
   }
 
-  // 思考动画：thinking 为真时显示。
-  // 两种场景：① 刚发出提问、等首个 token；② 一轮工具跑完、等模型下一轮输出。
-  // 收到 text / tool_start / done 时会把 thinking 置回 false。
-  const showThinking = thinking
+  // 处理中指示：整个生成期间都常驻消息流末尾。
+  // ① thinking：等首个 token、或一轮工具跑完等下一轮推理的间隙；
+  // ② streaming：模型还在输出（哪怕正在流式吐字），末尾始终有个"还在忙"的提示。
+  const showThinking = streaming || thinking
+
+  // 所有轮次的工具调用汇总成一组，统一折叠在消息流末尾——用户不关心内部细节。
+  const allTools = useMemo(() => items.flatMap((it) => it.tools), [items])
+
+  // 正在流式输出的那条消息（最后一条助手消息），光标只挂这一条，
+  // 否则按轮次分组后光标会闪在历史消息上。
+  const streamingId = streaming ? (items[items.length - 1]?.role === "assistant" ? items[items.length - 1].id : null) : null
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -125,7 +132,7 @@ export function Chat({
       <div ref={scrollRef} onScroll={onScroll} className="omni-scroll min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-6 md:px-6">
           {items.length === 0 && emptyHint}
-          {items.map((item, i) =>
+          {items.map((item) =>
             item.role === "user" ? (
               <div key={item.id} className="flex justify-end">
                 <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap">
@@ -135,12 +142,10 @@ export function Chat({
             ) : (
               <div key={item.id} className="flex flex-col gap-1.5">
                 {item.text && (
-                  <div className={cn(i === items.length - 1 && streaming && "stream-cursor")}>
+                  <div className={cn(item.id === streamingId && "stream-cursor")}>
                     <Markdown text={item.text} />
                   </div>
                 )}
-                {/* 工具调用整组折叠成一行，用户不关心细节时只占一行 */}
-                {item.tools.length > 0 && <ToolCallGroup tools={item.tools} onApprove={onApprove} />}
                 {item.error && (
                   <div className="text-destructive flex items-center gap-2 text-sm">
                     <AlertCircleIcon className="size-4" /> {item.error}
@@ -149,7 +154,14 @@ export function Chat({
               </div>
             ),
           )}
-          {showThinking && <ThinkingIndicator />}
+
+          {/* 底部固定区：工具调用折叠组 + 处理中动画，永远在消息流最后 */}
+          {(allTools.length > 0 || showThinking) && (
+            <div className="flex flex-col gap-2">
+              {allTools.length > 0 && <ToolCallGroup tools={allTools} onApprove={onApprove} />}
+              {showThinking && <ProcessingIndicator />}
+            </div>
+          )}
         </div>
       </div>
 
@@ -231,12 +243,12 @@ export function Chat({
   )
 }
 
-/** 模型首个 token 前的「思考中」动画 */
-function ThinkingIndicator() {
+/** 处理中动画：固定在消息流最末尾，跟着工具调用组下方 */
+function ProcessingIndicator() {
   return (
-    <div className="text-muted-foreground flex items-center gap-2 text-sm">
-      <Loader2Icon className="size-3.5 animate-spin" />
-      <span>思考中…</span>
+    <div className="text-muted-foreground flex items-center gap-2 px-2 py-1 text-sm">
+      <Loader2Icon className="size-3.5 shrink-0 animate-spin" />
+      <span>处理中…</span>
     </div>
   )
 }
