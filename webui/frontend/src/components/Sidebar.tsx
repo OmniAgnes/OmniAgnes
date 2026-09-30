@@ -247,8 +247,8 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* 底部：设置入口 */}
-        <div className="flex items-center justify-end border-t px-3 py-1.5">
+        {/* 底部：设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
+        <div className="flex items-center justify-end px-3 py-1.5">
           <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title="设置">
             <SettingsIcon />
           </Button>

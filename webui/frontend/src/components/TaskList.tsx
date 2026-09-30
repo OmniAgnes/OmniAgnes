@@ -32,7 +32,7 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
         <div
           key={t.id}
           className={cn(
-            "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1.5 text-sm",
+            "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-xs",
             activeTaskId === t.id && "bg-sidebar-accent",
           )}
         >
