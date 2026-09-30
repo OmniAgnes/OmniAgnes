@@ -14,21 +14,69 @@ const (
 	defaultBashTimeoutSec = 10
 )
 
-// ProviderConfig 描述单个 LLM 提供方。
-type ProviderConfig struct {
-	Name            string   `json:"name,omitempty"`              // 显示名称
-	Type            string   `json:"type"`                        // openai | anthropic | gemini | ollama
-	Model           string   `json:"model,omitempty"`             // 主模型（与 models[0] 同步）
-	Models          []string `json:"models,omitempty"`            // 该供应商可用模型（首个为主模型）
-	BaseURL         string   `json:"base_url,omitempty"`
-	APIKey          string   `json:"api_key,omitempty"`
-	EnvKey          string   `json:"env_key,omitempty"`           // 从该环境变量读取 key，优先级高于 api_key
-	Default         bool     `json:"default,omitempty"`
-	ContextWindow   int      `json:"context_window,omitempty"`    // 上下文窗口（token）
+// ModelOptions 描述单个模型的个性化参数。同一供应商下不同模型能力差异很大
+// （上下文窗口、最大输出、支持的输入模态、是否开推理），因此这些参数按模型
+// 粒度配置；未设置的字段回落到供应商级同名字段。
+type ModelOptions struct {
+	ContextWindow   int      `json:"context_window,omitempty"`   // 上下文窗口（token）
 	MaxOutputTokens int      `json:"max_output_tokens,omitempty"` // 最大输出 token
-	InputTypes      []string `json:"input_types,omitempty"`       // 支持的输入类型：text/image/video/pdf
+	InputTypes      []string `json:"input_types,omitempty"`       // 支持的输入类型：text/image/video/pdf/audio
 	Reasoning       string   `json:"reasoning,omitempty"`         // 推理等级：default | off | on
 }
+
+// Empty 报告该模型是否未配置任何个性化参数。
+func (o ModelOptions) Empty() bool {
+	return o.ContextWindow == 0 && o.MaxOutputTokens == 0 && len(o.InputTypes) == 0 && o.Reasoning == ""
+}
+
+// ProviderConfig 描述单个 LLM 提供方。
+type ProviderConfig struct {
+	Name    string `json:"name,omitempty"`    // 显示名称
+	Type    string `json:"type"`              // openai | anthropic | gemini | ollama
+	Model   string `json:"model,omitempty"`   // 主模型（与 models[0] 同步）
+	Models  []string `json:"models,omitempty"` // 该供应商可用模型（首个为主模型）
+	BaseURL string `json:"base_url,omitempty"`
+	APIKey  string `json:"api_key,omitempty"`
+	EnvKey  string `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
+	Default bool   `json:"default,omitempty"`
+
+	// 以下为供应商级默认值，模型未单独配置时生效（兼容旧配置文件）
+	ContextWindow   int      `json:"context_window,omitempty"`
+	MaxOutputTokens int      `json:"max_output_tokens,omitempty"`
+	InputTypes      []string `json:"input_types,omitempty"`
+	Reasoning       string   `json:"reasoning,omitempty"`
+
+	// ModelOptions 按模型名覆盖上述默认值
+	ModelOptions map[string]ModelOptions `json:"model_options,omitempty"`
+}
+
+// OptionsFor 返回指定模型的有效参数：模型级配置优先，缺项回落到供应商级默认值。
+func (p *ProviderConfig) OptionsFor(model string) ModelOptions {
+	o := ModelOptions{
+		ContextWindow:   p.ContextWindow,
+		MaxOutputTokens: p.MaxOutputTokens,
+		InputTypes:      p.InputTypes,
+		Reasoning:       p.Reasoning,
+	}
+	m, ok := p.ModelOptions[model]
+	if !ok {
+		return o
+	}
+	if m.ContextWindow > 0 {
+		o.ContextWindow = m.ContextWindow
+	}
+	if m.MaxOutputTokens > 0 {
+		o.MaxOutputTokens = m.MaxOutputTokens
+	}
+	if len(m.InputTypes) > 0 {
+		o.InputTypes = m.InputTypes
+	}
+	if m.Reasoning != "" {
+		o.Reasoning = m.Reasoning
+	}
+	return o
+}
+
 
 // ProviderForModel 返回提供指定模型的供应商配置；找不到返回 nil。
 func (c *Config) ProviderForModel(model string) *ProviderConfig {
@@ -43,7 +91,7 @@ func (c *Config) ProviderForModel(model string) *ProviderConfig {
 	return nil
 }
 
-// Normalize 同步 Model 与 Models 字段。
+// Normalize 同步 Model 与 Models 字段，并剔除已删除模型残留的个性化配置。
 func (p *ProviderConfig) Normalize() {
 	if len(p.Models) == 0 {
 		if p.Model != "" {
@@ -66,7 +114,19 @@ func (p *ProviderConfig) Normalize() {
 	if len(p.Models) > 0 {
 		p.Model = p.Models[0]
 	}
+	// 清理：模型已删或配置为空的一并移除，避免配置文件里堆积死条目
+	if len(p.ModelOptions) > 0 {
+		for name, opt := range p.ModelOptions {
+			if !seen[name] || opt.Empty() {
+				delete(p.ModelOptions, name)
+			}
+		}
+		if len(p.ModelOptions) == 0 {
+			p.ModelOptions = nil
+		}
+	}
 }
+
 
 // HasModel 报告该供应商是否提供指定模型。
 func (p *ProviderConfig) HasModel(model string) bool {

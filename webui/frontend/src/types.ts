@@ -109,6 +109,14 @@ export type Theme = "dark" | "light" | "system"
 
 export type ThemeColor = "zinc" | "violet" | "blue" | "emerald" | "amber" | "rose"
 
+/** 单个模型的个性化参数；未设置项回落到供应商级同名字段 */
+export interface ModelOptions {
+  context_window?: number
+  max_output_tokens?: number
+  input_types?: string[]
+  reasoning?: string
+}
+
 export interface ProviderConfig {
   name?: string
   type: string
@@ -122,6 +130,8 @@ export interface ProviderConfig {
   max_output_tokens?: number
   input_types?: string[]
   reasoning?: string
+  /** 按模型名覆盖供应商级默认值 */
+  model_options?: Record<string, ModelOptions>
 }
 
 export interface StateInfo {

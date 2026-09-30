@@ -109,8 +109,10 @@ func main() {
 		exitErr("未知 agent 模式: %s（可选 build / plan）", mode)
 	}
 	maxTokens := 8192
-	if p := cfg.ProviderForModel(model); p != nil && p.MaxOutputTokens > 0 {
-		maxTokens = p.MaxOutputTokens
+	if p := cfg.ProviderForModel(model); p != nil {
+		if n := p.OptionsFor(model).MaxOutputTokens; n > 0 {
+			maxTokens = n
+		}
 	}
 	a := agent.New(prov, reg, agent.Options{
 		Model:             model,
