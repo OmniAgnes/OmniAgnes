@@ -13,6 +13,8 @@
 4. 安装包：`cd webui/desktop && npm run dist`
 - 沙箱启动桌面：`cd webui/desktop && env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS npx electron . --disable-gpu --disable-gpu-sandbox`（ELECTRON_RUN_AS_NODE=1 会让 electron 退化成纯 Node；GPU 进程在沙箱内崩溃需禁 GPU）
 - 发版：打 tag v* → `.github/workflows/release.yml` 双架构出 Win NSIS + mac dmg；CI 交叉编译内核用**备料名**（omni-<平台>-<架构>[.exe]）放 bin/，beforePack 钩子无条件覆盖正式名（顺序无关、幂等）
+- **cp 到 `webui/desktop/bin/omni.exe` 报 `Device or resource busy`** = 旧 omni.exe 还在跑，先 `taskkill //F //IM omni.exe` 和 `taskkill //F //IM electron.exe` 再 cp（重启后后台任务显示 failed 是预期的，那是我自己杀的）。
+- **改内置技能必须改三份**：仓库源 `.omni/skills/` → `go run ./build/gen-builtin-skills` → `internal/skills/embedded/`；**全局 `~/.config/omni/skills/` 要手动 cp**——`SeedBuiltIn` 见目录已存在就跳过，永不覆盖（改了源文件全局旧副本不会更新）。
 
 ## 已有约定
 - 会话历史：webui `agentFor` 创建 Agent 时必须传 `History: t.Messages` 恢复持久化消息。
@@ -50,3 +52,12 @@
 - 展开详情按工具定制：edit → `lib/diff.ts` 的 LCS 行级 diff（+绿/-红 + 增删计数）；write → 内容代码块；bash → 命令代码块；read/grep → 路径/参数；MCP 等未知工具 → 键值列表（不吐 JSON）。
 - 禁止在 UI 里直接 `JSON.stringify(args)` 给用户看。
 
+
+## 内置浏览器（Electron WebContentsView，仅桌面端）
+- **链路**：内核 `browser` 工具（`internal/webui/browser.go`）→ op 入队阻塞等结果 → 前端 `BrowserPane` 长轮询 `GET /api/browser/next` 领取 → preload `window.omniDesktop.browserOp` IPC → Electron 主进程在 `WebContentsView` 执行 → 前端 `POST /api/browser/result` 回填。通道设计对称于 approval/question。
+- **在线检测**：长轮询挂起数 `pollers > 0 || time.Since(lastSeen) < 5s` 判定"桌面壳在线"；非 Electron 时 browser 工具**快速报错**，不等待（否则会挂 3 分钟）。
+- **视图定位**：原生 `WebContentsView` 悬浮在主窗口之上，前端占位 div 用 `ResizeObserver` + `getBoundingClientRect` 实时上报矩形（`omni:browser-bounds`），显隐用 `omni:browser-visible`；**收起时占位 div 不存在 → 必须上报 0×0**。
+- **op 语义**：`open/navigate/reload/back/forward/click(x,y,doubleClick)/type(text)/key/scroll(x,y,amount)/wait(ms)/extract/eval(code)/state/show/hide/close`；`extract` 返回可见交互元素（视口中心坐标）+ 标题 + 正文，模型靠它"看"页面 → **必须先 extract 拿坐标再 click**。
+- **入口 UI**：输入框底部「完全访问」(ModePicker) 之后的 `GlobeIcon` 幽灵按钮（用户明确要求放这里，**不要**放右侧竖排按钮）。`BrowserPane` 是受控组件（`open`/`onOpenChange`），收起时 `return null`。
+- AI 开始操作时自动展开面板（`close`/`hide` 除外），让用户看得见它在干什么。
+- `.omni/skills/browser-use/SKILL.md` 已改为内置 browser 工具操作手册（原文是 browser-use.com 上游的外部 CLI 手册，本机无此 CLI，会让 AI 反复安装/等授权 → 界面卡"处理中"）。

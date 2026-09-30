@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { AddProjectDialog } from "@/components/AddProjectDialog"
+import { BrowserPane } from "@/components/BrowserPane"
 import { Chat, type QueuedMsg, type ViewItem } from "@/components/Chat"
 import { Sidebar } from "@/components/Sidebar"
 import { SettingsDialog } from "@/components/SettingsDialog"
@@ -52,6 +53,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // 内置浏览器面板显隐（入口在输入框底部「完全访问」后的地球图标）
+  const [browserOpen, setBrowserOpen] = useState(false)
   const [loadErr, setLoadErr] = useState("")
   // 递增即让右侧输入框聚焦（新建任务、打开任务、点「任务」TAB）
   const [focusSignal, setFocusSignal] = useState(0)
@@ -770,7 +773,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      {isDesktop && <Titlebar source={chatSource} title={chatTitle} />}
+      {isDesktop && <Titlebar source={chatSource} title={chatTitle} browserOpen={browserOpen} />}
       <div className="flex min-h-0 flex-1">
         <Sidebar
           tasks={standaloneTasks}
@@ -816,7 +819,11 @@ export default function App() {
             setSidebarOpen(true)
             focusInput()
           }}
+          browserOpen={browserOpen}
+          onToggleBrowser={() => setBrowserOpen((v) => !v)}
         />
+        {/* 内置浏览器面板：仅桌面端（Electron 壳有 WebContentsView 与操作桥） */}
+        {isDesktop && <BrowserPane open={browserOpen} onOpenChange={setBrowserOpen} />}
       </div>
       <SettingsDialog
         open={settingsOpen}

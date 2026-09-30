@@ -9,6 +9,7 @@ import {
   FilePenIcon,
   FileTextIcon,
   FolderSearchIcon,
+  GlobeIcon,
   HelpCircleIcon,
   ListTodoIcon,
   Loader2Icon,
@@ -85,6 +86,19 @@ const META: Record<string, ToolMeta> = {
     icon: BracesIcon,
     label: "JSON",
     summary: (a) => (a.pointer ? `${str(a.op) || "query"} ${str(a.pointer)}` : str(a.path)),
+  },
+  browser: {
+    icon: GlobeIcon,
+    label: "浏览器",
+    summary: (a) => {
+      const op = str(a.op)
+      if (op === "open" || op === "navigate") return str(a.url)
+      if (op === "click") return `点击 (${Math.round(Number(a.x) || 0)}, ${Math.round(Number(a.y) || 0)})`
+      if (op === "type") return `输入 ${str(a.text).slice(0, 24)}`
+      if (op === "key") return str(a.key)
+      if (op === "eval") return str(a.code).slice(0, 40)
+      return op
+    },
   },
 }
 

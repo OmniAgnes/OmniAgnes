@@ -64,6 +64,7 @@ func Start(opts Options) (string, error) {
 		regs:   map[string]*tools.Registry{},
 		approvals: map[string]*approvalReq{},
 		questions: map[string]*questionReq{},
+		browser: newBrowserBridge(),
 	}
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
@@ -123,6 +124,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/skills", s.handleSkillCreate)
 	mux.HandleFunc("PUT /api/skills/{name}", s.handleSkillUpdate)
 	mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillDelete)
+	mux.HandleFunc("GET /api/browser/next", s.handleBrowserNext)
+	mux.HandleFunc("POST /api/browser/result", s.handleBrowserResult)
 	return mux
 }
 
@@ -139,6 +142,8 @@ type server struct {
 	approvals map[string]*approvalReq
 	// questions 保存等待用户回答的 ask 提问。
 	questions map[string]*questionReq
+	// browser 是内置浏览器桥（desktop 壳经 /api/browser/* 长轮询驱动）。
+	browser *BrowserBridge
 	// approvalSeq 生成审批请求 ID。
 	approvalSeq atomic.Int64
 	// provider 非空时优先使用（测试注入口），否则按 cfg 解析。

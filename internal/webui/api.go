@@ -1173,6 +1173,7 @@ func (s *server) newRegistry(cwd string) *tools.Registry {
 	}
 	reg := tools.NewRegistry(env)
 	s.opts.Extras.RegisterTools(reg, cwd)
+	reg.Register(s.browserTool())
 	return reg
 }
 

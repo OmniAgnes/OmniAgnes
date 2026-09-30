@@ -11,6 +11,7 @@ import {
   CircleDashedIcon,
   CopyIcon,
   FolderIcon,
+  GlobeIcon,
   HelpCircleIcon,
   ListChecksIcon,
   ListTodoIcon,
@@ -113,6 +114,9 @@ interface ChatProps {
   onModeChange: (mode: "build" | "plan") => void
   onModelChange: (model: string) => void
   onOpenSidebar: () => void
+  /** 内置浏览器面板是否展开（仅桌面端有该入口） */
+  browserOpen?: boolean
+  onToggleBrowser?: () => void
 }
 
 export function Chat({
@@ -139,6 +143,8 @@ export function Chat({
   onModeChange,
   onModelChange,
   onOpenSidebar,
+  browserOpen,
+  onToggleBrowser,
 }: ChatProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -478,6 +484,18 @@ export function Chat({
                 <PaperclipIcon />
               </Button>
               <ModePicker mode={mode} disabled={streaming} onChange={onModeChange} />
+              {/* 内置浏览器：地球图标紧跟访问模式，展开态高亮（仅桌面端） */}
+              {isDesktop && onToggleBrowser && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onToggleBrowser}
+                  title={browserOpen ? "收起内置浏览器" : "打开内置浏览器"}
+                  className={cn("shrink-0", browserOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  <GlobeIcon />
+                </Button>
+              )}
             </div>
 
             {/* 右：模型选择（供应商 → 模型 二级）+ 发送/中断 */}
