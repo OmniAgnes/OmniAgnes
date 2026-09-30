@@ -22,3 +22,6 @@ webui/desktop/node_modules/
 # 桌面版打包产物与内核副本
 webui/desktop/bin/
 webui/desktop/release/
+
+# WorkBuddy 临时文件（调试脚本等）
+.workbuddy/tmp/
