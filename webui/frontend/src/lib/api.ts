@@ -172,6 +172,16 @@ export const api = {
       body: JSON.stringify({ source: "global", ...payload }),
     }).then((r) => json<{ ok: boolean; name?: string; description?: string; skill?: SkillInfo }>(r)),
 
+  /** 上传随消息发送的附件，返回落盘后的绝对路径（模型据此用工具/MCP 读取） */
+  upload: (taskId: string, files: File[]) => {
+    const fd = new FormData()
+    for (const f of files) fd.append("files", f)
+    return fetch(`/api/upload?task_id=${encodeURIComponent(taskId)}`, {
+      method: "POST",
+      body: fd,
+    }).then((r) => json<{ files: { path: string; name: string; size: number }[] }>(r))
+  },
+
   /** 答复一次写操作确认（普通访问模式） */
   approval: (id: string, allow: boolean) =>
     fetch(`/api/approvals/${encodeURIComponent(id)}`, {
@@ -193,6 +203,7 @@ export const api = {
 }
 
 // streamChat 发起 SSE 聊天；onEvent 收到每条事件，返回时流已结束。abort 信号可中断。
+// attachments 为已上传附件的绝对路径，后端会拼进消息文本。
 export async function streamChat(
   taskId: string,
   text: string,
@@ -200,11 +211,12 @@ export async function streamChat(
   model: string,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
+  attachments: string[] = [],
 ): Promise<void> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, text, mode, model }),
+    body: JSON.stringify({ task_id: taskId, text, mode, model, attachments }),
     signal,
   })
   if (!res.ok || !res.body) {

@@ -30,12 +30,11 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
 
   const running = tools.filter((t) => t.running).length
   const waiting = tools.filter((t) => t.approvalId != null && t.approvalChoice == null).length
-  const failed = tools.filter((t) => t.isError && !t.running).length
 
+  // 失败不在这里标红/计数（用户要求）：整体状态只看是否还在跑，详情用户展开自己看
   const status = (() => {
     if (waiting > 0) return { icon: CircleAlertIcon, cls: "text-amber-600 dark:text-amber-400", text: "等待确认" }
     if (running > 0) return { icon: Loader2Icon, cls: "text-muted-foreground", text: "执行中" }
-    if (failed > 0) return { icon: CircleAlertIcon, cls: "text-destructive", text: `${failed} 个失败` }
     return { icon: CheckIcon, cls: "text-muted-foreground", text: "已完成" }
   })()
   const StatusIcon = status.icon

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   BlocksIcon,
   BrainIcon,
@@ -186,6 +186,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
   const [saving, setSaving] = useState(false)
   /** 供应商配置保存成功提示（区别于技能/MCP 的 toast） */
   const [providersSaved, setProvidersSaved] = useState(false)
+  /** 最近一次「添加」的供应商下标：新卡片据此自动展开并聚焦名称 */
+  const [newProviderIndex, setNewProviderIndex] = useState(-1)
 
   const refreshSkills = async () => {
     try {
@@ -271,6 +273,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
   }
 
   const addProvider = () => {
+    // 新卡片挂载时自动展开并聚焦名称输入框，方便直接填写
+    setNewProviderIndex((providers ?? []).length)
     setProviders((prev) => [...(prev ?? []), { type: "openai", models: [] }])
   }
 
@@ -523,6 +527,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                     <ProviderCard
                       key={i}
                       provider={p}
+                      defaultOpen={i === newProviderIndex}
                       onChange={(patch) => patchProvider(i, patch)}
                       onRemove={() => removeProvider(i)}
                     />
@@ -1057,13 +1062,22 @@ function ProviderCard({
   provider,
   onChange,
   onRemove,
+  defaultOpen = false,
 }: {
   provider: ProviderConfig
   onChange: (patch: Partial<ProviderConfig>) => void
   onRemove: () => void
+  /** 挂载时是否展开（新添加的供应商为 true），展开后自动聚焦名称输入框 */
+  defaultOpen?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [modelInput, setModelInput] = useState("")
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  // 新添加的供应商：展开后直接聚焦名称，省一次点击
+  useEffect(() => {
+    if (defaultOpen) nameRef.current?.focus()
+  }, [defaultOpen])
 
   /** 批量添加：支持一次粘贴多个（逗号/空格分隔），自动去重 */
   const addModels = () => {
@@ -1172,6 +1186,7 @@ function ProviderCard({
               <Label className="text-muted-foreground text-xs">名称</Label>
             </div>
             <Input
+              ref={nameRef}
               value={provider.name ?? ""}
               onChange={(e) => onChange({ name: e.target.value })}
               placeholder="供应商名称"

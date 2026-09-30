@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Project, TaskMeta } from "@/types"
 
-/** 文件夹下任务每页条数（点「更多」再加载这么多） */
+/** 文件夹下任务每页条数（点「显示更多」再加载这么多） */
 const PAGE = 5
 
 /**
@@ -343,7 +343,7 @@ function ProjectGroup(props: {
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const { project, tasks, activeTaskId, running, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
-  // 任务多时先显示 5 条，点「更多」每次再加载 5 条
+  // 任务多时先显示 5 条，点「显示更多」每次再加载 5 条
   const [limit, setLimit] = useState(PAGE)
   // 任务列表默认收起；展开状态按项目 id 持久化——切任务、刷新、重启后都保持
   const [open, setOpen] = useState(() => isProjectOpen(project.id))
@@ -426,7 +426,7 @@ function ProjectGroup(props: {
             className="text-muted-foreground hover:text-foreground h-6 justify-start px-2 text-xs"
             onClick={() => setLimit((n) => n + PAGE)}
           >
-            更多
+            显示更多
           </Button>
         )}
       </div>

@@ -8,6 +8,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CopyIcon,
   FolderIcon,
   HelpCircleIcon,
   ListChecksIcon,
@@ -15,11 +16,13 @@ import {
   Loader2Icon,
   MenuIcon,
   MessageSquareIcon,
+  PaperclipIcon,
   PencilLineIcon,
   SendHorizontalIcon,
   SlashIcon,
   SquareIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react"
 
 import { Markdown } from "@/components/Markdown"
@@ -54,6 +57,8 @@ export interface PendingApproval {
 export interface QueuedMsg {
   id: number
   text: string
+  /** 随消息一起发送的附件 */
+  files?: File[]
 }
 
 export interface ViewItem {
@@ -62,6 +67,8 @@ export interface ViewItem {
   text: string
   tools: ToolRun[]
   error?: string
+  /** 该消息随带的附件文件名（仅用户消息，展示用） */
+  attachments?: string[]
   /** LLM 迭代轮次：一次提问会跑多轮，每轮 = 一段文本 + 若干工具调用 */
   round?: number
 }
@@ -86,7 +93,7 @@ interface ChatProps {
   /** 递增即触发输入框聚焦（新建任务、打开任务、点 TAB 后自动对焦） */
   focusSignal?: number
   emptyHint?: React.ReactNode
-  onSend: (text: string) => void
+  onSend: (text: string, files?: File[]) => void
   onStop: () => void
   /** 队列项：中断当前轮并立即发送这条 */
   onQueueDispatch: (id: number) => void
@@ -129,8 +136,11 @@ export function Chat({
 }: ChatProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   // 用户手动上滚后不再强行拉回底部，直到重新滚到底
   const stickRef = useRef(true)
+  // 待发送的附件：随下一条消息一起上传发出
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
 
   // 受控输入：斜杠提示需要读取当前文本
   const [draft, setDraft] = useState("")
@@ -190,11 +200,17 @@ export function Chat({
 
   const submit = () => {
     const text = draft.trim()
-    if (!text) return
+    if (!text && pendingFiles.length === 0) return
     setDraft("")
+    const files = pendingFiles
+    setPendingFiles([])
     // 处理中发送不再阻止：App 会把它放进队列（输入框上方可见）
-    onSend(text)
+    onSend(text, files.length > 0 ? files : undefined)
   }
+
+  /** 附件选择：支持图片 / PDF / Office 文档 / 音视频等，交给模型用工具/MCP 处理 */
+  const ATTACH_ACCEPT =
+    "image/*,.pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.mp3,.wav,.m4a,.mp4,.mov,.zip"
 
   /** 斜杠补全：把选中的技能名写进输入框（保留光标后的内容一般为空） */
   const acceptSlash = (name: string) => {
@@ -271,13 +287,7 @@ export function Chat({
 
     return blocks.map((b, bi) => (
       <div key={b.user?.id ?? `blk-${bi}`} className="flex flex-col gap-4">
-        {b.user && (
-          <div className="flex justify-end">
-            <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap">
-              {b.user.text}
-            </div>
-          </div>
-        )}
+        {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} />}
 
         {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
             不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。
@@ -335,7 +345,7 @@ export function Chat({
       <div className="px-3 pb-3 md:px-6 md:pb-4">
         {pendingQ && <QuestionBanner run={pendingQ} onAnswer={onAnswer} />}
         {pending && !pendingQ && <ApprovalBanner run={pending} onApprove={onApprove} />}
-        {todosOpen && !pendingQ && <TodoPanel items={todos} />}
+        {todosOpen && !pendingQ && <TodoPanel items={todos} active={streaming} />}
         {queue.length > 0 && (
           <QueuePanel queue={queue} onDispatch={onQueueDispatch} onEdit={onQueueEdit} onRemove={onQueueRemove} />
         )}
@@ -346,6 +356,18 @@ export function Chat({
           </div>
         )}
         <div className="bg-card relative mx-auto max-w-3xl rounded-2xl border p-2 shadow-xs">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            accept={ATTACH_ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              const picked = [...(e.target.files ?? [])]
+              if (picked.length > 0) setPendingFiles((fs) => [...fs, ...picked])
+              e.target.value = ""
+            }}
+          />
           {slashOpen && slashMatch.length > 0 && (
             <div className="bg-popover text-popover-foreground absolute bottom-full left-2 mb-2 max-h-64 w-72 overflow-auto rounded-lg border p-1 shadow-lg">
               {slashMatch.map((s, i) => (
@@ -373,6 +395,28 @@ export function Chat({
                     <span className="text-muted-foreground line-clamp-1 pl-5 text-xs">{s.description}</span>
                   )}
                 </button>
+              ))}
+            </div>
+          )}
+          {pendingFiles.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1 pb-1 pt-0.5">
+              {pendingFiles.map((f, i) => (
+                <span
+                  key={`${f.name}-${i}`}
+                  className="bg-muted flex max-w-56 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]"
+                  title={f.name}
+                >
+                  <PaperclipIcon className="text-muted-foreground size-3 shrink-0" />
+                  <span className="min-w-0 truncate">{f.name}</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground cursor-pointer"
+                    onClick={() => setPendingFiles((fs) => fs.filter((_, j) => j !== i))}
+                    title="移除"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </span>
               ))}
             </div>
           )}
@@ -413,8 +457,19 @@ export function Chat({
             }}
           />
           <div className="flex items-center justify-between gap-2 px-1 pt-1">
-            {/* 左：访问模式（下拉，样式对齐模型选择） */}
-            <ModePicker mode={mode} disabled={streaming} onChange={onModeChange} />
+            {/* 左：添加附件 + 访问模式（下拉，样式对齐模型选择） */}
+            <div className="flex min-w-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground shrink-0"
+                onClick={() => fileRef.current?.click()}
+                title="添加图片或文件"
+              >
+                <PaperclipIcon />
+              </Button>
+              <ModePicker mode={mode} disabled={streaming} onChange={onModeChange} />
+            </div>
 
             {/* 右：模型选择（供应商 → 模型 二级）+ 发送/中断 */}
             <div className="flex shrink-0 items-center gap-1.5">
@@ -448,6 +503,85 @@ function ProcessingIndicator() {
   )
 }
 
+/** 超过这个字符数或行数的用户消息默认收起，点「展开」看全部 */
+const COLLAPSE_CHARS = 300
+const COLLAPSE_LINES = 8
+
+/** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；悬停浮现复制按钮；附件以标签展示。 */
+function UserBubble({ text, attachments }: { text: string; attachments?: string[] }) {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const long = text.length > COLLAPSE_CHARS || text.split("\n").length > COLLAPSE_LINES
+  const toggle = () => setOpen((o) => !o)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // 桌面端 file:// 等非安全上下文剪贴板 API 不可用时降级
+      const ta = document.createElement("textarea")
+      ta.value = text
+      ta.style.position = "fixed"
+      ta.style.opacity = "0"
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand("copy")
+      ta.remove()
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div className="flex justify-end">
+      <div className="flex max-w-[85%] flex-col items-end gap-0.5">
+        <div className="group flex w-full items-start justify-end gap-1">
+          <div
+            className={cn(
+              "bg-primary text-primary-foreground min-w-0 rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap",
+              long && !open && "line-clamp-5 cursor-pointer",
+            )}
+            onClick={long && !open ? toggle : undefined}
+          >
+            {text}
+            {attachments && attachments.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {attachments.map((a, i) => (
+                  <span
+                    key={`${a}-${i}`}
+                    className="flex max-w-52 items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px]"
+                    title={a}
+                  >
+                    <PaperclipIcon className="size-3 shrink-0 opacity-80" />
+                    <span className="min-w-0 truncate">{a}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-foreground mt-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+            onClick={copy}
+            title="复制"
+          >
+            {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
+          </Button>
+        </div>
+        {long && (
+          <button
+            type="button"
+            onClick={toggle}
+            className="text-muted-foreground hover:text-foreground flex items-center gap-0.5 pr-1 text-[11px] cursor-pointer"
+          >
+            {open ? "收起" : "展开"}
+            {open ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** 发送队列面板：处理中排队的消息，悬停显示 发送/编辑/删除。 */
 function QueuePanel({
   queue,
@@ -471,8 +605,16 @@ function QueuePanel({
           className="group bg-card flex items-center gap-2 rounded-lg border px-2.5 py-1.5"
         >
           <ListChecksIcon className="text-muted-foreground size-3.5 shrink-0" />
-          <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs" title={q.text}>
-            {q.text}
+          <span
+            className="text-muted-foreground min-w-0 flex-1 truncate text-xs"
+            title={q.text || undefined}
+          >
+            {q.text || (
+              <span className="flex items-center gap-1">
+                <PaperclipIcon className="size-3" />
+                {q.files?.length ?? 0} 个附件
+              </span>
+            )}
           </span>
           {/* 悬停浮现操作：发送=中断当前轮立即发这条 */}
           <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -681,8 +823,9 @@ function QuestionBanner({
   )
 }
 
-/** 任务清单面板：agent 的 todo 工具进度，固定在输入框上方，可折叠。 */
-function TodoPanel({ items }: { items: TodoItem[] }) {
+/** 任务清单面板：agent 的 todo 工具进度，固定在输入框上方，可折叠。
+ * active = 当前轮还在运行；出错/中断后 in_progress 条目不再转圈，下轮开始才恢复。 */
+function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
   const [open, setOpen] = useState(true)
   const done = items.filter((t) => t.status === "completed").length
   return (
@@ -717,7 +860,9 @@ function TodoPanel({ items }: { items: TodoItem[] }) {
               {t.status === "completed" ? (
                 <CircleCheckIcon className="text-emerald-600 dark:text-emerald-400 size-3.5 shrink-0" />
               ) : t.status === "in_progress" ? (
-                <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
+                <Loader2Icon
+                  className={cn("text-muted-foreground size-3.5 shrink-0", active && "animate-spin")}
+                />
               ) : (
                 <CircleDashedIcon className="text-muted-foreground size-3.5 shrink-0" />
               )}

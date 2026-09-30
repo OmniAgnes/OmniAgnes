@@ -2,8 +2,10 @@ package webui
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -333,21 +335,104 @@ func (s *server) handleTaskDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
+// ---------- 附件 ----------
+
+// sanitizeFileName 只保留文件名本体，替换路径分隔符与 Windows 非法字符。
+func sanitizeFileName(name string) string {
+	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	var b strings.Builder
+	for _, r := range name {
+		if r < 0x20 || strings.ContainsRune(`:*?"<>|`, r) {
+			b.WriteRune('_')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" || out == "." || out == ".." {
+		out = "file"
+	}
+	return out
+}
+
+// handleUpload 保存随消息发送的附件（图片/PDF/Office 文档/音视频等）：
+// 落盘到 dataDir/attachments/<task_id>/ 下，返回绝对路径。模型看到的是
+// 消息里拼进的这些路径，文件内容靠它自己的工具/MCP 读取处理。
+func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	taskID := r.URL.Query().Get("task_id")
+	if _, err := hex.DecodeString(taskID); err != nil || len(taskID) != 12 {
+		writeErr(w, "非法任务 ID", http.StatusBadRequest)
+		return
+	}
+	// 单次上传总量的硬上限（音视频可能较大）
+	r.Body = http.MaxBytesReader(w, r.Body, 200<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeErr(w, "附件过大或格式不正确（总大小上限 200MB）", http.StatusBadRequest)
+		return
+	}
+	fhs := r.MultipartForm.File["files"]
+	if len(fhs) == 0 {
+		writeErr(w, "没有收到文件", http.StatusBadRequest)
+		return
+	}
+	dir := filepath.Join(config.DefaultDataDir(), "attachments", taskID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeErr(w, "创建附件目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type uploaded struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+		Size int64  `json:"size"`
+	}
+	files := make([]uploaded, 0, len(fhs))
+	for _, fh := range fhs {
+		safe := sanitizeFileName(fh.Filename)
+		dst := filepath.Join(dir, fmt.Sprintf("%d_%s", time.Now().UnixNano(), safe))
+		src, err := fh.Open()
+		if err != nil {
+			writeErr(w, "读取文件失败: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		out, err := os.Create(dst)
+		if err != nil {
+			_ = src.Close()
+			writeErr(w, "保存文件失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, cpErr := io.Copy(out, src)
+		_ = src.Close()
+		_ = out.Close()
+		if cpErr != nil {
+			_ = os.Remove(dst)
+			writeErr(w, "保存文件失败: "+cpErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		files = append(files, uploaded{Path: dst, Name: safe, Size: fh.Size})
+	}
+	writeJSON(w, map[string]any{"files": files})
+}
+
 // ---------- 聊 ----------
 
 // handleChat 以 SSE 流式返回一轮问答，并把消息持久化到任务。
 func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	req, err := decode[struct {
-		TaskID string `json:"task_id"`
-		Text   string `json:"text"`
-		Mode   string `json:"mode"`
-		Model  string `json:"model"`
+		TaskID      string   `json:"task_id"`
+		Text        string   `json:"text"`
+		Mode        string   `json:"mode"`
+		Model       string   `json:"model"`
+		Attachments []string `json:"attachments"`
 	}](r)
-	if err != nil || strings.TrimSpace(req.Text) == "" {
+	if err != nil {
 		writeErr(w, `请求体需为 {"task_id": "...", "text": "..."}`, http.StatusBadRequest)
 		return
 	}
 	text := strings.TrimSpace(req.Text)
+	if text == "" && len(req.Attachments) == 0 {
+		writeErr(w, `请求体需为 {"task_id": "...", "text": "..."}`, http.StatusBadRequest)
+		return
+	}
 	t, err := s.store.GetTask(req.TaskID)
 	if err != nil {
 		writeErr(w, "任务不存在", http.StatusNotFound)
@@ -371,8 +456,15 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		a.SetModel(req.Model)
 		t.Model = req.Model
 	}
+	// 标题来源：优先正文；只发附件时用首个附件的文件名，避免生成「未命名任务」
+	titleSeed := text
+	if titleSeed == "" && len(req.Attachments) > 0 {
+		titleSeed = filepath.Base(strings.ReplaceAll(req.Attachments[0], "\\", "/"))
+	}
 	if t.Title == "" || t.Title == "未命名任务" {
-		t.Title = store.TitleFromText(req.Text)
+		t.Title = store.TitleFromText(titleSeed)
+		// 标题立即落盘：整轮可能跑几分钟，不让其他实例（TUI /tasks、另一网页版）一直看到「未命名任务」
+		_ = s.store.SaveTask(t)
 	}
 
 	fl, ok := w.(http.Flusher)
@@ -401,10 +493,30 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 	defer a.SetAsk(nil)
 
+	// 附件：把已上传文件的路径拼进消息（在标题生成之后），模型通过自身工具/MCP
+	// 读取这些文件。历史里保留同一段文本，回看时仍能对上是哪几个文件。
+	if text == "" {
+		text = "请查看并处理这些附件。"
+	}
+	if len(req.Attachments) > 0 {
+		var b strings.Builder
+		b.WriteString(text)
+		b.WriteString("\n\n[附件]")
+		for i, p := range req.Attachments {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "\n%d. %s", i+1, p)
+		}
+		text = b.String()
+	}
+
 	// 不用 Run（失败即回滚）：webui 保留失败轮次已产生的内容（至少保留提问），便于回溯
 	rollback := a.Prepare(text)
 	_ = rollback
 	errSent := false // Execute 内部对失败轮已 emit EventError（带 round）；外层不得重复发送
+	var lastCk time.Time // 进行中任务的检查点节流：至少间隔 3s 落盘一次
 	runErr := a.Execute(r.Context(), func(ev agent.Event) {
 		switch ev.Type {
 		case agent.EventText:
@@ -433,6 +545,12 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 				"type": "tool_end", "round": ev.Round, "id": ev.Tool.ID,
 				"name": ev.Tool.Name, "is_error": ev.IsError,
 			})
+			// 检查点落盘：任务运行中，其他实例（TUI /tasks、另一网页版）也能看到消息进度
+			if time.Since(lastCk) >= 3*time.Second {
+				lastCk = time.Now()
+				t.Messages = a.History()
+				_ = s.store.SaveTask(t)
+			}
 		case agent.EventApproval:
 			send(map[string]any{"type": "approval_pending", "round": ev.Round, "id": ev.Tool.ID})
 		case agent.EventQuestion:
@@ -1001,7 +1119,7 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 		Model:             modelName,
 		Mode:              mode,
 		Cwd:               cwd,
-		MaxIterations:     32,
+		MaxIterations:     500,
 		MaxTokens:         maxTokens,
 		SystemPromptExtra: s.cfg.SystemPromptExtra,
 		// 恢复持久化的历史消息：重启后继续对话时模型仍记得之前的内容

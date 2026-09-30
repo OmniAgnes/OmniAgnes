@@ -146,6 +146,7 @@ export function ToolCallView({ run }: { run: ToolRun }) {
   const Icon = meta.icon
   const args = parseArgs(run.args)
   const summary = meta.summary(args)
+  const stat = useMemo(() => headerDiffStat(run), [run.name, run.args, run.baseOld])
 
   return (
     <Collapsible className="overflow-hidden rounded-lg">
@@ -155,6 +156,12 @@ export function ToolCallView({ run }: { run: ToolRun }) {
         {summary && (
           <span className="text-muted-foreground min-w-0 truncate font-mono text-[11px]" title={summary}>
             {summary}
+          </span>
+        )}
+        {stat && (
+          <span className="shrink-0 font-mono text-[11px] tabular-nums">
+            <span className="text-emerald-600 dark:text-emerald-400">+{stat.added}</span>{" "}
+            <span className="text-rose-600 dark:text-rose-400">-{stat.removed}</span>
           </span>
         )}
         {/* 状态图标靠右，展开箭头在最右。待确认由输入框上方浮条提示，这里只显示转圈。
@@ -274,7 +281,8 @@ function ToolDetail({
   )
 }
 
-/** todo 工具展开详情：静态清单（进度面板在输入框上方另有展示） */
+/** todo 工具展开详情：静态清单（进度面板在输入框上方另有展示）。
+ * 卡片是历史快照，in_progress 不转圈——运行中的动画只出现在输入框上方的任务清单面板。 */
 function TodoDetail({ args }: { args: Record<string, unknown> }) {
   const items = todosFromArgs(args)
   if (items.length === 0) return null
@@ -285,7 +293,7 @@ function TodoDetail({ args }: { args: Record<string, unknown> }) {
           {t.status === "completed" ? (
             <CircleCheckIcon className="text-emerald-600 dark:text-emerald-400 size-3.5 shrink-0" />
           ) : t.status === "in_progress" ? (
-            <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
+            <Loader2Icon className="text-muted-foreground size-3.5 shrink-0" />
           ) : (
             <CircleDashedIcon className="text-muted-foreground size-3.5 shrink-0" />
           )}
@@ -305,45 +313,46 @@ function EditDiff({ args }: { args: Record<string, unknown> }) {
   return <DiffLines oldStr={oldStr} newStr={newStr} />
 }
 
-/** 行级差异渲染（edit 与 write 覆盖共用） */
+/** 折叠行的 +/- 统计：edit 看 old/new_string，write 覆盖看 baseOld → content。 */
+function headerDiffStat(run: ToolRun): { added: number; removed: number } | null {
+  const args = parseArgs(run.args)
+  if (run.name === "edit") {
+    const oldStr = str(args.old_string)
+    const newStr = str(args.new_string)
+    if (oldStr === "" && newStr === "") return null
+    return diffStat(diffLines(oldStr, newStr))
+  }
+  if (run.name === "write" && run.baseOld != null) {
+    return diffStat(diffLines(run.baseOld, str(args.content)))
+  }
+  return null
+}
+
+/** 行级差异渲染（edit 与 write 覆盖共用）：增删统计已提到折叠行，这里只画差异内容 */
 function DiffLines({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   const lines = diffLines(oldStr, newStr)
-  const { added, removed } = diffStat(lines)
   return (
-    <Field
-      label={
-        <span className="flex items-center gap-2">
-          差异
-          <span className="font-mono text-[11px]">
-            <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>
-            <span className="text-muted-foreground mx-1">/</span>
-            <span className="text-rose-600 dark:text-rose-400">-{removed}</span>
+    <div className="overflow-x-auto rounded-md border">
+      {lines.map((l, i) => (
+        <div
+          key={i}
+          className={cn(
+            "flex font-mono text-[11px] leading-relaxed",
+            l.op === "add" && "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
+            l.op === "del" && "bg-rose-500/12 text-rose-700 dark:text-rose-300",
+            l.op === "keep" && "text-muted-foreground",
+          )}
+        >
+          <span className="text-muted-foreground/70 w-8 shrink-0 select-none pr-1 text-right">
+            {l.op === "add" ? l.newNo : l.oldNo}
           </span>
-        </span>
-      }
-    >
-      <div className="overflow-x-auto rounded-md border">
-        {lines.map((l, i) => (
-          <div
-            key={i}
-            className={cn(
-              "flex font-mono text-[11px] leading-relaxed",
-              l.op === "add" && "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
-              l.op === "del" && "bg-rose-500/12 text-rose-700 dark:text-rose-300",
-              l.op === "keep" && "text-muted-foreground",
-            )}
-          >
-            <span className="text-muted-foreground/70 w-8 shrink-0 select-none pr-1 text-right">
-              {l.op === "add" ? l.newNo : l.oldNo}
-            </span>
-            <span className="w-4 shrink-0 select-none text-center">
-              {l.op === "add" ? "+" : l.op === "del" ? "-" : " "}
-            </span>
-            <span className="min-w-0 flex-1 pr-2 whitespace-pre-wrap">{l.text || " "}</span>
-          </div>
-        ))}
-      </div>
-    </Field>
+          <span className="w-4 shrink-0 select-none text-center">
+            {l.op === "add" ? "+" : l.op === "del" ? "-" : " "}
+          </span>
+          <span className="min-w-0 flex-1 pr-2 whitespace-pre-wrap">{l.text || " "}</span>
+        </div>
+      ))}
+    </div>
   )
 }
 

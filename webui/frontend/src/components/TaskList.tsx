@@ -71,7 +71,7 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-          {expanded ? "收起" : "更多"}
+          {expanded ? "收起" : "显示更多"}
         </Button>
       )}
     </div>

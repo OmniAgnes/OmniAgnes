@@ -200,3 +200,56 @@ func TestAgentForReusesAgent(t *testing.T) {
 	}
 	_ = tools.NewRegistry // 保持 tools 引用
 }
+
+// 模拟桌面版与另一实例（TUI /webui 或第二个网页版）共享同一存储目录：
+// 一端首轮消息设置的标题必须立刻对另一端可见，而不是等整轮结束后才同步。
+func TestTaskTitleSyncAcrossInstances(t *testing.T) {
+	dir := t.TempDir()
+	mk := func() *server {
+		return &server{
+			opts: Options{
+				ConfigPath: filepath.Join(dir, "config.json"),
+				StartCwd:   dir,
+				Version:    "test",
+			},
+			cfg:     config.Default(),
+			store:   store.New(dir),
+			agents:  map[string]*agent.Agent{},
+			provider: fakeProvider{},
+		}
+	}
+	desktop, other := mk(), mk()
+
+	code, body := do(t, desktop, "POST", "/api/tasks", `{}`)
+	if code != 200 {
+		t.Fatalf("建任务失败: %d %s", code, body)
+	}
+	var created struct {
+		Task *store.Task `json:"task"`
+	}
+	_ = json.Unmarshal([]byte(body), &created)
+	if created.Task == nil {
+		t.Fatalf("解析任务失败: %s", body)
+	}
+
+	// 建任务后、发消息前：另一端看到「未命名任务」
+	_, body = do(t, other, "GET", "/api/tasks", "")
+	if !strings.Contains(body, "未命名任务") {
+		t.Fatalf("新任务应显示未命名任务: %s", body)
+	}
+
+	// 桌面端发首条消息
+	code, body = do(t, desktop, "POST", "/api/chat", `{"task_id":"`+created.Task.ID+`","text":"帮我修复登录页的报错"}`)
+	if code != 200 {
+		t.Fatalf("chat 失败: %d %s", code, body)
+	}
+
+	// 另一端的任务列表立即可见真实标题（修复前标题要等整轮结束才落盘）
+	_, body = do(t, other, "GET", "/api/tasks", "")
+	if !strings.Contains(body, "帮我修复登录页的报错") {
+		t.Fatalf("另一端应立即看到任务标题: %s", body)
+	}
+	if strings.Contains(body, "未命名任务") {
+		t.Fatalf("标题同步后不应再显示未命名任务: %s", body)
+	}
+}

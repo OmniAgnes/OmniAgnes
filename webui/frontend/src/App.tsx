@@ -192,7 +192,20 @@ export default function App() {
     let round = 0
     for (const m of t.messages ?? []) {
       if (m.role === "user") {
-        cur = { id: nextId(), role: "user", text: m.text ?? "", tools: [] }
+        // 历史里附件以「[附件] + 路径列表」附在正文后：展示时拆出来，只显示文件名
+        let text = m.text ?? ""
+        let atts: string[] | undefined
+        const marker = "\n\n[附件]"
+        const at = text.indexOf(marker)
+        if (at >= 0) {
+          atts = text
+            .slice(at + marker.length)
+            .split("\n")
+            .map((l) => l.replace(/^\d+\.\s*/, "").trim().split(/[\\/]/).pop() ?? "")
+            .filter(Boolean)
+          text = text.slice(0, at)
+        }
+        cur = { id: nextId(), role: "user", text, attachments: atts, tools: [] }
         out.push(cur)
       } else if (m.role === "assistant") {
         cur = { id: nextId(), role: "assistant", text: m.text ?? "", tools: [], round: round++ }
@@ -330,6 +343,20 @@ export default function App() {
       case "start":
         r.title = ev.title
         r.mode = ev.mode === "plan" ? "plan" : "build"
+        // 任务名立即跟随（后端按首条消息生成标题），不等本轮跑完才刷新；
+        // 首条消息直接发的任务此时才首次进入侧栏列表（之前是「未命名任务」不上列表）
+        if (ev.title) {
+          setTasks((ts) => {
+            const i = ts.findIndex((t) => t.id === tid)
+            if (i < 0) {
+              const now = new Date().toISOString()
+              return [{ id: tid, title: ev.title, created_at: now, updated_at: now }, ...ts]
+            }
+            const copy = [...ts]
+            copy[i] = { ...copy[i], title: ev.title }
+            return copy
+          })
+        }
         break
       case "text":
         r.thinking = false
@@ -474,7 +501,8 @@ export default function App() {
   }
 
   // 真正发起一轮问答。同一任务串行（streaming 期间不并发），不同任务并行。
-  const doSend = async (tid: string, text: string) => {
+  // attachments = 已上传附件的绝对路径（随文本一起发给模型），attNames = 展示用文件名。
+  const doSend = async (tid: string, text: string, attachments: string[] = [], attNames?: string[]) => {
     const r = runsRef.current[tid]
     if (!r || r.streaming) return
     const ac = new AbortController()
@@ -483,13 +511,19 @@ export default function App() {
     r.streaming = true
     r.thinking = true
     r.lastRound = -1
-    const userItem: ViewItem = { id: nextId(), role: "user", text, tools: [] }
+    const userItem: ViewItem = {
+      id: nextId(),
+      role: "user",
+      text,
+      attachments: attNames && attNames.length > 0 ? attNames : undefined,
+      tools: [],
+    }
     // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上
     const asstItem: ViewItem = { id: nextId(), role: "assistant", text: "", tools: [], round: r.roundBase }
     r.items = [...r.items, userItem, asstItem]
     bump()
     try {
-      await streamChat(tid, text, r.mode, state?.model ?? "", makeHandler(tid), ac.signal)
+      await streamChat(tid, text, r.mode, state?.model ?? "", makeHandler(tid), ac.signal, attachments)
     } catch (e) {
       if (!ac.signal.aborted) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -502,6 +536,13 @@ export default function App() {
       delete abortRefs.current[tid]
       const rr = runsRef.current[tid]
       if (rr) {
+        // 本轮结束（完成/出错/手动中断）：把还没等到 tool_end 的工具卡一并停掉，
+        // 否则出错后卡片和「执行中」分组会一直转圈
+        for (const it of rr.items) {
+          for (const t of it.tools) {
+            if (t.running) t.running = false
+          }
+        }
         // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
         rr.roundBase = Math.max(rr.roundBase, baseAtSend + rr.lastRound + 1)
         rr.streaming = false
@@ -516,8 +557,23 @@ export default function App() {
     }
   }
 
-  const launch = (tid: string, text: string): Promise<void> => {
-    const p = doSend(tid, text)
+  // 发送入口：有附件先上传（拿到落盘路径），再发起一轮问答。
+  const launch = (tid: string, text: string, files?: File[]): Promise<void> => {
+    const p = (async () => {
+      let paths: string[] = []
+      let names: string[] = []
+      if (files && files.length > 0) {
+        try {
+          const up = await api.upload(tid, files)
+          paths = up.files.map((f) => f.path)
+          names = up.files.map((f) => f.name)
+        } catch (e) {
+          setLoadErr(e instanceof Error ? e.message : String(e))
+          return
+        }
+      }
+      return doSend(tid, text, paths, names)
+    })()
     runPromises.current[tid] = p
     void p.finally(() => {
       if (runPromises.current[tid] === p) delete runPromises.current[tid]
@@ -532,22 +588,22 @@ export default function App() {
     const [head, ...rest] = r.queue
     r.queue = rest
     bump()
-    await launch(tid, head.text)
+    await launch(tid, head.text, head.files)
   }
 
-  // 输入框「发送」入口：空闲直接发；处理中（或已有排队）进队列。
-  const submitText = (text: string) => {
+  // 输入框「发送」入口：空闲直接发；处理中（或已有排队）进队列。附件随消息一起发。
+  const submitText = (text: string, files?: File[]) => {
     const t = text.trim()
-    if (!t) return
+    if (!t && (!files || files.length === 0)) return
     if (!activeTaskId) {
-      // 空状态第一条消息：先建任务再发
+      // 空状态第一条消息：先建任务再发（标题等首条消息发出后由后端生成，列表届时才出现）
       void (async () => {
         try {
           const c = await api.createTask("")
           await refreshTasks()
           runsRef.current[c.task.id] = newRun(c.task.title, defaultMode)
           setActiveTaskId(c.task.id)
-          await launch(c.task.id, t)
+          await launch(c.task.id, t, files)
         } catch (e) {
           setLoadErr(e instanceof Error ? e.message : String(e))
         }
@@ -557,11 +613,11 @@ export default function App() {
     const r = runsRef.current[activeTaskId]
     if (!r) return
     if (r.streaming || r.queue.length > 0) {
-      r.queue = [...r.queue, { id: ++queueSeq.current, text: t }]
+      r.queue = [...r.queue, { id: ++queueSeq.current, text: t, files }]
       bump()
       if (!r.streaming) void flushQueue(activeTaskId)
     } else {
-      void launch(activeTaskId, t)
+      void launch(activeTaskId, t, files)
     }
   }
 
@@ -588,7 +644,7 @@ export default function App() {
         /* 中断的错误忽略 */
       }
     }
-    await launch(tid, item.text)
+    await launch(tid, item.text, item.files)
   }
 
   const editQueued = (qid: number) => {
@@ -659,13 +715,16 @@ export default function App() {
     }
   }
 
+  // 还没发过首条消息的任务（标题仍是「未命名任务」）不上侧栏列表，
+  // 等首条对话发出、后端按消息生成标题后才出现
+  const listedTasks = tasks.filter((t) => t.title !== "未命名任务")
   // 项目内任务归到项目下；无项目归属的任务才进「任务」TAB
   const tasksByProject: Record<string, TaskMeta[]> = {}
-  for (const t of tasks) {
+  for (const t of listedTasks) {
     if (!t.project_id) continue
     ;(tasksByProject[t.project_id] ??= []).push(t)
   }
-  const standaloneTasks = tasks.filter((t) => !t.project_id)
+  const standaloneTasks = listedTasks.filter((t) => !t.project_id)
 
   // 侧栏运行指示：哪些任务正在后台/前台执行
   const running: Record<string, boolean> = {}
