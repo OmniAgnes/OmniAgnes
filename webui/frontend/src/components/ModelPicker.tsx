@@ -134,10 +134,7 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
                     <span className="truncate" title={g.provider}>
                       {g.provider}
                     </span>
-                    <span className="text-muted-foreground ml-auto text-[10px] tabular-nums">
-                      {g.models.length}
-                    </span>
-                    <ChevronRightIcon className="text-muted-foreground size-3 shrink-0 -scale-x-100" />
+                    <ChevronRightIcon className="text-muted-foreground ml-auto size-3 shrink-0 -scale-x-100" />
                   </button>
                 ))
               )}

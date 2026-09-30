@@ -1,8 +1,10 @@
+![omni 桌面版](screenshot/1.png)
+
+![omni 桌面版](screenshot/2.png)
+
 # omni — 终端 AI 编码智能体
 
 CLI TUI 编码智能体，在终端里与 AI 协作编程，并附带网页版工作台。
-
-![omni 桌面版](screenshot/1.png)
 
 ## 特性
 
