@@ -66,6 +66,13 @@ type Model struct {
 	cfgFocus   int
 	cfgErr     string
 
+	// 模型选择器（无参 /model 打开）
+	modelPickerOpen bool
+	modelItems      []modelItem
+	modelPickerIdx  int
+	modelLoading    bool   // 正在异步拉取供应商 /models
+	modelFetchErr   string // 拉取失败提示（成功时清空）
+
 	// slash 命令提示
 	hintIdx      int
 	hintDismissed bool
@@ -127,6 +134,9 @@ func (m *Model) View() string {
 	}
 	if m.configOpen {
 		return m.renderConfig()
+	}
+	if m.modelPickerOpen {
+		return m.renderModelPicker()
 	}
 	parts := []string{m.renderHeader(), m.viewport.View(), m.renderStatus()}
 	if hint := m.renderSlashHint(); hint != "" {
@@ -192,6 +202,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.handleAgentEvent(msg.ev)
 		cmds = append(cmds, m.readEvents(), m.spinnerTickIfRunning())
+	case modelsFetchedMsg:
+		m.modelLoading = false
+		m.modelFetchErr = ""
+		if !m.modelPickerOpen {
+			break // 用户已 Esc 关闭，结果作废
+		}
+		if msg.err != "" && len(msg.items) == 0 {
+			m.modelFetchErr = "拉取模型列表失败：" + msg.err
+			break
+		}
+		if msg.err != "" {
+			m.modelFetchErr = "部分供应商拉取失败：" + msg.err
+		}
+		// 合并远端清单，保留光标所在模型名重新定位
+		curPick := ""
+		if m.modelPickerIdx < len(m.modelItems) {
+			curPick = m.modelItems[m.modelPickerIdx].name
+		}
+		m.modelItems = mergeModelItems(m.modelItems, msg.items, m.a.Model())
+		m.modelPickerIdx = 0
+		for i, it := range m.modelItems {
+			if it.name == curPick {
+				m.modelPickerIdx = i
+				break
+			}
+		}
 	case eventsClosed:
 		m.running = false
 		m.cancel = nil
@@ -216,6 +252,9 @@ func (m *Model) spinnerTickIfRunning() tea.Cmd {
 func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if m.configOpen {
 		return m.handleConfigKey(msg)
+	}
+	if m.modelPickerOpen {
+		return m.handleModelPickerKey(msg)
 	}
 	// slash 提示菜单的导航键
 	if matches := m.slashMatches(); matches != nil {

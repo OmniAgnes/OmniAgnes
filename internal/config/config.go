@@ -149,7 +149,7 @@ func Default() *Config {
 		BashTimeoutSec:    defaultBashTimeoutSec,
 		SessionDir:        DefaultSessionDir(),
 		SystemPromptExtra: "",
-		Theme:             "dark",
+		Theme:             "light",
 	}
 }
 
@@ -181,8 +181,8 @@ func Load(path string) (*Config, error) {
 	if cfg.SessionDir == "" {
 		cfg.SessionDir = DefaultSessionDir()
 	}
-	if cfg.Theme != "light" && cfg.Theme != "system" {
-		cfg.Theme = "dark"
+	if cfg.Theme != "dark" && cfg.Theme != "system" {
+		cfg.Theme = "light"
 	}
 	switch cfg.ThemeColor {
 	case "violet", "blue", "emerald", "amber", "rose":

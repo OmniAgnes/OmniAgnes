@@ -98,7 +98,84 @@ func builtinTools() []*Tool {
 			ReadOnly: true,
 			Execute:  execGlob,
 		},
+		{
+			Name: "todo",
+			Description: "维护一份多步骤任务清单，让用户实时了解你处理到哪一步。" +
+				"接到较复杂任务时先建立清单；每开始或完成一步都再次调用它提交**整份**清单（全量覆盖，非增量）。" +
+				"同一时刻最多一项 in_progress，其余 pending 或 completed。简单一步到位的任务无需使用。",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"items"},
+				"properties": map[string]any{
+					"items": map[string]any{
+						"type":        "array",
+						"description": "任务项数组（整份清单，全量覆盖）",
+						"items": map[string]any{
+							"type":     "object",
+							"required": []string{"content", "status"},
+							"properties": map[string]any{
+								"content":     map[string]any{"type": "string", "description": "任务描述（祈使句，如“修复登录接口”）"},
+								"active_form": map[string]any{"type": "string", "description": "进行中的描述（如“正在修复登录接口”）"},
+								"status": map[string]any{
+									"type":        "string",
+									"enum":        []string{"pending", "in_progress", "completed"},
+									"description": "pending=待办，in_progress=进行中，completed=已完成",
+								},
+							},
+						},
+					},
+				},
+			},
+			ReadOnly: true,
+			Execute:  execTodo,
+		},
+		{
+			Name: "ask",
+			Description: "向用户提一个澄清问题并等待其回答。仅在歧义会实质影响结果、无法合理假设时使用；" +
+				"一次最多问一个问题，可提供 2-4 个候选项。拿到回答后再继续。",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"question"},
+				"properties": map[string]any{
+					"question": map[string]any{"type": "string", "description": "要问用户的问题（简洁明了）"},
+					"options": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "候选项（可选，2-4 个）；用户也可自由输入",
+					},
+				},
+			},
+			ReadOnly: true,
+			// 由 Agent 在执行循环中拦截并向 UI 要答案；此兜底仅在界面不支持提问时返回提示。
+			Execute: func(_ context.Context, _ map[string]any, _ *Env) (string, error) {
+				return "（当前界面不支持向用户提问，请按最合理的假设继续，并在回复中说明所做的假设）", nil
+			},
+		},
 	}
+}
+
+// execTodo 无副作用：仅确认清单已更新（真实渲染由前端从工具参数读取）。
+func execTodo(_ context.Context, args map[string]any, _ *Env) (string, error) {
+	raw, ok := args["items"]
+	if !ok {
+		return "", fmt.Errorf("todo: 缺少 items")
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return "", fmt.Errorf("todo: items 需为数组")
+	}
+	var done, doing int
+	for _, it := range list {
+		m, _ := it.(map[string]any)
+		st, _ := m["status"].(string)
+		switch st {
+		case "completed":
+			done++
+		case "in_progress":
+			doing++
+		}
+	}
+	return fmt.Sprintf("任务清单已更新（共 %d 项，已完成 %d，进行中 %d）", len(list), done, doing), nil
 }
 
 func execRead(ctx context.Context, args map[string]any, env *Env) (string, error) {
@@ -148,10 +225,17 @@ func execWrite(ctx context.Context, args map[string]any, env *Env) (string, erro
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
+	// 区分新建 / 覆盖（供摘要文案；差异渲染由 webui 在写入前抓取旧内容完成）
+	_, statErr := os.Stat(abs)
+	existed := statErr == nil
 	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
-	return fmt.Sprintf("已写入 %s（%d 字节）", abs, len(content)), nil
+	verb := "已新建"
+	if existed {
+		verb = "已覆盖写入"
+	}
+	return fmt.Sprintf("%s %s（%d 字节）", verb, abs, len(content)), nil
 }
 
 func execEdit(ctx context.Context, args map[string]any, env *Env) (string, error) {

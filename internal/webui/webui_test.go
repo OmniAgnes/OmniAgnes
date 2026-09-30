@@ -22,6 +22,9 @@ type fakeProvider struct{}
 
 func (fakeProvider) Name() string          { return "fake" }
 func (fakeProvider) Models() []string      { return []string{"fake-model"} }
+func (fakeProvider) ListModels(ctx context.Context) ([]string, error) {
+	return []string{"fake-model"}, nil
+}
 func (fakeProvider) String() string        { return "fake" }
 
 func (fakeProvider) Chat(ctx context.Context, req llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {

@@ -27,7 +27,7 @@ Slash 命令（输入 / 出现提示，↑↓ 选择 · Tab 补全）:
   /help          显示本帮助
   /new           开启新会话（清空历史）
   /config        打开模型配置表单（类型/模型/Base URL/API Key）
-  /model <名称>   切换模型（如 /model gpt-4o）
+  /model         列出模型供选择（/model <名称> 直接切换）
   /mode <模式>    build=可修改文件/执行命令；plan=只读
   /skills        列出并重新加载技能
   /memory        查看全局记忆
@@ -66,12 +66,10 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		m.openConfig()
 	case "/model", "/m":
 		if len(args) < 2 {
-			m.addSystemMsg("用法: /model <模型名>")
-			return nil
+			// 不带参数：列出配置中所有模型供选择
+			return m.openModelPicker()
 		}
-		model := args[1]
-		m.a.SetModel(model)
-		m.addSystemMsg(fmt.Sprintf("模型已切换为 %s", model))
+		m.switchModel(args[1], -1)
 	case "/mode":
 		if len(args) < 2 {
 			m.addSystemMsg("用法: /mode build|plan")

@@ -16,7 +16,7 @@ var builtinSlashCommands = []slashCmd{
 	{"/help", "显示帮助"},
 	{"/new", "开启新会话（清空历史）"},
 	{"/config", "配置模型（类型/模型/API Key）"},
-	{"/model", "切换模型：/model <名称>"},
+	{"/model", "列出并切换模型"},
 	{"/mode", "切换模式：/mode build|plan"},
 	{"/skills", "列出并重新加载技能"},
 	{"/memory", "查看全局记忆"},
@@ -56,7 +56,7 @@ func filterSlashCommands(all []slashCmd, prefix string) []slashCmd {
 
 // slashMatches 返回当前输入匹配的命令；不需要提示时返回 nil。
 func (m *Model) slashMatches() []slashCmd {
-	if m.running || m.hintDismissed || m.configOpen {
+	if m.running || m.hintDismissed || m.configOpen || m.modelPickerOpen {
 		return nil
 	}
 	v := strings.TrimSpace(m.textarea.Value())
@@ -101,9 +101,16 @@ func (m *Model) renderSlashHint() string {
 		return ""
 	}
 	rows := []string{styleSysMsg.Render(" 命令 · ↑↓ 选择 · Tab/Enter 补全 · Esc 关闭")}
+	// 描述与命令至少隔 3 格：列宽取匹配项中最长命令名 + 间距
+	col := 9
+	for _, c := range matches {
+		if w := lipgloss.Width(c.name) + 3; w > col {
+			col = w
+		}
+	}
 	for i, c := range matches {
 		label := c.name
-		if pad := 9 - len(c.name); pad > 0 {
+		if pad := col - lipgloss.Width(c.name); pad > 0 {
 			label += strings.Repeat(" ", pad)
 		}
 		label += c.desc

@@ -63,6 +63,7 @@ func Start(opts Options) (string, error) {
 		agents: map[string]*agent.Agent{},
 		regs:   map[string]*tools.Registry{},
 		approvals: map[string]*approvalReq{},
+		questions: map[string]*questionReq{},
 	}
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
@@ -103,10 +104,12 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleTaskDelete)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/approvals/{id}", s.handleApproval)
+	mux.HandleFunc("POST /api/questions/{id}", s.handleQuestionAnswer)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsSet)
 	mux.HandleFunc("GET /api/memory", s.handleMemoryGet)
 	mux.HandleFunc("PUT /api/memory", s.handleMemorySet)
+	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/mcp", s.handleMCP)
 	mux.HandleFunc("GET /api/mcp/config", s.handleMCPConfigGet)
 	mux.HandleFunc("PUT /api/mcp/config", s.handleMCPConfigPut)
@@ -133,6 +136,8 @@ type server struct {
 	regs map[string]*tools.Registry
 	// approvals 保存等待用户确认的写操作（普通访问模式）。
 	approvals map[string]*approvalReq
+	// questions 保存等待用户回答的 ask 提问。
+	questions map[string]*questionReq
 	// approvalSeq 生成审批请求 ID。
 	approvalSeq atomic.Int64
 	// provider 非空时优先使用（测试注入口），否则按 cfg 解析。
@@ -145,6 +150,14 @@ type approvalReq struct {
 	name string
 	args map[string]any
 	ch   chan bool
+}
+
+// questionReq 是一次 ask 工具发起、等待用户回答的提问。
+type questionReq struct {
+	id       string
+	question string
+	options  []string
+	ch       chan string
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
