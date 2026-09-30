@@ -561,20 +561,34 @@ function UserBubble({ text, attachments }: { text: string; attachments?: string[
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
-  // 复制按钮绝对定位悬浮：长消息浮在「展开/收起」左侧，短消息浮在气泡右下角，悬停才浮现
+  // 复制按钮绝对定位悬浮在气泡外侧（不占布局），悬停气泡才浮现。
+  // 关键：按钮在气泡 group 之外，只靠 group-hover 的话鼠标移向按钮时会先离开
+  // group 而按钮瞬间消失，人根本点不到。所以外层容器常驻 pointer-events
+  // （opacity:0 仍能接收指针），自身 hover / focus 时保持可见，并用透明热区
+  // （伪元素）向气泡方向延伸 4px，桥接气泡与按钮之间的空隙。
   const copyBtn = (
-    <Button
-      variant="ghost"
-      size="icon-sm"
+    <span
       className={cn(
-        "bg-background text-muted-foreground hover:text-foreground z-10 shadow-sm pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 max-md:pointer-events-auto max-md:opacity-100",
-        long ? "absolute top-1/2 right-full -translate-y-1/2 mr-0.5" : "absolute top-full right-0 mt-0.5",
+        "group/copy absolute z-10 opacity-0 transition-opacity",
+        "hover:opacity-100 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100",
+        long ? "top-1/2 right-full -translate-y-1/2 mr-0.5" : "top-full right-0 mt-0.5",
       )}
-      onClick={copy}
-      title="复制"
     >
-      {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
-    </Button>
+      {/* 热区：盖住气泡与按钮之间的缝隙，鼠标经过时不会脱离 hover */}
+      <span
+        aria-hidden
+        className={cn("absolute", long ? "-right-1 inset-y-0 w-1" : "-top-1 inset-x-0 h-1")}
+      />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto relative shadow-sm"
+        onClick={copy}
+        title="复制"
+      >
+        {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
+      </Button>
+    </span>
   )
   return (
     <div className="flex justify-end">
