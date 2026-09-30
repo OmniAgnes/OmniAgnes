@@ -212,3 +212,92 @@ func TestGlobTool(t *testing.T) {
 		t.Fatalf("plain glob should not cross dirs: %q", out)
 	}
 }
+
+func TestJSONTool(t *testing.T) {
+	env, dir := testEnv(t)
+	r := NewRegistry(env)
+	sample := `{"data":{"items":[{"id":7,"name":"a"},{"id":9,"name":"b"}],"total":2},"ok":true}`
+
+	// query：点号路径 + 数组下标
+	out, err := r.Execute(context.Background(), "json", map[string]any{
+		"op": "query", "content": sample, "pointer": "data.items[1].name",
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != `"b"` {
+		t.Fatalf("query array index: %q", out)
+	}
+
+	// query：返回子树
+	out, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "query", "content": sample, "pointer": "data.total",
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "2" {
+		t.Fatalf("query scalar: %q", out)
+	}
+
+	// query：路径不存在时错误里应带可用键，帮助模型自我纠正
+	if _, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "query", "content": sample, "pointer": "data.nope",
+	}, false); err == nil {
+		t.Fatal("expected error on missing path")
+	} else if !strings.Contains(err.Error(), "total") {
+		t.Fatalf("error should list available keys: %v", err)
+	}
+
+	// keys：根对象键按字典序
+	out, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "keys", "content": sample,
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "data") || !strings.Contains(out, "ok") {
+		t.Fatalf("keys: %q", out)
+	}
+
+	// shape：应体现嵌套类型
+	out, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "shape", "content": sample,
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "object") || !strings.Contains(out, "array[2]") {
+		t.Fatalf("shape: %q", out)
+	}
+
+	// content 带 ```json 围栏也应能解析（模型常直接贴工具输出）
+	out, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "query", "content": "```json\n" + sample + "\n```", "pointer": "ok",
+	}, false)
+	if err != nil {
+		t.Fatalf("code fence should be tolerated: %v", err)
+	}
+	if strings.TrimSpace(out) != "true" {
+		t.Fatalf("fenced query: %q", out)
+	}
+
+	// 从文件读
+	writeFile(t, filepath.Join(dir, "d.json"), sample)
+	out, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "query", "path": "d.json", "pointer": "data.items.0.id",
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "7" {
+		t.Fatalf("from file: %q", out)
+	}
+
+	// 非法 JSON 报错
+	if _, err = r.Execute(context.Background(), "json", map[string]any{
+		"op": "pretty", "content": "{not json",
+	}, false); err == nil {
+		t.Fatal("expected parse error")
+	}
+}

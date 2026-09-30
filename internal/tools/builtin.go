@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -99,6 +101,37 @@ func builtinTools() []*Tool {
 			Execute:  execGlob,
 		},
 		{
+			Name: "json",
+			Description: "解析与查询 JSON。用于处理 curl/API 返回的 JSON——不必再写 Python 脚本。" +
+				"op=query 时按 path 提取子树（点号路径，如 data.items 或 data.items.0.id，支持 [i] 下标）；" +
+				"op=keys 列出对象的键；op=shape 返回类型结构概览；op=pretty 格式化输出。",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"op"},
+				"properties": map[string]any{
+					"op": map[string]any{
+						"type":        "string",
+						"enum":        []string{"query", "keys", "shape", "pretty"},
+						"description": "query=按 path 提取；keys=列键；shape=结构概览；pretty=格式化",
+					},
+					"path": map[string]any{
+						"type":        "string",
+						"description": "JSON 文件路径（与 content 二选一）",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "直接传入 JSON 文本（与 path 二选一，适合处理命令输出）",
+					},
+					"pointer": map[string]any{
+						"type":        "string",
+						"description": "query 用的点号路径，如 data.items 或 items[0].id；为空则返回根",
+					},
+				},
+			},
+			ReadOnly: true,
+			Execute:  execJSON,
+		},
+		{
 			Name: "todo",
 			Description: "维护一份多步骤任务清单，让用户实时了解你处理到哪一步。" +
 				"接到较复杂任务时先建立清单；每开始或完成一步都再次调用它提交**整份**清单（全量覆盖，非增量）。" +
@@ -152,6 +185,220 @@ func builtinTools() []*Tool {
 			},
 		},
 	}
+}
+
+// execJSON 解析/查询 JSON，避免模型为简单解析任务去写 Python 脚本。
+func execJSON(_ context.Context, args map[string]any, env *Env) (string, error) {
+	op, _ := args["op"].(string)
+	if op == "" {
+		op = "query"
+	}
+
+	// 取 JSON 文本：content 直接给，或从文件读
+	var raw string
+	if s, ok := args["content"].(string); ok && strings.TrimSpace(s) != "" {
+		raw = s
+	} else {
+		p, err := argString(args, "path")
+		if err != nil {
+			return "", fmt.Errorf("json: 需要 content 或 path 其中之一")
+		}
+		abs, err := resolvePath(env.Cwd, p, env.Unsafe)
+		if err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return "", fmt.Errorf("json: %w", err)
+		}
+		raw = string(data)
+	}
+
+	// 容忍 ```json 包裹与前后缀垃圾文本
+	raw = stripCodeFence(raw)
+
+	var doc any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return "", fmt.Errorf("json: 解析失败: %w", err)
+	}
+
+	switch op {
+	case "query":
+		ptr, _ := args["pointer"].(string)
+		ptr = strings.TrimSpace(ptr)
+		if ptr == "" || ptr == "$" {
+			return marshalOut(doc, env.MaxOutput)
+		}
+		v, err := jsonQuery(doc, ptr)
+		if err != nil {
+			return "", err
+		}
+		return marshalOut(v, env.MaxOutput)
+
+	case "keys":
+		m, ok := doc.(map[string]any)
+		if !ok {
+			if a, isArr := doc.([]any); isArr {
+				// 数组取所有对象的键并集
+				set := map[string]bool{}
+				for _, it := range a {
+					if im, ok := it.(map[string]any); ok {
+						for k := range im {
+							set[k] = true
+						}
+					}
+				}
+				keys := make([]string, 0, len(set))
+				for k := range set {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				if len(keys) == 0 {
+					return "数组元素均非对象，无键可列", nil
+				}
+				return "数组元素的键（" + fmt.Sprintf("%d 个", len(keys)) + "）：\n" + strings.Join(keys, "\n"), nil
+			}
+			return "根节点不是对象，没有键", nil
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return fmt.Sprintf("根对象的键（%d 个）：\n%s", len(keys), strings.Join(keys, "\n")), nil
+
+	case "shape":
+		return jsonShape(doc, "$", 0), nil
+
+	case "pretty":
+		return marshalOut(doc, env.MaxOutput)
+
+	default:
+		return "", fmt.Errorf("json: 未知 op %q（可选 query / keys / shape / pretty）", op)
+	}
+}
+
+// stripCodeFence 去掉 markdown 代码围栏与首尾空白，让模型可以直接传工具输出。
+func stripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	s = strings.TrimPrefix(s, "```")
+	// 第一行可能是语言标记（json / JSON）
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		first := strings.TrimSpace(s[:i])
+		if first == "" || !strings.ContainsAny(first, "{[\"") {
+			s = s[i+1:]
+		}
+	}
+	if i := strings.LastIndex(s, "```"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+// jsonQuery 按点号路径取值，支持 a.b.0.c 与 a.b[0].c 两种下标写法。
+func jsonQuery(doc any, ptr string) (any, error) {
+	cur := doc
+	// 归一化：a.b[0].c → a.b.0.c
+	p := strings.NewReplacer("[", ".", "]", "").Replace(ptr)
+	for _, seg := range strings.Split(p, ".") {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		switch node := cur.(type) {
+		case map[string]any:
+			v, ok := node[seg]
+			if !ok {
+				keys := make([]string, 0, len(node))
+				for k := range node {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				return nil, fmt.Errorf("json: 路径 %q 在此层不存在（可用键：%s）", seg, strings.Join(keys, ", "))
+			}
+			cur = v
+		case []any:
+			i, err := strconv.Atoi(seg)
+			if err != nil {
+				return nil, fmt.Errorf("json: %q 是数组，需用数字下标", seg)
+			}
+			if i < 0 || i >= len(node) {
+				return nil, fmt.Errorf("json: 下标 %d 越界（长度 %d）", i, len(node))
+			}
+			cur = node[i]
+		default:
+			return nil, fmt.Errorf("json: 路径 %q 处已是标量，无法继续下钻", seg)
+		}
+	}
+	return cur, nil
+}
+
+// jsonShape 输出类型结构概览，帮助模型在不取值的情况下先摸清数据形状。
+func jsonShape(v any, path string, depth int) string {
+	if depth > 3 {
+		return ""
+	}
+	pad := strings.Repeat("  ", depth)
+	switch node := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(node))
+		for k := range node {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s%s: object{%d}\n", pad, path, len(keys))
+		for _, k := range keys {
+			if s := jsonShape(node[k], k, depth+1); s != "" {
+				b.WriteString(s)
+			}
+		}
+		return b.String()
+	case []any:
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s%s: array[%d]\n", pad, path, len(node))
+		// 只看首个元素，避免同构数组刷屏
+		if len(node) > 0 {
+			if s := jsonShape(node[0], "[0]", depth+1); s != "" {
+				b.WriteString(s)
+			}
+		}
+		return b.String()
+	default:
+		return fmt.Sprintf("%s%s: %s\n", pad, path, jsonTypeName(v))
+	}
+}
+
+func jsonTypeName(v any) string {
+	switch n := v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "bool"
+	case float64:
+		return "number"
+	case string:
+		return "string"
+	default:
+		_ = n
+		return "unknown"
+	}
+}
+
+// marshalOut 缩进序列化并按需截断。
+func marshalOut(v any, maxOutput int) (string, error) {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("json: 序列化失败: %w", err)
+	}
+	s := string(b)
+	if maxOutput > 0 && len(s) > maxOutput {
+		return s[:maxOutput] + fmt.Sprintf("\n…（已截断，共 %d 字节）", len(s)), nil
+	}
+	return s, nil
 }
 
 // execTodo 无副作用：仅确认清单已更新（真实渲染由前端从工具参数读取）。

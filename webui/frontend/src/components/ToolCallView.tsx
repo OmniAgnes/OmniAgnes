@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 
 import {
+  BracesIcon,
   ChevronRightIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -79,6 +80,11 @@ const META: Record<string, ToolMeta> = {
     icon: FolderSearchIcon,
     label: "查找",
     summary: () => "",
+  },
+  json: {
+    icon: BracesIcon,
+    label: "JSON",
+    summary: (a) => (a.pointer ? `${str(a.op) || "query"} ${str(a.pointer)}` : str(a.path)),
   },
 }
 
