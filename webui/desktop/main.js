@@ -233,6 +233,39 @@ app.commandLine.appendSwitch("no-proxy-server")
 let win = null
 let omni = null
 
+// ---------- 任务栏身份（Application User Model ID）----------
+// Windows 任务栏右键菜单顶部的名字与图标不来自窗口（win.setIcon / setTitle 改的是窗口），
+// 而是按进程的 AUMID 去开始菜单解析：开发态进程是 electron.exe，其文件描述与内嵌
+// 图标就是 "Electron"，所以右键菜单永远显示 Electron。
+// 修法：给进程设自定义 AUMID，并在用户开始菜单写入一个**同名同图标、带相同 AUMID**
+// 的快捷方式，Windows 据此解析出 "omni" + omni 图标。
+// 打包态不需要写快捷方式（electron-builder 的安装器会做），但 AUMID 要与
+// electron-builder.yml 的 appId 保持一致，否则任务栏分组/通知会错乱。
+const APP_AUMID = "com.omni.desktop"
+if (process.platform === "win32") app.setAppUserModelId(APP_AUMID)
+
+function ensureTaskbarShortcut() {
+  if (process.platform !== "win32" || app.isPackaged) return
+  const icon = path.join(__dirname, "build", "icon.ico")
+  if (!existsSync(icon)) return
+  const dir = path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs")
+  const appDir = app.getAppPath()
+  const opts = {
+    target: process.execPath, // 开发态 = electron.exe，点这个快捷方式同样能启动开发版
+    args: `"${appDir}"`,
+    cwd: appDir,
+    description: "omni 桌面版",
+    icon,
+    iconIndex: 0,
+    appUserModelId: APP_AUMID,
+  }
+  // 注意：writeShortcutLink 的 "replace" 在文件不存在时会失败（与文档相反），
+  // 必须先 "create"；已存在时 create 失败，再 "replace" 覆盖（保持图标路径等最新）。
+  const lnk = path.join(dir, "omni.lnk")
+  const ok = shell.writeShortcutLink(lnk, "create", opts) || shell.writeShortcutLink(lnk, "replace", opts)
+  console.log(`[taskbar] 开始菜单快捷方式${ok ? "已写入（AUMID=" + APP_AUMID + "）" : "写入失败: " + lnk}`)
+}
+
 // 开发态（npx electron .）的窗口/任务栏图标：Electron 默认用自己的图标，
 // 任务栏显示成 Electron。显式指向 build/ 下的 omni 图标。
 // Windows 任务栏需要 .ico（PNG 在部分 Windows 版本不生效），macOS 用 PNG。
@@ -436,6 +469,7 @@ async function createWindow() {
 }
 
 app.whenReady().then(() => {
+  ensureTaskbarShortcut()
   createWindow().catch((e) => fail(e.message))
   app.on("activate", () => {
     if (!win) createWindow().catch((e) => fail(e.message))

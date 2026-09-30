@@ -3,7 +3,7 @@
 ## 项目概况
 - Go 1.27 单体：`main.go`（TUI/Web 双入口，`--web` 进网页版工作台）+ internal/{agent,llm,store,tools,webui,tui,...}。
 - 前端：`webui/frontend`（React 19 + Vite + Tailwind v4 + lucide-react，组件用 shadcn 风格 ui/ 目录），构建产物输出到 `internal/webui/dist`，经 go:embed 打进二进制。
-- 桌面端：`webui/desktop`（Electron 壳，无边框自绘标题栏，拉起 `omni --web --no-open`），打包 `npm run dist`（NSIS），图标在 `build/icon.ico`，生成脚本 `make_icon.py`（Pillow+numpy，装在 `C:/Users/sun/.workbuddy/binaries/python/envs/default`）。
+- 桌面端：`webui/desktop`（Electron 壳，无边框自绘标题栏，拉起 `omni --web --no-open`），打包 `npm run dist`（NSIS），图标在 `build/icon.ico`，生成脚本 `make_icon.py`（Pillow+numpy，装在 `C:/Users/sun/.workbuddy/binaries/python/envs/default`）。AUMID 统一为 `com.omni.desktop`（main.js 的 `APP_AUMID` 与 electron-builder.yml 的 `appId` 必须一致）。
 - 数据持久化：任务 = `~/.config/omni`（DefaultDataDir）下 sessions/*.json，项目 = projects.json。
 
 ## 构建链（改动必走）
@@ -61,3 +61,17 @@
 - **入口 UI**：输入框底部「完全访问」(ModePicker) 之后的 `GlobeIcon` 幽灵按钮（用户明确要求放这里，**不要**放右侧竖排按钮）。`BrowserPane` 是受控组件（`open`/`onOpenChange`），收起时 `return null`。
 - AI 开始操作时自动展开面板（`close`/`hide` 除外），让用户看得见它在干什么。
 - `.omni/skills/browser-use/SKILL.md` 已改为内置 browser 工具操作手册（原文是 browser-use.com 上游的外部 CLI 手册，本机无此 CLI，会让 AI 反复安装/等授权 → 界面卡"处理中"）。
+
+## Windows 桌面端易踩的坑
+- **任务栏图标/标题 ≠ 窗口属性**：`win.setIcon()` / `setTitle()` / 拦 `page-title-updated` 只管窗口；
+  任务栏按钮（含右键菜单顶部）的名字与图标走 **AUMID 解析**——按进程 AUMID 去开始菜单找同名快捷方式。
+  开发态进程是 electron.exe（文件描述="Electron"）所以永远显示 Electron；
+  修法 = `app.setAppUserModelId()` + 开始菜单写带同 AUMID/图标的 `omni.lnk`（仅 dev，打包态由 electron-builder 负责）。
+- **`shell.writeShortcutLink(path, "replace", opts)` 文件不存在时返回 false**（与文档相反）。
+  必须 `create(opts) || replace(opts)`。`update` 对不存在的文件同样失败。
+- **改桌面端只需重启 Electron，不用重编内核**：main.js/preload.js 是直接被 Electron 加载的源码，不进 bundle。
+- **验证 UI/Electron 行为的两个限制**：`contextBridge` 暴露的 `window.omniDesktop` 在渲染层冻结，
+  不能 monkey-patch 记录调用；preload（isolated world）的 `console.log` 不进主进程 stdout。
+  记录桩调用必须 `ipcRenderer.send` 回主进程。
+- **capturePage 是物理像素，getBoundingClientRect 是 CSS 像素**：差一个 DPR。
+  验证 UI 时加 `app.commandLine.appendSwitch("force-device-scale-factor", "1")` 让两者 1:1，别自己换算。

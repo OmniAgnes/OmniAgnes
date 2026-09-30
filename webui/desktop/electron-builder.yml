@@ -11,6 +11,9 @@
 # ⚠️ 不要写 extraMetadata: { version: "${version}" }——该字段不展开占位符，
 #    会原样写进包内 package.json，最后写 exe 资源版本号时抛 Invalid major number。
 publish: null
+# Windows 任务栏身份（AUMID）：与 main.js 的 APP_AUMID 一致，安装器生成的
+# 快捷方式带此 ID，任务栏右键菜单才能显示 omni 的名字与图标。
+appId: com.omni.desktop
 directories:
   output: release
 files:
