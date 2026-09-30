@@ -11,11 +11,19 @@ interface ModelPickerProps {
   onChange: (model: string) => void
 }
 
+/** 一级（供应商）面板宽度，供二级定位用 */
+const PANEL_W = 160 // w-40
+const PANEL_GAP = 6
+
 /**
  * 二级模型选择（点击展开）：
  * 一级 = 供应商名称列表（**始终显示**，哪怕只有一个供应商）；**点击**供应商后，
- * 二级模型列表才从**左侧**飞出（向左展开），当前选中模型有高亮 + 对勾。
- * 再次点击同一项收起。悬停不触发（避免划过就弹）。
+ * 二级模型列表才从左侧飞出，当前选中模型有高亮 + 对勾。再次点击同一项收起。
+ *
+ * 两条硬性约束（用户明确要求）：
+ * 1. 关闭后再次打开**只显示一级**，二级永远要重新点一次，不记住上次展开项。
+ * 2. 二级出现/消失时一级面板**不能位移**——所以一级用普通文档流，二级用
+ *    absolute 钉在一级左侧（反过来用 flex 排二级会把一级往左挤）。
  *
  * 自实现弹层而不引 Radix Popover：项目没装对应依赖，需求简单（受控开合 +
  * 点外部/Esc 关闭 + 边界避让）。
@@ -33,6 +41,12 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
   // 贴近输入框右下方；空间不足时向上翻转
   const [dropUp, setDropUp] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+
+  // 统一关闭：清掉展开项，保证下次打开只有一级
+  const close = () => {
+    setOpen(false)
+    setHoverProvider("")
+  }
 
   // 外部切换模型（如设置页改了当前模型）时收起二级，避免残留别的供应商
   useEffect(() => {
@@ -53,10 +67,10 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+      if (!wrapRef.current?.contains(e.target as Node)) close()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false)
+      if (e.key === "Escape") close()
     }
     document.addEventListener("mousedown", onDown)
     document.addEventListener("keydown", onKey)
@@ -71,8 +85,7 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
 
   const pick = (m: string) => {
     onChange(m)
-    setOpen(false)
-    setHoverProvider("")
+    close()
   }
 
   return (
@@ -80,12 +93,7 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
       <button
         type="button"
         title="切换模型"
-        onClick={() => {
-          setOpen((v) => {
-            if (v) setHoverProvider("")
-            return !v
-          })
-        }}
+        onClick={() => (open ? close() : setOpen(true))}
         className="bg-muted/60 hover:bg-muted flex max-w-30 cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors sm:max-w-52"
       >
         <span className="truncate font-medium">{model || "选择模型"}</span>
@@ -101,53 +109,52 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
           }}
           className="absolute z-50"
         >
-          <div className="flex items-start gap-1">
-            {/* 二级：模型列表（点击一级供应商后才出现，DOM 在前 = 显示在左侧） */}
-            {hoverProvider && <Flyout models={models} model={model} pick={pick} />}
-            {/* 一级：供应商列表（始终显示） */}
-            <div className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
-              <div className="omni-scroll max-h-72 overflow-y-auto p-1">
-                {groups.length === 0 ? (
-                  <div className="text-muted-foreground px-2 py-1.5 text-xs">没有可用供应商</div>
-                ) : (
-                  groups.map((g) => (
-                    <button
-                      key={g.provider}
-                      type="button"
-                      // 点击才展开二级；已展开时悬停可在供应商间快速切换
-                      onMouseEnter={() => {
-                        if (hoverProvider) setHoverProvider(g.provider)
-                      }}
-                      onClick={() =>
-                        setHoverProvider((p) => (p === g.provider ? "" : g.provider))
-                      }
-                      className={cn(
-                        "flex w-full cursor-pointer items-center gap-1.5 rounded-[5px] px-2 py-1.5 text-left text-xs transition-colors",
-                        g.provider === hoverProvider
-                          ? "bg-accent text-accent-foreground font-medium"
-                          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                      )}
-                    >
-                      <span className="truncate" title={g.provider}>
-                        {g.provider}
-                      </span>
-                      <span className="text-muted-foreground ml-auto text-[10px] tabular-nums">
-                        {g.models.length}
-                      </span>
-                      <ChevronRightIcon className="text-muted-foreground size-3 shrink-0 -scale-x-100" />
-                    </button>
-                  ))
-                )}
-              </div>
+          {/* 一级面板：在文档流里，位置由 right:0 锚定，不受二级影响 */}
+          <div className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
+            <div className="omni-scroll max-h-72 overflow-y-auto p-1">
+              {groups.length === 0 ? (
+                <div className="text-muted-foreground px-2 py-1.5 text-xs">没有可用供应商</div>
+              ) : (
+                groups.map((g) => (
+                  <button
+                    key={g.provider}
+                    type="button"
+                    // 点击才展开二级；已展开时悬停可在供应商间快速切换
+                    onMouseEnter={() => {
+                      if (hoverProvider) setHoverProvider(g.provider)
+                    }}
+                    onClick={() => setHoverProvider((p) => (p === g.provider ? "" : g.provider))}
+                    className={cn(
+                      "flex w-full cursor-pointer items-center gap-1.5 rounded-[5px] px-2 py-1.5 text-left text-xs transition-colors",
+                      g.provider === hoverProvider
+                        ? "bg-accent text-accent-foreground font-medium"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                    )}
+                  >
+                    <span className="truncate" title={g.provider}>
+                      {g.provider}
+                    </span>
+                    <span className="text-muted-foreground ml-auto text-[10px] tabular-nums">
+                      {g.models.length}
+                    </span>
+                    <ChevronRightIcon className="text-muted-foreground size-3 shrink-0 -scale-x-100" />
+                  </button>
+                ))
+              )}
             </div>
           </div>
+
+          {/* 二级：absolute 钉在一级左侧，出现/消失都不影响一级位置 */}
+          {hoverProvider && (
+            <Flyout models={models} model={model} pick={pick} />
+          )}
         </div>
       )}
     </div>
   )
 }
 
-/** 二级：模型飞层，排在供应商面板左侧（DOM 顺序决定方向）。 */
+/** 二级：模型飞层，绝对定位在一级面板左侧。 */
 function Flyout({
   models,
   model,
@@ -158,7 +165,10 @@ function Flyout({
   pick: (m: string) => void
 }) {
   return (
-    <div className="bg-popover text-popover-foreground relative z-0 w-56 rounded-md border shadow-md">
+    <div
+      className="bg-popover text-popover-foreground absolute top-0 z-0 w-56 rounded-md border shadow-md"
+      style={{ right: PANEL_W + PANEL_GAP }}
+    >
       <div className="omni-scroll max-h-72 overflow-y-auto p-1">
         {models.length === 0 ? (
           <div className="text-muted-foreground px-2 py-1.5 text-xs">该供应商下没有模型</div>

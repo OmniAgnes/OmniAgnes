@@ -745,9 +745,15 @@ export default function App() {
       </div>
       <SettingsDialog
         open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        onOpenChange={(o) => {
+          setSettingsOpen(o)
+          // 关闭时再刷一次模型列表：兜底覆盖"改了配置但没点保存"等路径，
+          // 保证聊天底部的选择器与设置里看到的一致
+          if (!o) void refreshModels()
+        }}
         state={state}
         onStateChange={setState}
+        onProvidersSaved={() => void refreshModels()}
       />
       <AddProjectDialog
         open={addProjectOpen}

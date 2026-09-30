@@ -19,6 +19,49 @@ import type { Project, TaskMeta } from "@/types"
 /** 文件夹下任务每页条数（点「更多」再加载这么多） */
 const PAGE = 5
 
+/**
+ * 文件夹展开状态持久化到 localStorage：切到别的任务再切回来、刷新页面、
+ * 重启应用都保持原样（用户要求）。用 Set 存展开的项目 id。
+ */
+const OPEN_KEY = "omni.sidebar.openProjects"
+
+function readOpenProjects(): Set<string> {
+  try {
+    const raw = localStorage.getItem(OPEN_KEY)
+    const arr = raw ? (JSON.parse(raw) as string[]) : []
+    return new Set(Array.isArray(arr) ? arr : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeOpenProjects(s: Set<string>) {
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify([...s]))
+  } catch {
+    /* 隐私模式等场景写不进去，忽略即可 */
+  }
+}
+
+function isProjectOpen(id: string): boolean {
+  return readOpenProjects().has(id)
+}
+
+function setProjectOpen(id: string, open: boolean) {
+  const s = readOpenProjects()
+  if (open) {
+    s.add(id)
+  } else {
+    s.delete(id)
+  }
+  writeOpenProjects(s)
+}
+
+/** 项目被移除时清掉其展开记录，避免 localStorage 堆积 */
+export function forgetProjectOpen(id: string) {
+  setProjectOpen(id, false)
+}
+
 interface SidebarProps {
   tasks: TaskMeta[]
   projects: Project[]
@@ -263,7 +306,11 @@ export function Sidebar(props: SidebarProps) {
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (confirmProject) onDeleteProject(confirmProject.id)
+                if (confirmProject) {
+                  // 清掉展开记录，否则重新添加同一文件夹时会被误判为"已展开"
+                  forgetProjectOpen(confirmProject.id)
+                  onDeleteProject(confirmProject.id)
+                }
                 setConfirmProject(null)
               }}
             >
@@ -298,8 +345,14 @@ function ProjectGroup(props: {
   const { project, tasks, activeTaskId, running, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
   // 任务多时先显示 5 条，点「更多」每次再加载 5 条
   const [limit, setLimit] = useState(PAGE)
-  // 任务列表默认收起，点击文件夹名展开/收起
-  const [open, setOpen] = useState(false)
+  // 任务列表默认收起；展开状态按项目 id 持久化——切任务、刷新、重启后都保持
+  const [open, setOpen] = useState(() => isProjectOpen(project.id))
+  const toggle = () => {
+    setOpen((o) => {
+      setProjectOpen(project.id, !o)
+      return !o
+    })
+  }
   const shown = tasks.slice(0, limit)
   const rest = tasks.length - shown.length
 
@@ -309,7 +362,7 @@ function ProjectGroup(props: {
       <div className="group flex items-center rounded-md px-2 py-1.5" onContextMenu={onContextMenu}>
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={toggle}
           className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm cursor-pointer"
           title={project.path}
         >

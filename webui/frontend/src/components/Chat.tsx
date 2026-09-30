@@ -280,16 +280,20 @@ export function Chat({
         )}
 
         {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
-            不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。 */}
-        {(b.tools.length > 0 || b.replies.length > 0) && (
+            不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。
+            注意：只渲染有文本的回复——中间轮次（纯工具调用）的空 assistant 消息
+            若也渲染成 div，每个都会吃一个 gap，多轮时空白越叠越大。 */}
+        {(b.tools.length > 0 || b.replies.some((r) => r.text)) && (
           <div className="flex flex-col gap-1.5">
             {b.tools.length > 0 && <ToolCallGroup tools={b.tools} />}
-            {b.replies.map((item) => (
-              <div key={item.id} className="flex flex-col gap-1.5">
-                {item.text && <Markdown text={item.text} />}
-                {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
-              </div>
-            ))}
+            {b.replies
+              .filter((r) => r.text)
+              .map((item) => (
+                <div key={item.id} className="flex flex-col gap-1.5">
+                  <Markdown text={item.text} />
+                  {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
+                </div>
+              ))}
           </div>
         )}
       </div>

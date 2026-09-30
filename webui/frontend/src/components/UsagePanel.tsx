@@ -113,23 +113,18 @@ export function UsagePanel() {
 
   const chart = useMemo(() => {
     // 图表横轴：区间内出现过的日期（升序），以及每个模型在这些天的总量
-    const dayIdx = new Map<string, number>()
-    const series = new Map<string, number[]>()
-    for (const r of filtered) {
-      if (!dayIdx.has(r.date)) dayIdx.set(r.date, dayIdx.size)
-    }
-    // 补齐区间日期（最多 60 个，再多就只画出现过的）
-    const days = [...dayIdx.keys()].sort()
-    for (const d of days) {
-      dayIdx.set(d, dayIdx.size)
-      series.set(d, [])
-    }
+    const days = [...new Set(filtered.map((r) => r.date))].sort()
+    const idx = new Map(days.map((d, i) => [d, i]))
     const n = days.length
     const data = new Map<string, number[]>()
     for (const r of filtered) {
-      const arr = data.get(r.model || "(未知)") ?? Array(n).fill(0)
-      arr[dayIdx.get(r.date)!] += r.input + r.output
-      data.set(r.model || "(未知)", arr)
+      const key = r.model || "(未知)"
+      let arr = data.get(key)
+      if (!arr) {
+        arr = Array(n).fill(0)
+        data.set(key, arr)
+      }
+      arr[idx.get(r.date)!] += r.input + r.output
     }
     return { days, data }
   }, [filtered])

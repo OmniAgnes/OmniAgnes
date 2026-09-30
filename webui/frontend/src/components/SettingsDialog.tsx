@@ -31,11 +31,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -56,6 +51,7 @@ import { cn } from "@/lib/utils"
 import type {
   MCPStatus,
   MCPServerConfig,
+  ModelOptions,
   ProviderConfig,
   SkillDirs,
   SkillInfo,
@@ -108,6 +104,8 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
   state: StateInfo | null
   onStateChange: (s: StateInfo) => void
+  /** 供应商配置保存成功后回调——外层据此刷新模型列表 */
+  onProvidersSaved?: () => void
 }
 
 // 技能编辑草稿
@@ -167,7 +165,7 @@ function envToText(env?: Record<string, string>): string {
     .join("\n")
 }
 
-export function SettingsDialog({ open, onOpenChange, state, onStateChange }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, state, onStateChange, onProvidersSaved }: SettingsDialogProps) {
   const [section, setSection] = useState<SectionId>("model")
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [theme, setTheme] = useState<Theme>(state?.theme ?? "dark")
@@ -186,6 +184,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
   const [confirm, setConfirm] = useState<{ kind: "skill" | "mcp"; name: string } | null>(null)
   const [err, setErr] = useState("")
   const [saving, setSaving] = useState(false)
+  /** 供应商配置保存成功提示（区别于技能/MCP 的 toast） */
+  const [providersSaved, setProvidersSaved] = useState(false)
 
   const refreshSkills = async () => {
     try {
@@ -232,10 +232,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
     if (!providers) return
     setSaving(true)
     setErr("")
+    setProvidersSaved(false)
     try {
       const r = await api.saveProviders(providers)
       setProviders(r.providers)
       if (state) onStateChange({ ...state, model: r.current, configured: r.providers.length > 0 })
+      // 保存成功后通知外层刷新模型列表——否则「选择模型」二级菜单仍是旧数据
+      onProvidersSaved?.()
+      setProvidersSaved(true)
+      setTimeout(() => setProvidersSaved(false), 2500)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -478,12 +483,19 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                         <PlusIcon /> 添加
                       </Button>
                       <Button size="sm" disabled={saving || !providers} onClick={() => void saveProviders()}>
-                        保存
+                        {saving ? "保存中…" : "保存"}
                       </Button>
                     </div>
                   </div>
 
                   {err && <div className="text-destructive text-sm">{err}</div>}
+
+                  {providersSaved && (
+                    <div className="text-muted-foreground flex items-center gap-1.5 text-sm">
+                      <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                      已保存，模型列表已更新
+                    </div>
+                  )}
 
                   {toast && (
                     <div className="text-muted-foreground flex items-center gap-2 text-sm">
@@ -1053,10 +1065,20 @@ function ProviderCard({
   const [open, setOpen] = useState(false)
   const [modelInput, setModelInput] = useState("")
 
-  const addModel = () => {
-    const m = modelInput.trim()
-    if (!m) return
-    const models = [...(provider.models ?? []), m]
+  /** 批量添加：支持一次粘贴多个（逗号/空格分隔），自动去重 */
+  const addModels = () => {
+    const parts = modelInput
+      .split(/[,，\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (parts.length === 0) return
+    const cur = provider.models ?? []
+    const models = [...cur]
+    for (const p of parts) if (!models.includes(p)) models.push(p)
+    if (models.length === cur.length) {
+      setModelInput("")
+      return
+    }
     onChange({ models, model: models[0] })
     setModelInput("")
   }
@@ -1064,6 +1086,51 @@ function ProviderCard({
   const removeModel = (m: string) => {
     const models = (provider.models ?? []).filter((x) => x !== m)
     onChange({ models, model: models[0] })
+    // 模型被删时一并清掉它的参数，避免配置文件留下死条目
+    if (provider.model_options?.[m]) {
+      const next = { ...provider.model_options }
+      delete next[m]
+      onChange({ model_options: next })
+    }
+  }
+
+  /** 重命名模型：模型名是 model_options 的键，改名时要把参数一并迁过去 */
+  const renameModel = (from: string, to: string) => {
+    const name = to.trim()
+    if (!from || name === from) return
+    if (!name) {
+      removeModel(from)
+      return
+    }
+    if ((provider.models ?? []).includes(name)) return // 重名则忽略，避免键冲突
+    const models = (provider.models ?? []).map((x) => (x === from ? name : x))
+    const patch: Partial<ProviderConfig> = { models }
+    // 主模型指向被改名的那一个时同步更新
+    if (provider.model === from) patch.model = name
+    const opts = { ...provider.model_options }
+    if (opts[from]) {
+      const { [from]: moved, ...rest } = opts
+      patch.model_options = { ...rest, [name]: moved }
+    }
+    onChange(patch)
+  }
+
+  /** 写入单个模型的参数；全部为空时删掉该条目，回落到供应商默认值 */
+  const patchModelOptions = (m: string, patch: Partial<ModelOptions>) => {
+    const cur = provider.model_options?.[m] ?? {}
+    const next = { ...cur, ...patch }
+    const empty =
+      !next.context_window &&
+      !next.max_output_tokens &&
+      !next.input_types?.length &&
+      !next.reasoning
+    const all = { ...provider.model_options }
+    if (empty) {
+      delete all[m]
+    } else {
+      all[m] = next
+    }
+    onChange({ model_options: Object.keys(all).length ? all : undefined })
   }
 
   return (
@@ -1144,124 +1211,248 @@ function ProviderCard({
                   placeholder="https://api.example.com/v1"
                 />
               </div>
+              {/* 添加模型：只负责新增；改名/删除在下方「模型参数」列表里做 */}
               <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <Label className="text-muted-foreground text-xs">模型（Enter 添加）</Label>
-                <div className="border-input focus-within:border-ring focus-within:ring-ring/50 flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border bg-transparent px-2 py-1.5 focus-within:ring-[3px]">
-                  {(provider.models ?? []).map((m) => (
-                    <span
+                <Label className="text-muted-foreground text-xs">添加模型（Enter 添加，可逗号分隔多个）</Label>
+                <Input
+                  value={modelInput}
+                  onChange={(e) => setModelInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault()
+                      addModels()
+                    }
+                  }}
+                  onBlur={addModels}
+                  placeholder={provider.models?.length ? "" : "如 gpt-4o、claude-sonnet-4-20250514"}
+                />
+              </div>
+
+              {/* 各模型独立参数 */}
+              <div className="flex flex-col gap-2 sm:col-span-2">
+                {(provider.models ?? []).length === 0 ? (
+                  <div className="text-muted-foreground text-xs">还没有模型，先在上面添加</div>
+                ) : (
+                  (provider.models ?? []).map((m) => (
+                    <ModelOptionsRow
                       key={m}
-                      className="bg-secondary text-secondary-foreground flex items-center gap-1 rounded px-1.5 py-0.5 text-xs"
-                    >
-                      {m}
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-foreground cursor-pointer"
-                        onClick={() => removeModel(m)}
-                      >
-                        <XIcon className="size-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    value={modelInput}
-                    onChange={(e) => setModelInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault()
-                        addModel()
-                      }
-                    }}
-                    onBlur={addModel}
-                    placeholder={provider.models?.length ? "" : "输入模型名，Enter 添加"}
-                    className="min-w-32 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 sm:col-span-2">
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-muted-foreground text-xs">上下文窗口（token）</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={provider.context_window ?? ""}
-                    onChange={(e) => onChange({ context_window: Number(e.target.value) || 0 })}
-                    placeholder="如 128000"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-muted-foreground text-xs">最大输出（token）</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={provider.max_output_tokens ?? ""}
-                    onChange={(e) => onChange({ max_output_tokens: Number(e.target.value) || 0 })}
-                    placeholder="如 8192"
-                  />
-                </div>
-              </div>
-
-              <div className="sm:col-span-2">
-                <Collapsible>
-                  <CollapsibleTrigger className="text-muted-foreground group flex items-center gap-1 text-xs cursor-pointer hover:text-foreground">
-                    <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
-                    高级
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div className="mt-3 flex flex-col gap-3 rounded-md bg-muted/40 p-3">
-                      <div className="flex flex-col gap-1.5">
-                        <Label className="text-muted-foreground text-xs">输入类型</Label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {INPUT_TYPES.map((t) => {
-                            const active = (provider.input_types ?? []).includes(t.value)
-                            return (
-                              <button
-                                key={t.value}
-                                type="button"
-                                onClick={() => {
-                                  const cur = provider.input_types ?? []
-                                  onChange({
-                                    input_types: active
-                                      ? cur.filter((x) => x !== t.value)
-                                      : [...cur, t.value],
-                                  })
-                                }}
-                                className={cn(
-                                  "rounded-md border px-2.5 py-1 text-xs cursor-pointer transition-colors",
-                                  active
-                                    ? "bg-primary text-primary-foreground border-transparent"
-                                    : "text-muted-foreground hover:bg-accent",
-                                )}
-                              >
-                                {t.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label className="text-muted-foreground text-xs">推理等级</Label>
-                        <Select
-                          value={provider.reasoning ?? "default"}
-                          onValueChange={(v) => onChange({ reasoning: v })}
-                        >
-                          <SelectTrigger size="sm" className="w-36">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {REASONING_LEVELS.map((r) => (
-                              <SelectItem key={r.value} value={r.value}>
-                                {r.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
+                      name={m}
+                      options={provider.model_options?.[m] ?? {}}
+                      onChange={(opt) => patchModelOptions(m, opt)}
+                      onRename={renameModel}
+                      onRemove={removeModel}
+                    />
+                  ))
+                )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 输入类型多选：text / image / video / pdf / audio */
+function InputTypePicker({
+  value,
+  onChange,
+}: {
+  value?: string[]
+  onChange: (v: string[]) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {INPUT_TYPES.map((t) => {
+        const active = (value ?? []).includes(t.value)
+        return (
+          <button
+            key={t.value}
+            type="button"
+            onClick={() =>
+              onChange(
+                active ? (value ?? []).filter((x) => x !== t.value) : [...(value ?? []), t.value],
+              )
+            }
+            className={cn(
+              "rounded-md border px-2.5 py-1 text-xs cursor-pointer transition-colors",
+              active
+                ? "bg-primary text-primary-foreground border-transparent"
+                : "text-muted-foreground hover:bg-accent",
+            )}
+          >
+            {t.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 推理等级下拉 */
+function ReasoningPicker({
+  value,
+  onChange,
+}: {
+  value?: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <Select value={value || "default"} onValueChange={onChange}>
+      <SelectTrigger size="sm" className="w-36">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {REASONING_LEVELS.map((r) => (
+          <SelectItem key={r.value} value={r.value}>
+            {r.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+/**
+ * 单个模型的参数行：折叠时只显示模型名 + 已配置项摘要，
+ * 展开后可单独设置上下文窗口 / 最大输出 / 输入类型 / 推理等级，
+ * 并可就地重命名模型（改名时参数跟着迁移）。
+ */
+function ModelOptionsRow({
+  name,
+  options,
+  onChange,
+  onRename,
+  onRemove,
+}: {
+  name: string
+  options: ModelOptions
+  onChange: (patch: Partial<ModelOptions>) => void
+  onRename: (from: string, to: string) => void
+  onRemove: (name: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
+
+  // 已配置项摘要，让用户不展开也能看到差异
+  const summary: string[] = []
+  if (options.context_window) summary.push(`上下文 ${options.context_window}`)
+  if (options.max_output_tokens) summary.push(`输出 ${options.max_output_tokens}`)
+  if (options.input_types?.length) summary.push(options.input_types.join("/"))
+  if (options.reasoning) summary.push(`推理 ${options.reasoning}`)
+
+  const commitRename = () => {
+    setEditing(false)
+    if (draft.trim() && draft.trim() !== name) onRename(name, draft.trim())
+    else setDraft(name)
+  }
+
+  return (
+    <div className="rounded-md border">
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="hover:bg-accent/40 flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left transition-colors"
+        >
+          <ChevronRightIcon
+            className={cn(
+              "text-muted-foreground size-3.5 shrink-0 transition-transform",
+              open && "rotate-90",
+            )}
+          />
+          {editing ? (
+            <Input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  commitRename()
+                } else if (e.key === "Escape") {
+                  e.preventDefault()
+                  setDraft(name)
+                  setEditing(false)
+                }
+                e.stopPropagation()
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="h-6 font-mono text-xs"
+            />
+          ) : (
+            <span className="truncate font-mono text-xs">{name}</span>
+          )}
+          {!editing && summary.length > 0 && (
+            <span className="text-muted-foreground ml-auto truncate text-[11px]">{summary.join(" · ")}</span>
+          )}
+        </button>
+        {!editing && (
+          <div className="flex shrink-0 items-center pr-1.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              onClick={() => {
+                setDraft(name)
+                setEditing(true)
+              }}
+              title="重命名模型"
+            >
+              <PencilIcon />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => onRemove(name)}
+              title="删除模型"
+            >
+              <Trash2Icon />
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {open && (
+        <div className="flex flex-col gap-3 border-t p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-muted-foreground text-xs">上下文窗口（token）</Label>
+              <Input
+                type="number"
+                min={0}
+                value={options.context_window ?? ""}
+                onChange={(e) => onChange({ context_window: Number(e.target.value) || 0 })}
+                placeholder="留空则用默认"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-muted-foreground text-xs">最大输出（token）</Label>
+              <Input
+                type="number"
+                min={0}
+                value={options.max_output_tokens ?? ""}
+                onChange={(e) => onChange({ max_output_tokens: Number(e.target.value) || 0 })}
+                placeholder="留空则用默认"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-muted-foreground text-xs">输入类型</Label>
+            <InputTypePicker
+              value={options.input_types}
+              onChange={(v) => onChange({ input_types: v })}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-muted-foreground text-xs">推理等级</Label>
+            <ReasoningPicker
+              value={options.reasoning}
+              onChange={(v) => onChange({ reasoning: v })}
+            />
           </div>
         </div>
       )}

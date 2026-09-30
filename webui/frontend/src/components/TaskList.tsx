@@ -39,14 +39,10 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           <button
             type="button"
             onClick={() => onOpen(t.id)}
-            className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left cursor-pointer"
+            className="min-w-0 flex-1 truncate text-left cursor-pointer"
             title={t.title}
           >
-            <span className="truncate w-full">{t.title}</span>
-            <span className="text-muted-foreground text-[11px]">
-              {formatTime(t.updated_at)}
-              {t.mode === "plan" ? " · plan" : ""}
-            </span>
+            {t.title}
           </button>
           {/* 运行中：常驻转圈动画（切走任务后台也在跑）；否则悬停显示删除 */}
           {running[t.id] ? (
@@ -80,17 +76,4 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
       )}
     </div>
   )
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    const now = new Date()
-    if (d.toDateString() === now.toDateString()) {
-      return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-    }
-    return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
-  } catch {
-    return ""
-  }
 }
