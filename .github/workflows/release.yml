@@ -99,6 +99,8 @@ jobs:
           set -e
           TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
           LDFLAGS="-s -w -X main.version=${TAG}"
+          # 内置技能（.omni/skills）同步进 go:embed 源，编进内核二进制
+          go run ./build/gen-builtin-skills
           mkdir -p webui/desktop/bin
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-windows-x64.exe .
           GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-windows-arm64.exe .
@@ -235,6 +237,8 @@ jobs:
           set -e
           TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
           LDFLAGS="-s -w -X main.version=${TAG}"
+          # 内置技能（.omni/skills）同步进 go:embed 源，编进内核二进制
+          go run ./build/gen-builtin-skills
           mkdir -p webui/desktop/bin
           GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-darwin-arm64 .
           GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-darwin-x64 .

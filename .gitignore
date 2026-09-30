@@ -23,5 +23,8 @@ webui/desktop/node_modules/
 webui/desktop/bin/
 webui/desktop/release/
 
+# dev MCP 服务器：源码入库，构建出的 exe 不入库
+dev/bin/
+
 # WorkBuddy 临时文件（调试脚本等）
 .workbuddy/tmp/

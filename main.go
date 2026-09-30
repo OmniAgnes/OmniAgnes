@@ -80,6 +80,10 @@ func main() {
 	}
 
 	// 运行时扩展：MCP 服务器、技能、全局记忆
+	// 内置技能（go:embed 打包）先补齐到全局技能目录，缺什么补什么、不覆盖用户改动
+	if err := skills.SeedBuiltIn(config.DefaultSkillsDir()); err != nil {
+		fmt.Fprintf(os.Stderr, "omni: 内置技能同步失败: %v\n", err)
+	}
 	ext := &extras.Extras{
 		Skills:     &skills.Store{GlobalDir: config.DefaultSkillsDir()},
 		MemoryPath: config.DefaultMemoryPath(),

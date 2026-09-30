@@ -1,0 +1,258 @@
+// xlsx MCP 服务器：读取 .xlsx/.xlsm 为 markdown 表格，或从行数组生成新文件。
+// 基于 excelize（纯 Go）；不支持 .xls 老格式（BIFF 二进制）。
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/xuri/excelize/v2"
+)
+
+const (
+	defaultMaxRows = 500
+	maxCellWidth   = 80 // 单元格文本超长截断，避免 markdown 行爆掉
+)
+
+type readXLSXArgs struct {
+	Path    string `json:"path" jsonschema:"xlsx/xlsm 文件路径（相对路径基于 MCP 进程工作目录）"`
+	Sheet   string `json:"sheet,omitempty" jsonschema:"工作表名；省略则列出全部工作表及行列数"`
+	MaxRows int    `json:"max_rows,omitempty" jsonschema:"最多输出的行数，默认 500"`
+}
+
+type writeXLSXArgs struct {
+	Path      string  `json:"path" jsonschema:"目标文件路径；已存在时报错（除非 overwrite）"`
+	Rows      [][]any `json:"rows" jsonschema:"二维行数组，第一行通常为表头，如 [[\"名称\",\"数量\"],[\"A\",1]]"`
+	Sheet     string  `json:"sheet,omitempty" jsonschema:"工作表名，默认 Sheet1"`
+	Overwrite bool    `json:"overwrite,omitempty" jsonschema:"目标文件已存在时是否覆盖"`
+}
+
+func main() {
+	server := mcp.NewServer(&mcp.Implementation{Name: "omni-xlsx", Version: "0.0.1"}, nil)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "read_xlsx",
+		Description: "读取 xlsx/xlsm：省略 sheet 时列出全部工作表与行列数；指定 sheet 时输出该表为 markdown 表格。",
+		Annotations: &mcp.ToolAnnotations{
+			Title:        "读取 xlsx",
+			ReadOnlyHint: true,
+		},
+	}, readXLSX)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "write_xlsx",
+		Description: "从二维行数组生成 xlsx 文件；第一行通常为表头。文件已存在时报错，除非 overwrite=true。",
+		Annotations: &mcp.ToolAnnotations{Title: "写入 xlsx"},
+	}, writeXLSX)
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		fmt.Fprintln(os.Stderr, "omni-xlsx:", err)
+		os.Exit(1)
+	}
+}
+
+func readXLSX(ctx context.Context, req *mcp.CallToolRequest, args readXLSXArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Path) == "" {
+		return nil, nil, fmt.Errorf("缺少 path 参数")
+	}
+	path, err := resolvePath(args.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.EqualFold(filepath.Ext(path), ".xls") {
+		return nil, nil, fmt.Errorf("read_xlsx: 仅支持 .xlsx/.xlsm，不支持 .xls 老格式")
+	}
+
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read_xlsx: %w", err)
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, nil, fmt.Errorf("read_xlsx: 文件没有工作表")
+	}
+
+	// 未指定 sheet：列清单，供模型下一步精确读取
+	if strings.TrimSpace(args.Sheet) == "" {
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("共 %d 个工作表（传 sheet 参数读取具体表）：\n", len(sheets)))
+		for _, s := range sheets {
+			n, cols, err := sheetSize(f, s)
+			if err != nil {
+				fmt.Fprintf(&b, "- %s（读取失败: %v）\n", s, err)
+				continue
+			}
+			fmt.Fprintf(&b, "- %s：%d 行 × %d 列\n", s, n, cols)
+		}
+		return textResult(strings.TrimSpace(b.String())), nil, nil
+	}
+
+	idx, err := f.GetSheetIndex(args.Sheet)
+	if err != nil || idx < 0 {
+		return nil, nil, fmt.Errorf("read_xlsx: 工作表 %q 不存在（可用: %s）", args.Sheet, strings.Join(sheets, ", "))
+	}
+	sheet := sheets[idx]
+
+	rows, err := f.Rows(sheet)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read_xlsx: %w", err)
+	}
+	defer rows.Close()
+
+	maxRows := defaultMaxRows
+	if args.MaxRows > 0 {
+		maxRows = args.MaxRows
+	}
+
+	var b strings.Builder
+	printed, total, firstCols := 0, 0, 0
+	for rows.Next() {
+		total++
+		cols, err := rows.Columns()
+		if err != nil || printed == maxRows {
+			continue
+		}
+		if printed == 0 {
+			firstCols = len(cols)
+		} else if printed == 1 && firstCols > 0 {
+			// 首行后补 markdown 表头分隔行
+			b.WriteString("|" + strings.Repeat(" --- |", firstCols) + "\n")
+		}
+		b.WriteString("| " + strings.Join(mapCells(cols), " | ") + " |\n")
+		printed++
+	}
+	if printed == 0 {
+		return textResult(fmt.Sprintf("工作表 %q 为空", sheet)), nil, nil
+	}
+	out := fmt.Sprintf("工作表 %q（markdown 表格）：\n\n%s", sheet, strings.TrimSpace(b.String()))
+	if total > printed {
+		out += fmt.Sprintf("\n\n…（共 %d 行，仅显示前 %d 行；用 max_rows 提高上限）", total, printed)
+	}
+	return textResult(out), nil, nil
+}
+
+func writeXLSX(ctx context.Context, req *mcp.CallToolRequest, args writeXLSXArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Path) == "" {
+		return nil, nil, fmt.Errorf("缺少 path 参数")
+	}
+	if len(args.Rows) == 0 {
+		return nil, nil, fmt.Errorf("rows 不能为空")
+	}
+	path, err := resolveParent(args.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := os.Stat(path); err == nil && !args.Overwrite {
+		return nil, nil, fmt.Errorf("write_xlsx: 文件已存在: %s（overwrite=true 可覆盖）", path)
+	}
+
+	f := excelize.NewFile()
+	defer f.Close()
+	sheet := strings.TrimSpace(args.Sheet)
+	if sheet == "" {
+		sheet = "Sheet1"
+	}
+	if sheet != "Sheet1" {
+		if err := f.SetSheetName("Sheet1", sheet); err != nil {
+			return nil, nil, fmt.Errorf("write_xlsx: %w", err)
+		}
+	}
+	for i, row := range args.Rows {
+		cell := "A" + strconv.Itoa(i+1)
+		if err := f.SetSheetRow(sheet, cell, &row); err != nil {
+			return nil, nil, fmt.Errorf("write_xlsx: 第 %d 行写入失败: %w", i+1, err)
+		}
+	}
+	if err := f.SaveAs(path); err != nil {
+		return nil, nil, fmt.Errorf("write_xlsx: %w", err)
+	}
+	return textResult(fmt.Sprintf("已生成 %s（%d 行 × %d 列，工作表 %s）", path, len(args.Rows), rowWidth(args.Rows), sheet)), nil, nil
+}
+
+// textResult 以纯文本内容返回（不用 structured content，避免客户端拿到 JSON 编码文本）。
+func textResult(s string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
+}
+
+// sheetSize 统计工作表行数与最大列数。
+func sheetSize(f *excelize.File, sheet string) (int, int, error) {
+	rows, err := f.Rows(sheet)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	n, cols := 0, 0
+	for rows.Next() {
+		n++
+		if r, err := rows.Columns(); err == nil && len(r) > cols {
+			cols = len(r)
+		}
+	}
+	return n, cols, nil
+}
+
+// mapCells 压缩超长单元格并转义竖线。
+func mapCells(cols []string) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		c = strings.ReplaceAll(c, "|", "\\|")
+		c = strings.ReplaceAll(c, "\n", " ")
+		if len(c) > maxCellWidth {
+			c = c[:maxCellWidth] + "…"
+		}
+		out[i] = c
+	}
+	return out
+}
+
+func rowWidth(rows [][]any) int {
+	w := 0
+	for _, r := range rows {
+		if len(r) > w {
+			w = len(r)
+		}
+	}
+	return w
+}
+
+// resolvePath 解析已存在的文件；相对路径基于 MCP 进程工作目录。
+func resolvePath(p string) (string, error) {
+	abs, err := expand(p)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return "", fmt.Errorf("文件不存在: %s", abs)
+	}
+	return abs, nil
+}
+
+// resolveParent 解析写入目标路径，仅要求父目录存在（不存在则创建）。
+func resolveParent(p string) (string, error) {
+	abs, err := expand(p)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func expand(p string) (string, error) {
+	abs := p
+	if strings.HasPrefix(p, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			abs = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+		}
+	}
+	abs, err := filepath.Abs(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}

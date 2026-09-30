@@ -6,6 +6,7 @@ package skills
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -145,6 +146,91 @@ func Resolve(dir, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("技能不存在: %s", name)
+}
+
+// SeedBuiltIn 把内置技能（go:embed 打进二进制的 builtinFS）补齐到 dir（全局技能目录）。
+// 幂等：已存在且内容一致的条目跳过，缺失或变化才写入；不删不覆盖用户改动。
+// embed 缺失（未生成）时静默跳过，不阻断启动。
+func SeedBuiltIn(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	sub, err := fs.Sub(builtinFS, "embedded")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	roots, err := fs.ReadDir(sub, ".")
+	if err != nil {
+		return err
+	}
+	seeded := 0
+	for _, e := range roots {
+		if !e.IsDir() {
+			continue
+		}
+		root := e.Name() // 技能根目录：<名> 或 @组
+		// 该技能根目录里已有 SKILL.md（任一层级）就不动，避免覆盖用户改过的内容
+		if dirHasSkillMD(filepath.Join(dir, root)) {
+			continue
+		}
+		seeded++
+		if err := walkFS(sub, root, func(rel string, info fs.DirEntry) error {
+			target := filepath.Join(dir, root, filepath.FromSlash(rel))
+			if info.IsDir() {
+				return os.MkdirAll(target, 0o755)
+			}
+			data, err := fs.ReadFile(sub, filepath.ToSlash(root+"/"+rel))
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(target, data, 0o644)
+		}); err != nil {
+			return err
+		}
+	}
+	if seeded > 0 {
+		fmt.Fprintf(os.Stderr, "omni: 已补齐 %d 个内置技能到 %s\n", seeded, dir)
+	}
+	return nil
+}
+
+// dirHasSkillMD 检查 dir 下（第一、二层）是否已有 SKILL.md。
+func dirHasSkillMD(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err == nil {
+		return true
+	}
+	sub, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range sub {
+		if e.IsDir() {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// walkFS 遍历 fs 子树 dir/... 下的每个条目（相对路径），回调报错则中断。
+func walkFS(root fs.FS, dir string, fn func(rel string, info fs.DirEntry) error) error {
+	return fs.WalkDir(root, dir, func(path string, info fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(path, dir+"/")
+		return fn(rel, info)
+	})
 }
 
 // splitFrontmatter 解析文件开头的 `---` 包裹的 key: value 区块。

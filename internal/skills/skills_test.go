@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,8 +91,7 @@ func contains(s, sub string) bool {
 }
 
 // skillhub 等商店的分组布局（<dir>/<组>/<名>/SKILL.md，如 @org/name）也要能被发现。
-func TestLoadDirNestedScopeLayout(t *testing.T) {
-	dir := t.TempDir()
+func TestLoadDirNestedScopeLayout(t *testing.T) {	dir := t.TempDir()
 	write(t, filepath.Join(dir, "@indiv-ebandao", "dev-expert", "SKILL.md"),
 		"---\nname: dev-expert\ndescription: 编程专家\n---\n\n正文")
 	write(t, filepath.Join(dir, "plain", "SKILL.md"),
@@ -113,5 +113,49 @@ func TestLoadDirNestedScopeLayout(t *testing.T) {
 	}
 	if !strings.Contains(filepath.ToSlash(byName["dev-expert"].Path), "@indiv-ebandao/dev-expert/SKILL.md") {
 		t.Fatalf("nested path = %s", byName["dev-expert"].Path)
+	}
+}
+
+// 内置技能（go:embed 的 embedded/ 子树）种子：缺失补齐、幂等、不覆盖用户改动。
+// embedded/ 未生成时（只有 .gitkeep）测试跳过。
+func TestSeedBuiltIn(t *testing.T) {
+	sub, err := fs.Sub(builtinFS, "embedded")
+	if err != nil {
+		t.Skip("embed 源缺失: " + err.Error())
+	}
+	roots, _ := fs.ReadDir(sub, ".")
+	var found bool
+	for _, e := range roots {
+		if e.IsDir() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Skip("embedded/ 未生成内置技能（先跑 go run ./build/gen-builtin-skills）")
+	}
+
+	dir := t.TempDir()
+	if err := SeedBuiltIn(dir); err != nil {
+		t.Fatal(err)
+	}
+	// 至少一个技能落盘了
+	if !dirHasSkillMD(dir) {
+		t.Fatal("种子后全局目录应含 SKILL.md")
+	}
+	// 改动用户侧内容，再种子一次——不应被覆盖
+	skillDir := filepath.Join(dir, "brainstorming")
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); err == nil {
+		marker := "---\nname: brainstorming\ndescription: 用户改过\n---\n用户版本"
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(marker), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := SeedBuiltIn(dir); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+		if !strings.Contains(string(data), "用户改过") {
+			t.Fatal("种子覆盖了用户改过的技能")
+		}
 	}
 }
