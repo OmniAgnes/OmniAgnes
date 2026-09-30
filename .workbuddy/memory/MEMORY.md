@@ -8,9 +8,11 @@
 
 ## 构建链（改动必走）
 1. 前端：`cd webui/frontend && npm run build`（tsc --noEmit + vite build，沙箱内命令前加 `NODE_OPTIONS=` 防 shim 干扰）
-2. 内核：`go build -o omni.exe .`
+2. 内核：`go build -o omni.exe .`（改 main.go 后必跑，否则桌面端跑旧内核）
 3. 同步：`cp omni.exe webui/desktop/bin/omni.exe`
 4. 安装包：`cd webui/desktop && npm run dist`
+- 沙箱启动桌面：`cd webui/desktop && env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS npx electron . --disable-gpu --disable-gpu-sandbox`（ELECTRON_RUN_AS_NODE=1 会让 electron 退化成纯 Node；GPU 进程在沙箱内崩溃需禁 GPU）
+- 发版：打 tag v* → `.github/workflows/release.yml` 双架构出 Win NSIS + mac dmg；CI 交叉编译内核用**备料名**（omni-<平台>-<架构>[.exe]）放 bin/，beforePack 钩子无条件覆盖正式名（顺序无关、幂等）
 
 ## 已有约定
 - 会话历史：webui `agentFor` 创建 Agent 时必须传 `History: t.Messages` 恢复持久化消息。
@@ -21,6 +23,8 @@
 - 打开文件夹 API：`POST /api/projects/{id}/open`（explorer 在 Windows 成功也返回非 0，用 Start 不等待）。
 - 文件夹下任务**分页显示**：初始 5 条，底部「更多（还有 N 条）」按钮每次再加 5 条，加完按钮消失（`const PAGE = 5` + `useState` + `slice(0, limit)`）。
 - 「任务」TAB 只放**无 project_id 的默认任务**；项目内任务只在对应文件夹下出现。
+- TUI 列表对齐：slash 提示与 /model 选择器的描述列**按当前项最长名动态取列宽（间距≥3格）**，禁止固定列宽——长技能名（/brainstorming）会把描述贴到命令上（用户明确要求留距离）。
+- `/model` 无参 = 全屏模型选择器（列 providers 全部模型，标注当前，Enter/数字键切换并持久化 cfg.Provider）；带参 = 直接切换。切换收录模型时重建 provider，ollama/localhost 免 key 校验。
 
 ## 滚动容器约定（重要，别再用 Radix ScrollArea）
 - **本项目禁用 `components/ui/scroll-area.tsx`（已删除）**：Radix Viewport 是 `size-full`，在 flex 容器里撑不开 → 内容溢出但没有滚动条（已在 SettingsDialog、Chat、Sidebar、AddProjectDialog 上连续踩坑两次）。
