@@ -1,8 +1,9 @@
-import { MinusIcon, SquareIcon, XIcon } from "lucide-react"
+import { FolderIcon, MessageSquareIcon, MinusIcon, SquareIcon, XIcon } from "lucide-react"
 
 // 自绘标题栏（仅桌面端渲染）：跟随主题。
 // 不画底边框，整体分左右两块，背景色分别与下方的侧边栏 / 对话区对齐。
-export function Titlebar() {
+// 右块左侧显示当前「来源（文件夹/任务）/ 标题」——对话区顶部的这行在桌面端挪到这里。
+export function Titlebar({ source, title }: { source: string; title: string }) {
   const drag = { WebkitAppRegion: "drag" } as React.CSSProperties
   const noDrag = { WebkitAppRegion: "no-drag" } as React.CSSProperties
 
@@ -12,16 +13,26 @@ export function Titlebar() {
       <div className="bg-sidebar hidden w-72 shrink-0 items-center border-r pl-3 md:flex">
         <span className="text-base font-semibold tracking-tight">OmniAgens</span>
       </div>
-      {/* 右块：对应下方对话区 */}
-      <div className="bg-background flex min-w-0 flex-1 items-center justify-end">
-        <div className="flex h-full" style={noDrag}>
+      {/* 右块：对应下方对话区。左边是当前任务来源/标题（字号加大，过长自动截断，悬停看全称），右边是窗口按钮 */}
+      <div className="bg-background flex min-w-0 flex-1 items-center">
+        <div className="text-muted-foreground flex min-w-0 flex-1 items-center gap-2 px-3 pt-1.5 text-sm">
+          <span className="flex shrink-0 items-center gap-1.5" title={source}>
+            {source !== "任务" ? <FolderIcon className="size-4" /> : <MessageSquareIcon className="size-4" />}
+            <span className="max-w-48 truncate">{source}</span>
+          </span>
+          <span className="text-muted-foreground/60 shrink-0">/</span>
+          <span className="text-foreground min-w-0 truncate text-[15px] font-medium" title={title}>
+            {title}
+          </span>
+        </div>
+        <div className="flex h-full shrink-0" style={noDrag}>
           <TitlebarButton title="最小化" onClick={() => window.omniDesktop?.win("minimize")}>
             <MinusIcon className="size-4" />
           </TitlebarButton>
           <TitlebarButton title="最大化 / 还原" onClick={() => window.omniDesktop?.win("maximize")}>
             <SquareIcon className="size-3" />
           </TitlebarButton>
-          <TitlebarButton title="关闭" danger onClick={() => window.omniDesktop?.win("close")}>
+          <TitlebarButton title="关闭" onClick={() => window.omniDesktop?.win("close")}>
             <XIcon className="size-4" />
           </TitlebarButton>
         </div>
@@ -32,12 +43,10 @@ export function Titlebar() {
 
 function TitlebarButton({
   title,
-  danger,
   onClick,
   children,
 }: {
   title: string
-  danger?: boolean
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -46,11 +55,7 @@ function TitlebarButton({
       type="button"
       title={title}
       onClick={onClick}
-      className={
-        danger
-          ? "hover:bg-destructive hover:text-destructive-foreground flex h-full w-11 items-center justify-center cursor-pointer transition-colors"
-          : "hover:bg-accent flex h-full w-11 items-center justify-center cursor-pointer transition-colors"
-      }
+      className="hover:bg-accent flex h-full w-11 items-center justify-center cursor-pointer transition-colors"
     >
       {children}
     </button>

@@ -13,6 +13,28 @@ const { existsSync } = require("node:fs")
 const http = require("node:http")
 const path = require("node:path")
 
+// 渲染兜底（本机黑屏问题 2026-09-30 结论，全部叠加才生效）：
+// 1) 本机 GPU 进程反复崩溃（0xC0000005 /「GPU process isn't usable. Goodbye.」）。
+//    仅 app.disableHardwareAcceleration()（≈ --disable-gpu）不够——Chromium 仍会 fork
+//    GPU 进程跑软件合成并崩。必须再加 --disable-gpu-sandbox 才能止崩。
+//    想开回硬件渲染：设环境变量 OMNI_GPU=1。
+// 2) CalculateNativeWinOcclusion 在「部分 Windows 驱动 + frame:false 无边框窗口」组合下
+//    误判窗口被遮挡 → 停止绘制 → 整窗纯黑（页面其实已加载，浏览器打开同一地址正常）。
+//    这是 Electron 黑窗经典 bug（electron#39798），禁用该特性即可。
+// 3) 系统代理可能干扰 localhost → 强制直连。
+if (process.env.OMNI_GPU !== "1") {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch("disable-gpu")
+  app.commandLine.appendSwitch("disable-gpu-sandbox")
+}
+// 渲染进程崩溃 0x80000003（STATUS_BREAKPOINT）：Windows 上 Chromium 渲染器沙箱
+// 与软件渲染组合易触发（尤其受限环境），关掉整体沙箱最稳。
+app.commandLine.appendSwitch("no-sandbox")
+// GPU 进程崩时改用「进程内软件合成」，避免渲染器反复重建
+app.commandLine.appendSwitch("disable-gpu-compositing")
+app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion")
+app.commandLine.appendSwitch("no-proxy-server")
+
 let win = null
 let omni = null
 
@@ -129,7 +151,7 @@ async function createWindow() {
     title: "omni",
     autoHideMenuBar: true,
     frame: false, // 去原生标题栏，用自绘 Titlebar（跟随主题）
-    backgroundColor: "#0a0a0a",
+    backgroundColor: "#ffffff", // 主题默认 light，黑底会在加载瞬间表现为黑窗
     // 开发态窗口/任务栏图标（打包态直接用 exe 内置的 build/icon.ico）
     icon: existsSync(path.join(__dirname, "build", "icon.png"))
       ? path.join(__dirname, "build", "icon.png")
@@ -141,6 +163,19 @@ async function createWindow() {
     },
   })
   Menu.setApplicationMenu(null)
+
+  // 空白排障：把渲染层失败原因打进主进程 stdout（日志见 /tmp/omni-electron.log）
+  const wc = win.webContents
+  wc.on("did-start-loading", () => console.log("[diag] did-start-loading"))
+  wc.on("did-finish-load", () => console.log("[diag] did-finish-load"))
+  wc.on("did-fail-load", (_e, code, desc, validatedURL) =>
+    console.log(`[diag] did-fail-load code=${code} desc=${desc} url=${validatedURL}`))
+  wc.on("render-process-gone", (_e, details) =>
+    console.log(`[diag] render-process-gone ${JSON.stringify(details)}`))
+  wc.on("console-message", (_e, level, message, line, sourceId) => {
+    if (level >= 2) console.log(`[diag] renderer console: ${message} (${sourceId}:${line})`)
+  })
+
   win.loadURL(url)
   win.on("closed", () => {
     win = null

@@ -244,14 +244,20 @@
   font-size: 0.85em;
 }
 .md-output pre {
-  background: var(--muted);
-  border: 1px solid var(--border);
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
   border-radius: 0.5rem;
   overflow-x: auto;
   padding: 0.75rem 1rem;
   margin: 0.6rem 0;
   font-size: 0.8rem;
   line-height: 1.55;
+  color: #1f2328;
+}
+.dark .md-output pre {
+  background: #0d1117;
+  border-color: #30363d;
+  color: #e6edf3;
 }
 .md-output pre code {
   background: transparent;
@@ -287,77 +293,25 @@
   margin: 1rem 0;
 }
 
-/* highlight.js 代码高亮（浅色基调 + 深色覆盖） */
-.hljs {
-  color: var(--foreground);
-  background: transparent;
+/* GitHub 风格代码块底（工具卡片 read/write 用） */
+.gh-code {
+  background: #f6f8fa;
+  border-color: #d0d7de;
+  color: #1f2328;
 }
-.hljs-comment,
-.hljs-quote {
-  color: oklch(0.5 0 0);
-  font-style: italic;
+.dark .gh-code {
+  background: #0d1117;
+  border-color: #30363d;
+  color: #e6edf3;
 }
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-literal,
-.hljs-section,
-.hljs-doctag,
-.hljs-type,
-.hljs-name,
-.hljs-strong {
-  color: oklch(0.45 0.18 265);
-  font-weight: 600;
-}
-.hljs-string,
-.hljs-regexp,
-.hljs-addition {
-  color: oklch(0.45 0.13 150);
-}
-.hljs-number,
-.hljs-symbol,
-.hljs-bullet,
-.hljs-attr,
-.hljs-variable,
-.hljs-template-variable {
-  color: oklch(0.5 0.14 55);
-}
-.hljs-title,
-.hljs-title.function_,
-.hljs-built_in {
-  color: oklch(0.5 0.15 300);
-}
-.hljs-deletion {
-  color: oklch(0.55 0.2 25);
-}
-.dark .hljs-keyword,
-.dark .hljs-selector-tag,
-.dark .hljs-literal,
-.dark .hljs-section,
-.dark .hljs-doctag,
-.dark .hljs-type,
-.dark .hljs-name,
-.dark .hljs-strong {
-  color: oklch(0.75 0.14 265);
-}
-.dark .hljs-string,
-.dark .hljs-regexp,
-.dark .hljs-addition {
-  color: oklch(0.78 0.13 150);
-}
-.dark .hljs-number,
-.dark .hljs-symbol,
-.dark .hljs-bullet,
-.dark .hljs-attr,
-.dark .hljs-variable,
-.dark .hljs-template-variable {
-  color: oklch(0.8 0.13 70);
-}
-.dark .hljs-title,
-.dark .hljs-title.function_,
-.dark .hljs-built_in {
-  color: oklch(0.78 0.13 300);
-}
-.dark .hljs-comment,
-.dark .hljs-quote {
-  color: oklch(0.6 0 0);
+
+/* ---- highlight.js 官方 GitHub 主题的布局中和 ----
+   配色完全交给 lib/hljs.ts 运行时挂载的插件自带 github.css / github-dark.css。
+   官方主题会把底色/padding 打在 .hljs 与 pre code.hljs 上，且注入时机晚于本文件
+   （同权重后注入者胜），这里必须用 !important 兜底覆盖，把版式交回容器：
+   底色由 .md-output pre / .gh-code 控制，间距由 Tailwind 的 pre padding 控制。 */
+code.hljs,
+pre code.hljs {
+  background: transparent !important;
+  padding: 0 !important;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { FolderIcon, FolderOpenIcon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { TaskList } from "@/components/TaskList"
 import {
@@ -24,6 +24,8 @@ interface SidebarProps {
   projects: Project[]
   tasksByProject: Record<string, TaskMeta[]>
   activeTaskId: string | null
+  /** 正在执行（后台或前台）的任务 ID 集合，用于任务行右侧加载动画 */
+  running: Record<string, boolean>
   open: boolean
   onOpenTask: (id: string) => void
   onDeleteTask: (id: string) => void
@@ -43,6 +45,7 @@ export function Sidebar(props: SidebarProps) {
     projects,
     tasksByProject,
     activeTaskId,
+    running,
     open,
     onOpenTask,
     onDeleteTask,
@@ -61,10 +64,17 @@ export function Sidebar(props: SidebarProps) {
   const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null)
   const [confirmProject, setConfirmProject] = useState<Project | null>(null)
 
-  // 右键菜单打开期间：任意点击 / Esc / 窗口变化时关闭
+  // 右键菜单打开期间：任意点击 / Esc / 窗口变化时关闭。
+  // 注意：Chromium 里右键抬起也会派发 click(button=2)，必须过滤——
+  // 否则刚弹出的右键菜单会被同一次右击的 click 立刻关掉（表现为"菜单不出现"）。
   useEffect(() => {
     if (!menu) return
-    const close = () => setMenu(null)
+    const close = (e: Event) => {
+      // resize/keydown 传来的不是 MouseEvent（button undefined），一律关闭；
+      // 只有明确的右键 click 才忽略
+      if (e instanceof MouseEvent && e.button !== 0) return
+      setMenu(null)
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMenu(null)
     }
@@ -143,25 +153,23 @@ export function Sidebar(props: SidebarProps) {
         <div className="omni-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="flex flex-col gap-1 px-3 pb-6">
             {tab === "tasks" ? (
-              <>
-                <SectionTitle>默认任务（最近优先）</SectionTitle>
-                <TaskList
-                  tasks={tasks}
-                  activeTaskId={activeTaskId}
-                  onOpen={(id) => {
-                    onOpenTask(id)
-                    onClose()
-                  }}
-                  onDelete={onDeleteTask}
-                  emptyText="还没有任务，点上方「新建任务」开始"
-                />
-              </>
+              <TaskList
+                tasks={tasks}
+                activeTaskId={activeTaskId}
+                running={running}
+                onOpen={(id) => {
+                  onOpenTask(id)
+                  onClose()
+                }}
+                onDelete={onDeleteTask}
+                emptyText="还没有任务，点上方「新建任务」开始"
+              />
             ) : (
               <>
                 <div className="flex items-center justify-between pr-1">
                   <SectionTitle className="mb-0">本地文件夹</SectionTitle>
                   <Button variant="ghost" size="icon-sm" onClick={onAddProject} title="添加本地文件夹">
-                    <PlusIcon />
+                    <FolderPlusIcon />
                   </Button>
                 </div>
                 {projects.length === 0 && (
@@ -175,6 +183,7 @@ export function Sidebar(props: SidebarProps) {
                     project={p}
                     tasks={tasksByProject[p.id] ?? []}
                     activeTaskId={activeTaskId}
+                    running={running}
                     onOpenTask={(id) => {
                       onOpenTask(id)
                       onClose()
@@ -280,28 +289,35 @@ function ProjectGroup(props: {
   project: Project
   tasks: TaskMeta[]
   activeTaskId: string | null
+  running: Record<string, boolean>
   onOpenTask: (id: string) => void
   onNewTask: () => void
   onDeleteTask: (id: string) => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
-  const { project, tasks, activeTaskId, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
+  const { project, tasks, activeTaskId, running, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
   // 任务多时先显示 5 条，点「更多」每次再加载 5 条
   const [limit, setLimit] = useState(PAGE)
+  // 任务列表默认收起，点击文件夹名展开/收起
+  const [open, setOpen] = useState(false)
   const shown = tasks.slice(0, limit)
   const rest = tasks.length - shown.length
 
   return (
     <div className="flex flex-col gap-0.5">
-      <div
-        className="group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1.5"
-        onContextMenu={onContextMenu}
-      >
+      {/* 文件夹行：悬停只浮现「新建任务」图标，整行不加背景色（用户要求）；打开/移除走右键菜单 */}
+      <div className="group flex items-center rounded-md px-2 py-1.5" onContextMenu={onContextMenu}>
         <button
           type="button"
+          onClick={() => setOpen((o) => !o)}
           className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm cursor-pointer"
           title={project.path}
         >
+          {open ? (
+            <ChevronDownIcon className="text-muted-foreground size-3.5 shrink-0" />
+          ) : (
+            <ChevronRightIcon className="text-muted-foreground size-3.5 shrink-0" />
+          )}
           <FolderIcon className="text-muted-foreground size-4 shrink-0" />
           <span className="truncate">{project.name}</span>
         </button>
@@ -312,6 +328,7 @@ function ProjectGroup(props: {
           </Button>
         </div>
       </div>
+      {open && (
       <div className="border-sidebar-border ml-6 flex flex-col gap-0.5 border-l pl-2">
         {shown.map((t) => (
           <div
@@ -329,19 +346,23 @@ function ProjectGroup(props: {
             >
               {t.title}
             </button>
-            {/* 悬停显示删除按钮 */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
-              onClick={(e) => {
-                e.stopPropagation()
-                onDeleteTask(t.id)
-              }}
-              title="删除任务"
-            >
-              <Trash2Icon />
-            </Button>
+            {/* 运行中：常驻转圈动画（切走也在后台跑，让用户知道处理中）；否则悬停显示删除 */}
+            {running[t.id] ? (
+              <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteTask(t.id)
+                }}
+                title="删除任务"
+              >
+                <Trash2Icon />
+              </Button>
+            )}
           </div>
         ))}
         {tasks.length === 0 && <div className="text-muted-foreground px-2 py-1 text-xs">暂无任务</div>}
@@ -356,6 +377,7 @@ function ProjectGroup(props: {
           </Button>
         )}
       </div>
+      )}
     </div>
   )
 }

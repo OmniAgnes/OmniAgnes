@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronUpIcon, Loader2Icon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -11,12 +11,14 @@ const VISIBLE = 5
 interface TaskListProps {
   tasks: TaskMeta[]
   activeTaskId: string | null
+  /** 正在执行的任务 ID 集合：行右侧显示加载动画（后台跑也可见） */
+  running: Record<string, boolean>
   onOpen: (id: string) => void
   onDelete: (id: string, title: string) => void
   emptyText?: string
 }
 
-export function TaskList({ tasks, activeTaskId, onOpen, onDelete, emptyText }: TaskListProps) {
+export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, emptyText }: TaskListProps) {
   const [expanded, setExpanded] = useState(false)
   if (tasks.length === 0) {
     return <div className="text-muted-foreground px-2 py-1.5 text-xs">{emptyText ?? "暂无任务"}</div>
@@ -46,18 +48,23 @@ export function TaskList({ tasks, activeTaskId, onOpen, onDelete, emptyText }: T
               {t.mode === "plan" ? " · plan" : ""}
             </span>
           </button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(t.id, t.title)
-            }}
-            title="删除任务"
-          >
-            <XIcon />
-          </Button>
+          {/* 运行中：常驻转圈动画（切走任务后台也在跑）；否则悬停显示删除 */}
+          {running[t.id] ? (
+            <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete(t.id, t.title)
+              }}
+              title="删除任务"
+            >
+              <XIcon />
+            </Button>
+          )}
         </div>
       ))}
       {hidden > 0 && (
