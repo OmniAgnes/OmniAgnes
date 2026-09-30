@@ -48,15 +48,28 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	type modelInfo struct {
-		Model     string `json:"model"`
-		Type      string `json:"type"`
-		Provider  string `json:"provider"`
-		Default   bool   `json:"default"`
+		Model           string   `json:"model"`
+		Type            string   `json:"type"`
+		Provider        string   `json:"provider"`
+		Default         bool     `json:"default"`
+		ContextWindow   int      `json:"context_window,omitempty"`
+		MaxOutputTokens int      `json:"max_output_tokens,omitempty"`
+		InputTypes      []string `json:"input_types,omitempty"`
+		Reasoning       string   `json:"reasoning,omitempty"`
 	}
 	out := make([]modelInfo, 0)
-	for _, p := range s.cfg.Providers {
+	for i := range s.cfg.Providers {
+		p := &s.cfg.Providers[i]
 		for _, m := range p.Models {
-			out = append(out, modelInfo{Model: m, Type: p.Type, Provider: p.Name, Default: p.Default && m == p.Model})
+			opt := p.OptionsFor(m)
+			out = append(out, modelInfo{
+				Model: m, Type: p.Type, Provider: p.Name,
+				Default:         p.Default && m == p.Model,
+				ContextWindow:   opt.ContextWindow,
+				MaxOutputTokens: opt.MaxOutputTokens,
+				InputTypes:      opt.InputTypes,
+				Reasoning:       opt.Reasoning,
+			})
 		}
 	}
 	writeJSON(w, map[string]any{"models": out, "current": s.cfg.Provider})
@@ -976,10 +989,12 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 	if modelName == "" {
 		modelName = t.Model
 	}
-	// 最大输出 token 取供应商配置，缺省 8192
+	// 最大输出 token 取该模型的有效配置（模型级优先，回落供应商级），缺省 8192
 	maxTokens := 8192
-	if p := s.cfg.ProviderForModel(modelName); p != nil && p.MaxOutputTokens > 0 {
-		maxTokens = p.MaxOutputTokens
+	if p := s.cfg.ProviderForModel(modelName); p != nil {
+		if n := p.OptionsFor(modelName).MaxOutputTokens; n > 0 {
+			maxTokens = n
+		}
 	}
 	reg := s.newRegistry(cwd)
 	a := agent.New(prov, reg, agent.Options{
