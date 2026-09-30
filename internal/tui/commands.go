@@ -25,7 +25,9 @@ const helpText = `omni 终端 AI 编码智能体
 
 Slash 命令（输入 / 出现提示，↑↓ 选择 · Tab 补全）:
   /help          显示本帮助
-  /new           开启新会话（清空历史）
+  /new           开启新会话（原会话保留在任务列表）
+  /tasks         列出任务（含桌面版/网页版创建的，双向同步）
+  /open <编号>    打开任务继续对话（编号见 /tasks）
   /config        打开模型配置表单（类型/模型/Base URL/API Key）
   /model         列出模型供选择（/model <名称> 直接切换）
   /mode <模式>    build=可修改文件/执行命令；plan=只读
@@ -54,10 +56,19 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 			m.msgs = nil
 			m.toolID = 0
 			m.rollback = nil
-			m.addSystemMsg("已开启新会话。")
+			m.task = nil // 旧任务已落盘，之后重新挂到 /tasks 列表
+			m.addSystemMsg("已开启新会话。原会话仍在任务列表（/tasks 查看）。")
 		} else {
 			m.addSystemMsg("请先取消当前任务（Esc）")
 		}
+	case "/tasks":
+		m.listTasks()
+	case "/open", "/o":
+		if len(args) < 2 {
+			m.addSystemMsg("用法: /open <编号>（编号见 /tasks）")
+			return nil
+		}
+		m.openTask(args[1])
 	case "/config":
 		if m.running {
 			m.addSystemMsg("请先取消当前任务（Esc）")

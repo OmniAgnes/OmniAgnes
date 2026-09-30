@@ -1,12 +1,12 @@
 # omni 桌面版打包说明
-# - 参照 opencode_desk 的方案：Windows NSIS / macOS dmg + extraResources 携带 omni 内核二进制
+# - Windows NSIS / macOS dmg + extraResources 携带 omni 内核二进制
 # - 版本号唯一来源是 package.json，不要在这里重复声明
 # - 发版由 .github/workflows/release.yml 驱动：CI 交叉编译各架构内核放进 bin/，
 #   beforePack 钩子按目标架构把对应内核换入 resources/bin（本地单架构打包时钩子自动跳过）
 #
 # ⚠️ publish: null 是必需的：electron-builder 会从 package.json 的 repository 推断
 #    provider=github 并在生成 app-update.yml 时强取 GH_TOKEN 报错，--publish never
-#    拦不住该步骤；只有显式 null 才能短路（opencode_desk 2026-09-22 实测结论）。
+#    拦不住该步骤；只有显式 null 才能短路（2026-09-22 实测结论）。
 #
 # ⚠️ 不要写 extraMetadata: { version: "${version}" }——该字段不展开占位符，
 #    会原样写进包内 package.json，最后写 exe 资源版本号时抛 Invalid major number。

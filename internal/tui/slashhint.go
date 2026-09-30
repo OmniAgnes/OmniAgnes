@@ -14,7 +14,9 @@ type slashCmd struct {
 // builtinSlashCommands 是内置命令；技能命令在运行时追加。
 var builtinSlashCommands = []slashCmd{
 	{"/help", "显示帮助"},
-	{"/new", "开启新会话（清空历史）"},
+	{"/new", "开启新会话（原会话保留在任务列表）"},
+	{"/tasks", "列出任务（与桌面版/网页版同步）"},
+	{"/open", "打开任务继续对话：/open <编号>"},
 	{"/config", "配置模型（类型/模型/API Key）"},
 	{"/model", "列出并切换模型"},
 	{"/mode", "切换模式：/mode build|plan"},

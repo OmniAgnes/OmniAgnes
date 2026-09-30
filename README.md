@@ -206,7 +206,7 @@ npm run build         # 产物输出到 internal/webui/dist，由 go:embed 打�
 OMNI_URL=http://127.0.0.1:PORT npm run dev   # 调试：代理到正在运行的 omni
 ```
 
-桌面版打包（webui/desktop，参照 opencode_desk 的 electron-builder 方案）：
+桌面版打包（webui/desktop）：
 
 ```sh
 go build -o webui/desktop/bin/omni.exe .   # 先编译内核

@@ -1,10 +1,8 @@
 # 发版（打 tag 自动出 Windows / macOS 安装包并挂到 Release）
 #
 # 项目结构：Go 单体（omni --web 内核，前端经 go:embed 打进二进制）+ Electron 壳（webui/desktop）。
-# 与 opencode_desk（yarn + opencode-ai npm 内核）的差异：
-#   - 依赖管理用 npm（package-lock.json），没有 yarn.lock / 腾讯源要改写
-#   - 内核是 Go 交叉编译产物（GOOS/GOARCH），不是 npm 平台包，
-#     不需要 postinstall / npm pack / beforePack 换内核那一整套
+# 依赖管理用 npm（package-lock.json）；内核是 Go 交叉编译产物（GOOS/GOARCH），
+# 不是 npm 平台包，不需要 postinstall / npm pack / beforePack 换内核那一整套。
 #
 # 用法：
 #   1. 改 webui/desktop/package.json 的 version（如 0.3.0）——必须先改再打 tag，
@@ -25,7 +23,7 @@
 #   · Windows：omni-Setup.exe（x64，固定名维持直链）+ omni-Setup-arm64.exe（ARM64）
 #   · macOS  ：omni-Setup-arm64.dmg + omni-Setup-x64.dmg（未签名，见 build-mac 注释）
 #
-# ⚠️ 继承自 opencode_desk 的已验证经验（别改回去）：
+# ⚠️ 打包已验证的经验（别改回去）：
 #   1) electron-builder.yml 的 `publish: null` 是必需的。不写它时 electron-builder 会从
 #      package.json 的 repository 推断 provider=github，写 app-update.yml 时构造
 #      GitHubPublisher → 没 GH_TOKEN 直接抛错，且 `--publish never` 拦不住该步骤。
@@ -91,7 +89,7 @@ jobs:
 
       # 单条 go build 只出一个二进制；这里为每个目标架构各跑一次。
       # ⚠️ 两个架构都编成「备料名」，再把本机架构那份拷成正式名 bin/omni.exe：
-      #    beforePack 钩子按目标架构**无条件**从备料覆盖正式名（opencode_desk 实测教训：
+      #    beforePack 钩子按目标架构**无条件**从备料覆盖正式名（实测教训：
       #    若本机架构轮没有备料、靠短路沿用正式名，双架构轮次先后顺序一变，
       #    交叉轮先跑就会把错架构内核留进本机轮的安装包——顺序相关、必炸）。
       # 版本号注入（-X main.version）让 omni.exe --version 与安装包版本一致。

@@ -1,6 +1,6 @@
 // electron-builder beforePack 钩子：交叉架构打包时把内核换成目标架构。
 //
-// 为什么需要（照搬 opencode_desk scripts/electron-before-pack.cjs 的结论）：
+// 为什么需要（实测结论）：
 //   extraResources 从 bin/ 取内核（bin/omni.exe 或 bin/omni），而这份"正式名"文件
 //   是按 runner 本机架构编的。CI 一条命令连打双架构包（--x64 --arm64），交叉架构
 //   那个包若直接用 bin/ 里的内核，在目标机器上跑不起来——Electron 本体会按 arch

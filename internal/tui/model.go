@@ -14,9 +14,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"omni/internal/agent"
+	"omni/internal/config"
 	"omni/internal/extras"
 	"omni/internal/llm"
 	"omni/internal/skills"
+	"omni/internal/store"
 )
 
 const (
@@ -32,6 +34,11 @@ type eventsClosed struct{}
 // Model 是 TUI 根模型。
 type Model struct {
 	a *agent.Agent
+
+	// 任务存储：与网页版/桌面版共用同一目录，实现任务双向同步。
+	// task 为当前会话对应的任务；为 nil 表示尚未产生可保存的任务。
+	st   *store.Store
+	task *store.Task
 
 	// 运行时扩展（技能 / 记忆 / MCP）
 	extras    *extras.Extras
@@ -103,6 +110,7 @@ func New(a *agent.Agent, sessionID, configPath string, ext *extras.Extras, cwd s
 
 	m := &Model{
 		a:          a,
+		st:         store.New(config.DefaultDataDir()),
 		viewport:   vp,
 		textarea:   ta,
 		spinner:    sp,
@@ -155,7 +163,12 @@ func (m *Model) renderHeader() string {
 	modeName := string(m.a.Mode())
 	modeBadge := styleModeBadge.Render(" " + modeName + " ")
 	left := styleHeader.Render(" omni ") + " " + modelBadge + " " + modeBadge
-	right := styleTimestamp.Render(m.sessionID)
+	// 会话落入任务存储后，头部显示任务 ID（与网页版任务列表一致）
+	id := m.sessionID
+	if m.task != nil {
+		id = m.task.ID
+	}
+	right := styleTimestamp.Render(id)
 	fill := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if fill < 1 {
 		fill = 1
@@ -231,6 +244,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsClosed:
 		m.running = false
 		m.cancel = nil
+		m.saveTask()
 		m.setViewportContent()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -355,6 +369,18 @@ func (m *Model) startAgent(text string) tea.Cmd {
 		m.openConfig()
 		m.addSystemMsg("尚未配置模型：请在表单中填写类型与模型，保存后即可对话")
 		return nil
+	}
+	if m.task == nil {
+		// 首条消息时创建任务并落盘：TUI 的会话从此出现在网页版/桌面版的任务列表里。
+		// 登记工作目录为项目，任务在网页版里打开时才能用对工作目录。
+		projectID := ""
+		if p, err := m.st.AddProject(m.cwd); err == nil {
+			projectID = p.ID
+		}
+		if t, err := m.st.CreateTask(projectID, m.a.Model(), string(m.a.Mode()), text); err == nil {
+			m.task = t
+		}
+		// 创建失败（磁盘等）不阻塞对话，仅本次会话不入库
 	}
 	if m.rollback != nil {
 		m.rollback()

@@ -94,7 +94,7 @@ type Agent struct {
 // New 创建 Agent。
 func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 	if opts.MaxIterations <= 0 {
-		opts.MaxIterations = 32
+		opts.MaxIterations = 500
 	}
 	if opts.MaxTokens <= 0 {
 		opts.MaxTokens = 8192
@@ -151,6 +151,15 @@ func (a *Agent) ClearHistory() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = nil
+	a.lastTurnStart = -1
+}
+
+// SetHistory 替换消息历史（TUI 恢复持久化任务用）。
+func (a *Agent) SetHistory(ms []llm.Message) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = ms
+	a.lastTurnStart = -1
 }
 
 // BuildSystemPrompt 组装系统提示词。
@@ -159,7 +168,7 @@ func (a *Agent) BuildSystemPrompt() string {
 	if a.mode == ModePlan {
 		modeDesc = "普通访问：可以读取和分析文件；任何写文件、执行命令的操作前都会先征得用户确认，被拒绝时请改用其他方案"
 	}
-	p := fmt.Sprintf(`你是 omni，一个运行在终端里的 AI 编码智能体，风格类似 opencode。
+	p := fmt.Sprintf(`你是 omni，一个运行在终端里的 AI 编码智能体。
 当前工作目录: %s
 Agent 模式: %s
 

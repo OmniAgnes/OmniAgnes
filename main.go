@@ -118,7 +118,7 @@ func main() {
 		Model:             model,
 		Mode:              mode,
 		Cwd:               absCwd,
-		MaxIterations:     32,
+		MaxIterations:     500,
 		MaxTokens:         maxTokens,
 		SystemPromptExtra: cfg.SystemPromptExtra,
 		ExtraPrompt:       func() string { return ext.ExtraPrompt(absCwd) },
