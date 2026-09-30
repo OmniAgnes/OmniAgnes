@@ -73,6 +73,7 @@ func (p *GeminiProvider) Models() []string {
 
 type gemPart struct {
 	Text             string       `json:"text,omitempty"`
+	Thought          bool         `json:"thought,omitempty"` // true = 思考/推理内容
 	FunctionCall     *gemFuncCall `json:"functionCall,omitempty"`
 	FunctionResponse *gemFuncResp `json:"functionResponse,omitempty"`
 }
@@ -255,6 +256,15 @@ func readGeminiStream(ctx context.Context, body io.Reader, onEvent func(StreamEv
 		}
 		for _, cand := range chunk.Candidates {
 			for _, part := range cand.Content.Parts {
+				if part.Text != "" && part.Thought {
+					// 思考/推理增量：仅供 UI 展示，不进正文与历史
+					if onEvent != nil {
+						if err := onEvent(StreamEvent{Type: EventReasoning, Text: part.Text}); err != nil {
+							return nil, err
+						}
+					}
+					continue
+				}
 				if part.Text != "" {
 					out.Content += part.Text
 					if onEvent != nil {

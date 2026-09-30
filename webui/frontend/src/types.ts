@@ -149,6 +149,7 @@ export interface StateInfo {
 export type ChatEvent =
   | { type: "start"; task_id: string; title: string; mode: string }
   | { type: "text"; text: string; round: number }
+  | { type: "thinking"; text: string; round: number }
   | { type: "tool_start"; round: number; id: string; name: string; args: string }
   | { type: "write_base"; round: number; id: string; old: string }
   | { type: "tool_output"; round: number; id: string; name: string; output: string; is_error: boolean }

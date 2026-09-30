@@ -121,6 +121,8 @@ type ancEvent struct {
 type ancDelta struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+	// thinking_delta（扩展思考）
+	Thinking string `json:"thinking,omitempty"`
 	// input_json_delta
 	PartialJSON string `json:"partial_json,omitempty"`
 }
@@ -282,6 +284,15 @@ func readAnthropicStream(ctx context.Context, body io.Reader, onEvent func(Strea
 				blocks[ev.Index] = st
 			}
 		case "content_block_delta":
+			// 扩展思考块的推理增量：与工具/文本块无关，直接透传给 UI
+			if ev.Delta != nil && ev.Delta.Type == "thinking_delta" && ev.Delta.Thinking != "" {
+				if onEvent != nil {
+					if err := onEvent(StreamEvent{Type: EventReasoning, Text: ev.Delta.Thinking}); err != nil {
+						return nil, err
+					}
+				}
+				continue
+			}
 			if cb, ok := blocks[ev.Index]; ok {
 				if ev.Delta != nil {
 					cb.argsStr += ev.Delta.PartialJSON

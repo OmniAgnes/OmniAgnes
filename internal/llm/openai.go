@@ -113,6 +113,9 @@ type oaiChoice struct {
 type oaiDelta struct {
 	Content   *string       `json:"content,omitempty"`
 	ToolCalls []oaiToolCall `json:"tool_calls,omitempty"`
+	// 思考/推理增量：reasoning_content 为 GLM/DeepSeek 风格，reasoning 为 OpenRouter 风格
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
+	Reasoning        *string `json:"reasoning,omitempty"`
 }
 
 type oaiUsage struct {
@@ -281,6 +284,20 @@ func readOpenAIStream(ctx context.Context, body io.Reader, onEvent func(StreamEv
 		}
 		for _, ch := range chunk.Choices {
 			if ch.Delta != nil {
+				if ch.Delta.ReasoningContent != nil && *ch.Delta.ReasoningContent != "" {
+					if onEvent != nil {
+						if err := onEvent(StreamEvent{Type: EventReasoning, Text: *ch.Delta.ReasoningContent}); err != nil {
+							return nil, err
+						}
+					}
+				}
+				if ch.Delta.Reasoning != nil && *ch.Delta.Reasoning != "" {
+					if onEvent != nil {
+						if err := onEvent(StreamEvent{Type: EventReasoning, Text: *ch.Delta.Reasoning}); err != nil {
+							return nil, err
+						}
+					}
+				}
 				if ch.Delta.Content != nil && *ch.Delta.Content != "" {
 					out.Content += *ch.Delta.Content
 					if onEvent != nil {

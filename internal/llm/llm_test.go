@@ -101,6 +101,40 @@ func TestOpenAIStreamToolCall(t *testing.T) {
 	}
 }
 
+// 思考/推理增量（reasoning_content / reasoning 两种风格）必须以 EventReasoning
+// 透传，且不混进正文。
+func TestOpenAIStreamReasoning(t *testing.T) {
+	body := sseChunk(`data: {"choices":[{"index":0,"delta":{"reasoning_content":"让我想"}}]}`) + sseChunk(
+		`data: {"choices":[{"index":0,"delta":{"reasoning":"一下"}}]}`,
+	) + sseChunk(
+		`data: {"choices":[{"index":0,"delta":{"content":"答案"}}]}`,
+	) + "data: [DONE]\n\n"
+
+	srv, _ := mockSSEServer(t, body)
+	p := &OpenAIProvider{baseURL: srv.URL, apiKey: "k", model: "m"}
+	var reasoning, text []string
+	_, err := p.Chat(context.Background(), ChatRequest{
+		Messages: []Message{NewTextMessage(RoleUser, "hi")},
+	}, func(ev StreamEvent) error {
+		switch ev.Type {
+		case EventReasoning:
+			reasoning = append(reasoning, ev.Text)
+		case EventText:
+			text = append(text, ev.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if strings.Join(reasoning, "") != "让我想一下" {
+		t.Fatalf("reasoning = %q", strings.Join(reasoning, ""))
+	}
+	if strings.Join(text, "") != "答案" {
+		t.Fatalf("text = %q", strings.Join(text, ""))
+	}
+}
+
 func TestOpenAIMessagesIncludeToolResult(t *testing.T) {
 	body := sseChunk(`data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`) + "data: [DONE]\n\n"
 	srv, got := mockSSEServer(t, body)

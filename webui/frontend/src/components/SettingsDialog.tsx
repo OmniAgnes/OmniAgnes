@@ -671,15 +671,6 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                         </div>
                       </div>
 
-                      {dirs.global?.path && (
-                        <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">
-                          全局技能目录：<code className="font-mono">{dirs.global.path}</code>
-                          <span className="ml-1.5">
-                            每个技能一个子目录，内含 SKILL.md
-                          </span>
-                        </div>
-                      )}
-
                       {skillPaste && (
                         <div className="flex flex-col gap-2.5 rounded-lg border p-3">
                           <div className="flex items-center justify-between">
@@ -854,13 +845,6 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                           </Button>
                         </div>
                       </div>
-
-                      {dirs.mcp?.path && (
-                        <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">
-                          配置文件：<code className="font-mono">{dirs.mcp.path}</code>
-                          <span className="ml-1.5">按 JSON 结构加 servers，改完点刷新重连</span>
-                        </div>
-                      )}
 
                       {mcpDraft && (
                         <div className="flex flex-col gap-2.5 rounded-lg border p-3">

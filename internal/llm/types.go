@@ -57,12 +57,13 @@ type ToolDef struct {
 type StreamEventType string
 
 const (
-	EventText     StreamEventType = "text"      // 文本增量
-	EventToolCall StreamEventType = "tool_call" // 工具调用开始（含完整参数）
-	EventToolArgs StreamEventType = "tool_args" // 工具参数增量（可选）
-	EventDone     StreamEventType = "done"
-	EventError    StreamEventType = "error"
-	EventUsage    StreamEventType = "usage" // 令牌用量
+	EventText      StreamEventType = "text"      // 文本增量
+	EventReasoning StreamEventType = "reasoning" // 思考/推理内容增量（不进历史，仅供 UI 展示）
+	EventToolCall  StreamEventType = "tool_call" // 工具调用开始（含完整参数）
+	EventToolArgs  StreamEventType = "tool_args" // 工具参数增量（可选）
+	EventDone      StreamEventType = "done"
+	EventError     StreamEventType = "error"
+	EventUsage     StreamEventType = "usage" // 令牌用量
 )
 
 // Usage 记录令牌统计。

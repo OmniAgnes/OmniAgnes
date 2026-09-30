@@ -521,6 +521,8 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		switch ev.Type {
 		case agent.EventText:
 			send(map[string]any{"type": "text", "text": ev.Text, "round": ev.Round})
+		case agent.EventReasoning:
+			send(map[string]any{"type": "thinking", "text": ev.Text, "round": ev.Round})
 		case agent.EventToolStart:
 			send(map[string]any{
 				"type": "tool_start", "round": ev.Round,
@@ -706,6 +708,12 @@ func (s *server) handleSkillGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.PathValue("name"), "/")
+	// 兼容 @组/名 嵌套布局：先按名定位技能实际所在目录
+	dir, err = skills.Resolve(dir, name)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
 	content, err := skills.Read(dir, name)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusNotFound)
@@ -764,6 +772,11 @@ func (s *server) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.PathValue("name"), "/")
+	// 兼容 @组/名 嵌套布局：先按名定位技能实际所在目录
+	if dir, err = skills.Resolve(dir, name); err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
 	if err := skills.Update(dir, name, req.Description, req.Content); err != nil {
 		writeErr(w, err.Error(), http.StatusBadRequest)
 		return
@@ -779,6 +792,11 @@ func (s *server) handleSkillDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.PathValue("name"), "/")
+	// 兼容 @组/名 嵌套布局：先按名定位技能实际所在目录
+	if dir, err = skills.Resolve(dir, name); err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
 	if err := skills.Delete(dir, name); err != nil {
 		writeErr(w, err.Error(), http.StatusBadRequest)
 		return
@@ -961,21 +979,24 @@ func (s *server) handleSkillOpen(w http.ResponseWriter, r *http.Request) {
 	}
 	abs, err := ensureDir(dir)
 	if err != nil {
-		writeErr(w, err.Error(), http.StatusInternalServerError)
+		writeErr(w, "打开目录失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	target := abs
 	if n := strings.TrimSpace(req.Name); n != "" {
-		target = filepath.Join(abs, n)
-		if st, err := os.Stat(target); err == nil && st.IsDir() {
-			target = filepath.Join(target, "SKILL.md")
+		// 兼容 @组/名 嵌套布局：定位技能实际所在目录，直接打开该技能文件夹
+		resolved, rerr := skills.Resolve(abs, n)
+		if rerr != nil {
+			writeErr(w, rerr.Error(), http.StatusNotFound)
+			return
 		}
+		target = filepath.Join(resolved, n)
 	}
 	if err := openInFileManager(target, false); err != nil {
 		writeErr(w, "打开目录失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "path": abs})
+	writeJSON(w, map[string]any{"ok": true, "path": target})
 }
 
 // handleMCPOpen 在文件管理器中打开 MCP 配置文件。

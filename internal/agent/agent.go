@@ -24,6 +24,7 @@ type EventType string
 
 const (
 	EventText       EventType = "text"       // 助手文本增量
+	EventReasoning  EventType = "reasoning"  // 思考/推理内容增量（不进历史）
 	EventToolStart  EventType = "tool_start" // 工具开始执行
 	EventToolOutput EventType = "tool_output"
 	EventToolEnd    EventType = "tool_end"
@@ -268,6 +269,9 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			switch ev.Type {
 			case llm.EventText:
 				emit(Event{Type: EventText, Text: ev.Text, Round: round})
+			case llm.EventReasoning:
+				// 思考/推理内容：只透传给 UI 展示，不进历史
+				emit(Event{Type: EventReasoning, Text: ev.Text, Round: round})
 			case llm.EventError:
 				emit(Event{Type: EventError, Err: ev.Err, Round: round})
 			}

@@ -9,13 +9,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"omni/internal/docparse"
 )
 
 func builtinTools() []*Tool {
 	return []*Tool{
 		{
 			Name:        "read",
-			Description: "读取文件内容。可指定 offset(起始行，0 基) 与 limit(读取行数)。路径限制在工作目录内。",
+			Description: "读取文件内容。可指定 offset(起始行，0 基) 与 limit(读取行数)。路径限制在工作目录内。.docx/.pdf/.pptx/.xlsx 文档会自动提取文本（pdf 可传 page 页码，xlsx 可传 sheet 工作表名）。",
 			Parameters: map[string]any{
 				"type":     "object",
 				"required": []string{"path"},
@@ -23,6 +25,8 @@ func builtinTools() []*Tool {
 					"path":   map[string]any{"type": "string", "description": "文件路径"},
 					"offset": map[string]any{"type": "integer", "description": "起始行号（从 0 开始）"},
 					"limit":  map[string]any{"type": "integer", "description": "读取的最大行数"},
+					"page":   map[string]any{"type": "integer", "description": "PDF：只读这一页（从 1 起）"},
+					"sheet":  map[string]any{"type": "string", "description": "xlsx：工作表名（省略时列出全部工作表）"},
 				},
 			},
 			ReadOnly: true,
@@ -434,6 +438,41 @@ func execRead(ctx context.Context, args map[string]any, env *Env) (string, error
 	if err != nil {
 		return "", err
 	}
+
+	// 办作文档：按扩展名自动提取文本（docx/pdf/pptx/xlsx 内置解析，无需 MCP）
+	ext := strings.ToLower(filepath.Ext(abs))
+	if docparse.Supported(ext) {
+		sheet, _ := args["sheet"].(string)
+		body, err := docparse.Extract(abs, docparse.Options{
+			Page:  argInt(args, "page", 0),
+			Sheet: sheet,
+		})
+		if err != nil {
+			return "", fmt.Errorf("read: %w", err)
+		}
+		if body == "" {
+			return "", fmt.Errorf("read: 文档没有可提取的文本")
+		}
+		lines := strings.Split(body, "\n")
+		offset := argInt(args, "offset", 0)
+		limit := argInt(args, "limit", 0)
+		if offset < 0 {
+			offset = 0
+		}
+		if offset > len(lines) {
+			offset = len(lines)
+		}
+		end := len(lines)
+		if limit > 0 && offset+limit < end {
+			end = offset + limit
+		}
+		out := strings.Join(lines[offset:end], "\n")
+		if env.MaxOutput > 0 && len(out) > env.MaxOutput {
+			out = out[:env.MaxOutput] + "\n...（输出截断）"
+		}
+		return out, nil
+	}
+
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)

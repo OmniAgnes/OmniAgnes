@@ -1,6 +1,5 @@
 import { useState } from "react"
 import {
-  CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   Loader2Icon,
@@ -31,19 +30,22 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
   const running = tools.filter((t) => t.running).length
   const waiting = tools.filter((t) => t.approvalId != null && t.approvalChoice == null).length
 
-  // 失败不在这里标红/计数（用户要求）：整体状态只看是否还在跑，详情用户展开自己看
-  const status = (() => {
+  // 失败不在这里标红/计数（用户要求）；完成态也不放对勾图标（用户要求）——
+  // 整行状态只靠文字「执行中/等待确认/已完成」表达
+  const status: { icon: React.ComponentType<{ className?: string }> | null; cls: string; text: string } = (() => {
     if (waiting > 0) return { icon: CircleAlertIcon, cls: "text-amber-600 dark:text-amber-400", text: "等待确认" }
     if (running > 0) return { icon: Loader2Icon, cls: "text-muted-foreground", text: "执行中" }
-    return { icon: CheckIcon, cls: "text-muted-foreground", text: "已完成" }
+    return { icon: null, cls: "text-muted-foreground", text: "已完成" }
   })()
   const StatusIcon = status.icon
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="flex items-center gap-1.5">
-        <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground hover:bg-muted/50 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors cursor-pointer">
-          <StatusIcon className={cn("size-3.5 shrink-0", status.cls, running > 0 && "animate-spin")} />
+        <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground hover:bg-muted/50 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors cursor-pointer">
+          {StatusIcon && (
+            <StatusIcon className={cn("size-3.5 shrink-0", status.cls, running > 0 && "animate-spin")} />
+          )}
           <WrenchIcon className="size-3.5 shrink-0" />
           <span className="shrink-0">工具调用</span>
           <span className="text-muted-foreground/80 tabular-nums">×{tools.length}</span>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircleIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -30,6 +31,7 @@ import { ModelPicker } from "@/components/ModelPicker"
 import { ToolCallGroup } from "@/components/ToolCallGroup"
 import { toolApprovalLabel, type ToolRun } from "@/components/ToolCallView"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Textarea } from "@/components/ui/textarea"
 import { todosFromJson, type TodoItem } from "@/lib/todo"
 import { cn } from "@/lib/utils"
@@ -69,6 +71,10 @@ export interface ViewItem {
   error?: string
   /** 该消息随带的附件文件名（仅用户消息，展示用） */
   attachments?: string[]
+  /** 模型思考/推理内容（本轮；不持久化，刷新后消失） */
+  thinking?: string
+  /** 本轮还在流式输出思考内容 */
+  thinkingActive?: boolean
   /** LLM 迭代轮次：一次提问会跑多轮，每轮 = 一段文本 + 若干工具调用 */
   round?: number
 }
@@ -293,14 +299,17 @@ export function Chat({
             不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。
             注意：只渲染有文本的回复——中间轮次（纯工具调用）的空 assistant 消息
             若也渲染成 div，每个都会吃一个 gap，多轮时空白越叠越大。 */}
-        {(b.tools.length > 0 || b.replies.some((r) => r.text)) && (
+        {(b.tools.length > 0 || b.replies.some((r) => r.text || r.thinking || r.thinkingActive)) && (
           <div className="flex flex-col gap-1.5">
             {b.tools.length > 0 && <ToolCallGroup tools={b.tools} />}
             {b.replies
-              .filter((r) => r.text)
+              .filter((r) => r.text || r.thinking || r.thinkingActive)
               .map((item) => (
                 <div key={item.id} className="flex flex-col gap-1.5">
-                  <Markdown text={item.text} />
+                  {(item.thinking || item.thinkingActive) && (
+                    <ThinkingBlock text={item.thinking} active={item.thinkingActive} />
+                  )}
+                  {item.text && <Markdown text={item.text} />}
                   {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
                 </div>
               ))}
@@ -503,11 +512,33 @@ function ProcessingIndicator() {
   )
 }
 
+/** 思考折叠行：模型推理内容收在这里（同工具调用组，默认收起）。
+ * 推理进行中显示「思考中…」，结束后固定为「思考」。 */
+function ThinkingBlock({ text, active }: { text?: string; active?: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
+      <CollapsibleTrigger className="group text-muted-foreground hover:bg-muted/50 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors cursor-pointer">
+        <BrainIcon className="size-3.5 shrink-0" />
+        <span className={cn(active && "opacity-80")}>{active ? "思考中…" : "思考"}</span>
+        <ChevronRightIcon className="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        {text && (
+          <div className="bg-muted/40 text-muted-foreground mx-3 mb-1 max-h-64 overflow-y-auto rounded-md p-2 text-xs whitespace-pre-wrap break-words">
+            {text}
+          </div>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 /** 超过这个字符数或行数的用户消息默认收起，点「展开」看全部 */
 const COLLAPSE_CHARS = 300
 const COLLAPSE_LINES = 8
 
-/** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；悬停浮现复制按钮；附件以标签展示。 */
+/** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；复制按钮悬停浮动到气泡下方右侧，不占布局空间；附件以标签展示。 */
 function UserBubble({ text, attachments }: { text: string; attachments?: string[] }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -530,53 +561,61 @@ function UserBubble({ text, attachments }: { text: string; attachments?: string[
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
+  // 复制按钮绝对定位悬浮：长消息浮在「展开/收起」左侧，短消息浮在气泡右下角，悬停才浮现
+  const copyBtn = (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className={cn(
+        "bg-background text-muted-foreground hover:text-foreground z-10 shadow-sm pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 max-md:pointer-events-auto max-md:opacity-100",
+        long ? "absolute top-1/2 right-full -translate-y-1/2 mr-0.5" : "absolute top-full right-0 mt-0.5",
+      )}
+      onClick={copy}
+      title="复制"
+    >
+      {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
+    </Button>
+  )
   return (
     <div className="flex justify-end">
-      <div className="flex max-w-[85%] flex-col items-end gap-0.5">
-        <div className="group flex w-full items-start justify-end gap-1">
-          <div
-            className={cn(
-              "bg-primary text-primary-foreground min-w-0 rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap",
-              long && !open && "line-clamp-5 cursor-pointer",
-            )}
-            onClick={long && !open ? toggle : undefined}
-          >
-            {text}
-            {attachments && attachments.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {attachments.map((a, i) => (
-                  <span
-                    key={`${a}-${i}`}
-                    className="flex max-w-52 items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px]"
-                    title={a}
-                  >
-                    <PaperclipIcon className="size-3 shrink-0 opacity-80" />
-                    <span className="min-w-0 truncate">{a}</span>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-foreground mt-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
-            onClick={copy}
-            title="复制"
-          >
-            {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
-          </Button>
+      <div className="group relative flex max-w-[85%] flex-col items-end gap-0.5">
+        <div
+          className={cn(
+            "bg-primary text-primary-foreground min-w-0 rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap",
+            long && !open && "line-clamp-5 cursor-pointer",
+          )}
+          onClick={long && !open ? toggle : undefined}
+        >
+          {text}
+          {attachments && attachments.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {attachments.map((a, i) => (
+                <span
+                  key={`${a}-${i}`}
+                  className="flex max-w-52 items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px]"
+                  title={a}
+                >
+                  <PaperclipIcon className="size-3 shrink-0 opacity-80" />
+                  <span className="min-w-0 truncate">{a}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         {long && (
-          <button
-            type="button"
-            onClick={toggle}
-            className="text-muted-foreground hover:text-foreground flex items-center gap-0.5 pr-1 text-[11px] cursor-pointer"
-          >
-            {open ? "收起" : "展开"}
-            {open ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
-          </button>
+          <div className="relative pr-1">
+            <button
+              type="button"
+              onClick={toggle}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-0.5 text-[11px] cursor-pointer"
+            >
+              {open ? "收起" : "展开"}
+              {open ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
+            </button>
+            {copyBtn}
+          </div>
         )}
+        {!long && copyBtn}
       </div>
     </div>
   )

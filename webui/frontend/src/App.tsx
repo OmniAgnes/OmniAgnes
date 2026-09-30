@@ -362,7 +362,20 @@ export default function App() {
         r.thinking = false
         {
           const items = [...r.items]
-          slotOf(items, r, ev.round).text += ev.text
+          const cur = slotOf(items, r, ev.round)
+          cur.text += ev.text
+          // 正文开始输出：本轮思考结束
+          if (cur.thinkingActive) cur.thinkingActive = false
+          r.items = items
+        }
+        break
+      case "thinking":
+        {
+          // 思考/推理增量：挂到本轮 assistant 项上，供「思考」折叠行展示
+          const items = [...r.items]
+          const cur = slotOf(items, r, ev.round)
+          cur.thinking = (cur.thinking ?? "") + ev.text
+          cur.thinkingActive = true
           r.items = items
         }
         break
@@ -371,6 +384,8 @@ export default function App() {
         {
           const items = [...r.items]
           const cur = slotOf(items, r, ev.round)
+          // 工具开始执行：本轮思考结束
+          if (cur.thinkingActive) cur.thinkingActive = false
           // 同一 id 重复到达时不要重复插入
           if (!cur.tools.some((t) => t.id === ev.id)) {
             cur.tools.push({
@@ -537,11 +552,12 @@ export default function App() {
       const rr = runsRef.current[tid]
       if (rr) {
         // 本轮结束（完成/出错/手动中断）：把还没等到 tool_end 的工具卡一并停掉，
-        // 否则出错后卡片和「执行中」分组会一直转圈
+        // 否则出错后卡片和「执行中」分组会一直转圈；思考中状态同样收尾
         for (const it of rr.items) {
           for (const t of it.tools) {
             if (t.running) t.running = false
           }
+          if (it.thinkingActive) it.thinkingActive = false
         }
         // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
         rr.roundBase = Math.max(rr.roundBase, baseAtSend + rr.lastRound + 1)

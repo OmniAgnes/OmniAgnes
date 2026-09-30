@@ -69,7 +69,9 @@ func (s *Skill) Body() string {
 	return strings.TrimSpace(body)
 }
 
-// LoadDir 扫描一个技能目录：每个直接子目录里的 SKILL.md 视为一个技能。
+// LoadDir 扫描一个技能目录：<dir>/<名>/SKILL.md 视为一个技能；
+// 兼容 skillhub 的分组布局 <dir>/<组>/<名>/SKILL.md（如 @org/name）——
+// 子目录下没有 SKILL.md 时，再往下扫一层。
 // frontmatter 缺 name 或 description 的技能跳过（返回 warning，不中断）。
 func LoadDir(dir, source string) ([]*Skill, []string) {
 	var out []*Skill
@@ -78,26 +80,71 @@ func LoadDir(dir, source string) ([]*Skill, []string) {
 	if err != nil {
 		return nil, nil
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		path := filepath.Join(dir, e.Name(), "SKILL.md")
+	add := func(path string) {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return
 		}
 		fm, _ := splitFrontmatter(string(data))
 		name := strings.TrimSpace(fm["name"])
 		desc := strings.TrimSpace(fm["description"])
 		if name == "" || desc == "" {
 			warnings = append(warnings, fmt.Sprintf("技能 %s 缺少 name 或 description，已跳过", path))
-			continue
+			return
 		}
 		out = append(out, &Skill{Name: name, Description: desc, Path: path, Source: source})
 	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sub := filepath.Join(dir, e.Name())
+		if _, err := os.Stat(filepath.Join(sub, "SKILL.md")); err == nil {
+			add(filepath.Join(sub, "SKILL.md"))
+			continue
+		}
+		// 第二层：skillhub 的 @组/技能名 布局
+		subs, err := os.ReadDir(sub)
+		if err != nil {
+			continue
+		}
+		for _, se := range subs {
+			if !se.IsDir() {
+				continue
+			}
+			add(filepath.Join(sub, se.Name(), "SKILL.md"))
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, warnings
+}
+
+// Parse 解析单个 SKILL.md 文件（要求 name/description 齐全）。
+func Parse(path string) (*Skill, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fm, _ := splitFrontmatter(string(data))
+	name := strings.TrimSpace(fm["name"])
+	desc := strings.TrimSpace(fm["description"])
+	if name == "" || desc == "" {
+		return nil, fmt.Errorf("SKILL.md 缺少 name 或 description: %s", path)
+	}
+	return &Skill{Name: name, Description: desc, Path: path, Source: "global"}, nil
+}
+
+// Resolve 在技能目录里按技能名定位其实际所在目录（返回「包含 <名>/SKILL.md」的目录）。
+// 兼容 @组/名 嵌套布局：商店装的技能不在根目录一层，平铺拼接会找不到。
+func Resolve(dir, name string) (string, error) {
+	name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+	found, _ := LoadDir(dir, "")
+	for _, sk := range found {
+		if sk.Name == name {
+			return filepath.Dir(filepath.Dir(sk.Path)), nil
+		}
+	}
+	return "", fmt.Errorf("技能不存在: %s", name)
 }
 
 // splitFrontmatter 解析文件开头的 `---` 包裹的 key: value 区块。

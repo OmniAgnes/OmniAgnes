@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -86,4 +87,31 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+// skillhub 等商店的分组布局（<dir>/<组>/<名>/SKILL.md，如 @org/name）也要能被发现。
+func TestLoadDirNestedScopeLayout(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "@indiv-ebandao", "dev-expert", "SKILL.md"),
+		"---\nname: dev-expert\ndescription: 编程专家\n---\n\n正文")
+	write(t, filepath.Join(dir, "plain", "SKILL.md"),
+		"---\nname: plain\ndescription: 普通技能\n---\n\n正文")
+
+	found, warnings := LoadDir(dir, "global")
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if len(found) != 2 {
+		t.Fatalf("found = %d, want 2", len(found))
+	}
+	byName := map[string]*Skill{}
+	for _, s := range found {
+		byName[s.Name] = s
+	}
+	if byName["dev-expert"] == nil || byName["plain"] == nil {
+		t.Fatalf("missing skills: %+v", found)
+	}
+	if !strings.Contains(filepath.ToSlash(byName["dev-expert"].Path), "@indiv-ebandao/dev-expert/SKILL.md") {
+		t.Fatalf("nested path = %s", byName["dev-expert"].Path)
+	}
 }
