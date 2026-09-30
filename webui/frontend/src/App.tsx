@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { AddProjectDialog } from "@/components/AddProjectDialog"
-import { Chat, type ViewItem } from "@/components/Chat"
+import { Chat, type QueuedMsg, type ViewItem } from "@/components/Chat"
 import { Sidebar } from "@/components/Sidebar"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { Titlebar } from "@/components/Titlebar"
 import { Button } from "@/components/ui/button"
 import { api, streamChat } from "@/lib/api"
-import type { ChatEvent, Project, StateInfo, TaskFull, TaskMeta, Theme } from "@/types"
+import { setHljsTheme } from "@/lib/hljs"
+import type { ChatEvent, Project, SkillInfo, StateInfo, TaskFull, TaskMeta, Theme } from "@/types"
 
 const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
@@ -17,32 +18,63 @@ interface ModelGroup {
   models: string[]
 }
 
+/**
+ * 每个任务的运行状态。切走任务不销毁——后台任务的 SSE 继续往这里写，
+ * 切回来时看到的正是最新进度；处理中的输入进入 queue（发送队列）。
+ */
+interface RunState {
+  title: string
+  mode: "build" | "plan"
+  items: ViewItem[]
+  streaming: boolean
+  thinking: boolean
+  roundBase: number
+  lastRound: number
+  queue: QueuedMsg[]
+}
+
+const newRun = (title: string, mode: "build" | "plan"): RunState => ({
+  title,
+  mode,
+  items: [],
+  streaming: false,
+  thinking: false,
+  roundBase: 0,
+  lastRound: -1,
+  queue: [],
+})
+
 export default function App() {
   const [state, setState] = useState<StateInfo | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<TaskMeta[]>([])
-  const [activeTask, setActiveTask] = useState<TaskFull | null>(null)
-  const [items, setItems] = useState<ViewItem[]>([])
-  const [mode, setMode] = useState<"build" | "plan">("build")
-  const [streaming, setStreaming] = useState(false)
-  // 已发出请求但模型还没吐出首个 token：显示「思考中」动画
-  const [thinking, setThinking] = useState(false)
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loadErr, setLoadErr] = useState("")
   // 递增即让右侧输入框聚焦（新建任务、打开任务、点「任务」TAB）
   const [focusSignal, setFocusSignal] = useState(0)
+  // 当前项目可用技能（输入 / 时提示补全）
+  const [skills, setSkills] = useState<SkillInfo[]>([])
+  // 无任务时（首次发送会即时建任务）新任务默认用的访问模式；有任务时以 run.mode 为准
+  const [defaultMode, setDefaultMode] = useState<"build" | "plan">("build")
+  // 队列「编辑」：把文本回填输入框（seq 递增触发）
+  const [draftSeed, setDraftSeed] = useState<{ text: string; seq: number }>({ text: "", seq: 0 })
 
   const focusInput = useCallback(() => setFocusSignal((n) => n + 1), [])
 
-  const abortRef = useRef<AbortController | null>(null)
+  // 运行状态表：taskId → RunState。可变 ref + 版本号触发渲染，
+  // 后台事件随时 patch 后 bump()。
+  const runsRef = useRef<Record<string, RunState>>({})
+  const abortRefs = useRef<Record<string, AbortController>>({})
+  const runPromises = useRef<Record<string, Promise<void>>>({})
+  const [, setRunsV] = useState(0)
+  const bump = useCallback(() => setRunsV((v) => v + 1), [])
+
   const idRef = useRef(0)
-  // 已加载历史里最大的 round 序号：新提问的实时轮次从它之后接着数
-  const roundBaseRef = useRef(0)
-  // 本次请求中收到的最大 round（用于结束后推进 base）
-  const lastRoundRef = useRef(-1)
-  const activeProjectId = activeTask?.project_id ?? null
+  const queueSeq = useRef(0)
+  const nextId = () => ++idRef.current
 
   const refreshTasks = useCallback(async () => {
     try {
@@ -70,9 +102,12 @@ export default function App() {
 
   // 主题跟随设置（外观模式）
   useEffect(() => {
-    const theme: Theme = state?.theme ?? "dark"
+    const theme: Theme = state?.theme ?? "light"
     const root = document.documentElement
-    const apply = (dark: boolean) => root.classList.toggle("dark", dark)
+    const apply = (dark: boolean) => {
+      root.classList.toggle("dark", dark)
+      setHljsTheme(dark)
+    }
     if (theme === "system") {
       const mq = window.matchMedia("(prefers-color-scheme: dark)")
       apply(mq.matches)
@@ -127,12 +162,31 @@ export default function App() {
     }
   }
 
-  const nextId = () => ++idRef.current
+  const activeMeta = tasks.find((t) => t.id === activeTaskId)
+  const activeProject = projects.find((p) => p.id === activeMeta?.project_id)
 
-  // 从持久化消息构建视图。
+  // 技能列表按当前任务所属项目目录加载（全局技能始终包含在后端结果里）
+  const activeProjectPath = activeProject?.path ?? ""
+  useEffect(() => {
+    let alive = true
+    api
+      .skills(activeProjectPath || undefined)
+      .then((r) => {
+        if (alive) setSkills(r.skills ?? [])
+      })
+      .catch(() => {
+        if (alive) setSkills([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [activeProjectPath])
+
+  // 从持久化消息构建运行状态。
   // 持久化结构本身就是「每条 assistant 消息 = 一轮」，天然按轮次拆开；
-  // 同时记录最大轮次，后续实时事件的 round 从它之后接着数，避免与历史撞号。
-  const buildItems = (t: TaskFull): ViewItem[] => {
+  // roundBase 记录最大轮次，后续实时事件的 round 从它之后接着数，避免与历史撞号。
+  const buildRun = (t: TaskFull): RunState => {
+    const r = newRun(t.title, t.mode === "plan" ? "plan" : "build")
     const out: ViewItem[] = []
     let cur: ViewItem | null = null
     let round = 0
@@ -161,41 +215,43 @@ export default function App() {
         }
       }
     }
-    roundBaseRef.current = round
-    return out
+    r.items = out
+    r.roundBase = round
+    return r
   }
 
   const openTask = async (id: string) => {
-    if (streaming) abortRef.current?.abort()
+    setActiveTaskId(id)
+    focusInput()
+    // 已有运行状态（可能正在后台执行）：直接复用，绝不用服务端快照覆盖实时进度
+    if (runsRef.current[id]) {
+      bump()
+      return
+    }
     try {
       const r = await api.task(id)
-      setActiveTask(r.task)
-      setMode(r.task.mode === "plan" ? "plan" : "build")
-      setItems(buildItems(r.task))
-      focusInput()
+      runsRef.current[id] = buildRun(r.task)
+      bump()
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
     }
   }
 
   const newTask = async (projectId?: string) => {
-    if (streaming) abortRef.current?.abort()
     try {
       const r = await api.createTask(projectId)
       await refreshTasks()
-      setActiveTask({ ...r.task, messages: [] })
-      setItems([])
-      setMode("build")
-      roundBaseRef.current = 0
-      lastRoundRef.current = -1
+      runsRef.current[r.task.id] = newRun(r.task.title, defaultMode)
+      setActiveTaskId(r.task.id)
       focusInput()
+      bump()
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
     }
   }
 
   // 点「任务」TAB：已有任务就选中最近的一条，没有则直接新建
-  // tasks 已由后端按 UpdatedAt 降序返回，第一条即最近；这里直接过滤避免依赖后面定义的变量
+  // tasks 已由后端按 UpdatedAt 降序返回，第一条即最近
   const focusTasksTab = async () => {
     const list = tasks.filter((t) => !t.project_id)
     if (list.length > 0) await openTask(list[0].id)
@@ -203,10 +259,14 @@ export default function App() {
   }
 
   const deleteTask = async (id: string) => {
-    await api.deleteTask(id)
-    if (activeTask?.id === id) {
-      setActiveTask(null)
-      setItems([])
+    // 正在跑的任务：先掐掉 SSE 再删
+    abortRefs.current[id]?.abort()
+    delete runsRef.current[id]
+    if (activeTaskId === id) setActiveTaskId(null)
+    try {
+      await api.deleteTask(id)
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
     }
     await refreshTasks()
   }
@@ -239,94 +299,108 @@ export default function App() {
   }
 
   // 取（或创建）某一轮的 assistant 消息项。
-  // 后端 round 从 0 开始，这里加上历史偏移量，保证与已加载的消息不冲突。
-  const slotOf = (next: ViewItem[], round: number): ViewItem => {
-    const r = roundBaseRef.current + round
-    let cur = next[next.length - 1]
-    if (!cur || cur.role !== "assistant" || cur.round !== r) {
-      cur = { id: nextId(), role: "assistant", text: "", tools: [], round: r }
-      next.push(cur)
+  // 后端 round 从 0 开始，加上该任务的 roundBase 偏移量，保证与已加载的消息不冲突。
+  const slotOf = (items: ViewItem[], r: RunState, round: number): ViewItem => {
+    const target = r.roundBase + round
+    let cur = items[items.length - 1]
+    if (!cur || cur.role !== "assistant" || cur.round !== target) {
+      cur = { id: nextId(), role: "assistant", text: "", tools: [], round: target }
+      items.push(cur)
     }
     return cur
   }
 
   // 在指定轮次里找工具卡片：优先按 call_id 精确匹配，否则退回该轮最后一张
-  const findRun = (next: ViewItem[], round: number, callId: string) => {
-    const r = roundBaseRef.current + round
-    const cur = next.find((it) => it.role === "assistant" && it.round === r)
+  const findRun = (items: ViewItem[], r: RunState, round: number, callId: string) => {
+    const target = r.roundBase + round
+    const cur = items.find((it) => it.role === "assistant" && it.round === target)
     if (!cur) return undefined
     return cur.tools.find((t) => t.id === callId) ?? cur.tools.at(-1)
   }
 
-  const handleEvent = (ev: ChatEvent, taskId: string) => {
+  // 生成某任务的 SSE 事件处理器：所有更新写进该任务自己的 RunState，
+  // 与当前显示哪个任务无关——后台任务照常在各自状态里推进。
+  const makeHandler = (tid: string) => (ev: ChatEvent) => {
+    const r = runsRef.current[tid]
+    if (!r) return
     if ("round" in ev) {
-      lastRoundRef.current = Math.max(lastRoundRef.current, ev.round)
+      r.lastRound = Math.max(r.lastRound, ev.round)
     }
     switch (ev.type) {
       case "start":
-        setActiveTask((prev) => (prev && prev.id === taskId ? { ...prev, title: ev.title, mode: ev.mode } : prev))
-        setMode(ev.mode === "plan" ? "plan" : "build")
+        r.title = ev.title
+        r.mode = ev.mode === "plan" ? "plan" : "build"
         break
       case "text":
-        setThinking(false)
-        setItems((prev) => {
-          const next = [...prev]
-          slotOf(next, ev.round).text += ev.text
-          return next
-        })
+        r.thinking = false
+        {
+          const items = [...r.items]
+          slotOf(items, r, ev.round).text += ev.text
+          r.items = items
+        }
         break
       case "tool_start":
-        setThinking(false)
-        setItems((prev) => {
-          const next = [...prev]
-          const cur = slotOf(next, ev.round)
+        r.thinking = false
+        {
+          const items = [...r.items]
+          const cur = slotOf(items, r, ev.round)
           // 同一 id 重复到达时不要重复插入
-          if (cur.tools.some((t) => t.id === ev.id)) return next
-          cur.tools.push({
-            id: ev.id,
-            name: ev.name,
-            args: ev.args,
-            output: "",
-            isError: false,
-            running: true,
-          })
-          return next
-        })
+          if (!cur.tools.some((t) => t.id === ev.id)) {
+            cur.tools.push({
+              id: ev.id,
+              name: ev.name,
+              args: ev.args,
+              output: "",
+              isError: false,
+              running: true,
+            })
+          }
+          r.items = items
+        }
+        break
+      case "write_base":
+        // write 覆盖已有文件：后端在写入前抓的旧内容，挂到卡片渲染差异
+        {
+          const items = [...r.items]
+          const run = findRun(items, r, ev.round, ev.id)
+          if (run) run.baseOld = ev.old
+          r.items = items
+        }
         break
       case "tool_output":
-        setItems((prev) => {
-          const next = [...prev]
-          const run = findRun(next, ev.round, ev.id)
+        {
+          const items = [...r.items]
+          const run = findRun(items, r, ev.round, ev.id)
           if (run) {
             run.output = ev.output
             run.isError = ev.is_error
           }
-          return next
-        })
+          r.items = items
+        }
         break
       case "tool_end":
         // 一轮工具跑完，模型要重新推理下一轮：重新显示思考动画，避免空窗期看着像卡住
-        setThinking(true)
-        setItems((prev) => {
-          const next = [...prev]
-          const run = findRun(next, ev.round, ev.id)
+        r.thinking = true
+        {
+          const items = [...r.items]
+          const run = findRun(items, r, ev.round, ev.id)
           if (run) {
             run.running = false
             run.isError = ev.is_error
           }
-          return next
-        })
+          r.items = items
+        }
         break
       case "approval_pending":
         // 工具卡片已出现，这里只清掉思考动画
-        setThinking(false)
+        r.thinking = false
         break
       case "approval":
         // 普通访问模式：把待确认请求挂到对应工具卡片上
-        setItems((prev) => {
-          const next = [...prev]
-          for (let i = next.length - 1; i >= 0; i--) {
-            const cur = next[i]
+        {
+          const items = [...r.items]
+          for (let i = items.length - 1; i >= 0; i--) {
+            const cur = items[i]
             if (cur.role !== "assistant") continue
             const run = cur.tools.find((t) => t.id === ev.call_id) ?? cur.tools.at(-1)
             if (run) {
@@ -335,13 +409,13 @@ export default function App() {
             }
             break
           }
-          return next
-        })
+          r.items = items
+        }
         break
       case "approval_result":
-        setItems((prev) => {
-          const next = [...prev]
-          for (const it of next) {
+        {
+          const items = [...r.items]
+          for (const it of items) {
             for (const run of it.tools) {
               if (run.approvalId === ev.id) {
                 run.approvalChoice = ev.allowed
@@ -349,96 +423,239 @@ export default function App() {
               }
             }
           }
-          return next
-        })
+          r.items = items
+        }
+        break
+      case "question_pending":
+        // ask 工具卡片已出现，问题事件紧随其后；清掉思考动画
+        r.thinking = false
+        break
+      case "question":
+        // 把提问挂到对应工具卡，横幅显示在输入框上方
+        {
+          const items = [...r.items]
+          for (let i = items.length - 1; i >= 0; i--) {
+            const cur = items[i]
+            if (cur.role !== "assistant") continue
+            const run = cur.tools.find((t) => t.id === ev.call_id) ?? cur.tools.at(-1)
+            if (run) {
+              run.questionId = ev.id
+              run.question = ev.question
+              run.questionOptions = ev.options
+              run.questionAnswer = undefined
+            }
+            break
+          }
+          r.items = items
+        }
+        break
+      case "question_answered":
+        {
+          const items = [...r.items]
+          for (const it of items) {
+            for (const run of it.tools) {
+              if (run.questionId === ev.id) run.questionAnswer = ev.answer
+            }
+          }
+          r.items = items
+        }
         break
       case "error":
-        setItems((prev) => {
-          const next = [...prev]
-          const cur = slotOf(next, ev.round)
-          cur.error = ev.error
-          return next
-        })
+        {
+          const items = [...r.items]
+          slotOf(items, r, ev.round).error = ev.error
+          r.items = items
+        }
         break
       case "done":
         break
     }
+    bump()
   }
 
-  const send = async (text: string) => {
-    let task = activeTask
+  // 真正发起一轮问答。同一任务串行（streaming 期间不并发），不同任务并行。
+  const doSend = async (tid: string, text: string) => {
+    const r = runsRef.current[tid]
+    if (!r || r.streaming) return
+    const ac = new AbortController()
+    abortRefs.current[tid] = ac
+    const baseAtSend = r.roundBase
+    r.streaming = true
+    r.thinking = true
+    r.lastRound = -1
+    const userItem: ViewItem = { id: nextId(), role: "user", text, tools: [] }
+    // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上
+    const asstItem: ViewItem = { id: nextId(), role: "assistant", text: "", tools: [], round: r.roundBase }
+    r.items = [...r.items, userItem, asstItem]
+    bump()
     try {
-      if (!task) {
-        const r = await api.createTask(activeProjectId ?? "")
-        task = { ...r.task, messages: [] }
-        setActiveTask(task)
-        await refreshTasks()
-      }
-      const userItem: ViewItem = { id: nextId(), role: "user", text, tools: [] }
-      // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上
-      const asstItem: ViewItem = {
-        id: nextId(),
-        role: "assistant",
-        text: "",
-        tools: [],
-        round: roundBaseRef.current,
-      }
-      setItems((prev) => [...prev, userItem, asstItem])
-      setStreaming(true)
-      setThinking(true)
-      // 立即把焦点还给输入框，方便连续提问
-      focusInput()
-      const ac = new AbortController()
-      abortRef.current = ac
-      const baseAtSend = roundBaseRef.current
-      try {
-        await streamChat(task.id, text, mode, state?.model ?? "", (ev) => handleEvent(ev, task!.id), ac.signal)
-      } catch (e) {
-        if (!ac.signal.aborted) {
-          const msg = e instanceof Error ? e.message : String(e)
-          setItems((prev) => {
-            const next = [...prev]
-            const cur = next[next.length - 1]
-            if (cur && cur.role === "assistant") cur.error = msg
-            return next
-          })
-        }
-      } finally {
-        // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
-        roundBaseRef.current = Math.max(roundBaseRef.current, baseAtSend + lastRoundRef.current + 1)
-        setStreaming(false)
-        setThinking(false)
-        abortRef.current = null
-        await refreshTasks()
-      }
+      await streamChat(tid, text, r.mode, state?.model ?? "", makeHandler(tid), ac.signal)
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
-      setStreaming(false)
-      setThinking(false)
+      if (!ac.signal.aborted) {
+        const msg = e instanceof Error ? e.message : String(e)
+        const items = [...r.items]
+        const cur = items[items.length - 1]
+        if (cur && cur.role === "assistant") cur.error = msg
+        r.items = items
+      }
+    } finally {
+      delete abortRefs.current[tid]
+      const rr = runsRef.current[tid]
+      if (rr) {
+        // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
+        rr.roundBase = Math.max(rr.roundBase, baseAtSend + rr.lastRound + 1)
+        rr.streaming = false
+        rr.thinking = false
+        bump()
+      }
+      await refreshTasks()
+      // 侧栏项目按"最后对话时间"排序，对话后也要重排
+      void refreshProjects()
+      // 正常跑完（非中断）→ 自动发下一条排队消息；手动停止/中断不发
+      if (!ac.signal.aborted) void flushQueue(tid)
+    }
+  }
+
+  const launch = (tid: string, text: string): Promise<void> => {
+    const p = doSend(tid, text)
+    runPromises.current[tid] = p
+    void p.finally(() => {
+      if (runPromises.current[tid] === p) delete runPromises.current[tid]
+    })
+    return p
+  }
+
+  // 队列头自动出队（当前轮正常结束后调用）
+  const flushQueue = async (tid: string) => {
+    const r = runsRef.current[tid]
+    if (!r || r.streaming || r.queue.length === 0) return
+    const [head, ...rest] = r.queue
+    r.queue = rest
+    bump()
+    await launch(tid, head.text)
+  }
+
+  // 输入框「发送」入口：空闲直接发；处理中（或已有排队）进队列。
+  const submitText = (text: string) => {
+    const t = text.trim()
+    if (!t) return
+    if (!activeTaskId) {
+      // 空状态第一条消息：先建任务再发
+      void (async () => {
+        try {
+          const c = await api.createTask("")
+          await refreshTasks()
+          runsRef.current[c.task.id] = newRun(c.task.title, defaultMode)
+          setActiveTaskId(c.task.id)
+          await launch(c.task.id, t)
+        } catch (e) {
+          setLoadErr(e instanceof Error ? e.message : String(e))
+        }
+      })()
+      return
+    }
+    const r = runsRef.current[activeTaskId]
+    if (!r) return
+    if (r.streaming || r.queue.length > 0) {
+      r.queue = [...r.queue, { id: ++queueSeq.current, text: t }]
+      bump()
+      if (!r.streaming) void flushQueue(activeTaskId)
+    } else {
+      void launch(activeTaskId, t)
     }
   }
 
   const stop = () => {
-    abortRef.current?.abort()
-    setStreaming(false)
-    setThinking(false)
+    if (activeTaskId) abortRefs.current[activeTaskId]?.abort()
+  }
+
+  // 队列「发送」：中断当前轮，立即发这条
+  const dispatchQueued = async (qid: number) => {
+    const tid = activeTaskId
+    if (!tid) return
+    const r = runsRef.current[tid]
+    if (!r) return
+    const item = r.queue.find((q) => q.id === qid)
+    if (!item) return
+    r.queue = r.queue.filter((q) => q.id !== qid)
+    bump()
+    abortRefs.current[tid]?.abort()
+    const p = runPromises.current[tid]
+    if (p) {
+      try {
+        await p
+      } catch {
+        /* 中断的错误忽略 */
+      }
+    }
+    await launch(tid, item.text)
+  }
+
+  const editQueued = (qid: number) => {
+    const tid = activeTaskId
+    const r = tid ? runsRef.current[tid] : null
+    if (!r) return
+    const item = r.queue.find((q) => q.id === qid)
+    if (!item) return
+    r.queue = r.queue.filter((q) => q.id !== qid)
+    bump()
+    setDraftSeed((s) => ({ text: item.text, seq: s.seq + 1 }))
+  }
+
+  const removeQueued = (qid: number) => {
+    const tid = activeTaskId
+    const r = tid ? runsRef.current[tid] : null
+    if (!r) return
+    r.queue = r.queue.filter((q) => q.id !== qid)
+    bump()
   }
 
   // 答复一次写操作确认（普通访问模式）
   const approve = async (id: string, allow: boolean) => {
-    setItems((prev) => {
-      const next = [...prev]
-      for (const it of next) {
+    const r = activeTaskId ? runsRef.current[activeTaskId] : null
+    if (r) {
+      const items = [...r.items]
+      for (const it of items) {
         for (const run of it.tools) {
           if (run.approvalId === id) run.approvalChoice = allow
         }
       }
-      return next
-    })
+      r.items = items
+      bump()
+    }
     try {
       await api.approval(id, allow)
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // 回答一次 ask 工具的提问
+  const answer = async (id: string, text: string) => {
+    const r = activeTaskId ? runsRef.current[activeTaskId] : null
+    if (r) {
+      const items = [...r.items]
+      for (const it of items) {
+        for (const run of it.tools) {
+          if (run.questionId === id) run.questionAnswer = text
+        }
+      }
+      r.items = items
+      bump()
+    }
+    try {
+      await api.answer(id, text)
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const changeMode = (m: "build" | "plan") => {
+    setDefaultMode(m)
+    const r = activeTaskId ? runsRef.current[activeTaskId] : null
+    if (r) {
+      r.mode = m
+      bump()
     }
   }
 
@@ -449,6 +666,16 @@ export default function App() {
     ;(tasksByProject[t.project_id] ??= []).push(t)
   }
   const standaloneTasks = tasks.filter((t) => !t.project_id)
+
+  // 侧栏运行指示：哪些任务正在后台/前台执行
+  const running: Record<string, boolean> = {}
+  for (const [id, r] of Object.entries(runsRef.current)) {
+    if (r.streaming) running[id] = true
+  }
+
+  const run = activeTaskId ? runsRef.current[activeTaskId] : undefined
+  const chatTitle = run?.title || activeMeta?.title || "新任务"
+  const chatSource = activeProject?.name ?? "任务"
 
   const emptyHint = (
     <div className="text-muted-foreground flex flex-col items-center gap-3 py-24 text-center">
@@ -468,13 +695,14 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      {isDesktop && <Titlebar />}
+      {isDesktop && <Titlebar source={chatSource} title={chatTitle} />}
       <div className="flex min-h-0 flex-1">
         <Sidebar
           tasks={standaloneTasks}
           projects={projects}
           tasksByProject={tasksByProject}
-          activeTaskId={activeTask?.id ?? null}
+          activeTaskId={activeTaskId ?? null}
+          running={running}
           open={sidebarOpen}
           onOpenTask={(id) => void openTask(id)}
           onDeleteTask={(id) => void deleteTask(id)}
@@ -487,19 +715,27 @@ export default function App() {
           onClose={() => setSidebarOpen(false)}
         />
         <Chat
-          title={activeTask?.title || "新任务"}
-          mode={mode}
-          items={items}
-          streaming={streaming}
-          thinking={thinking}
+          title={chatTitle}
+          source={chatSource}
+          mode={run?.mode ?? defaultMode}
+          items={run?.items ?? []}
+          streaming={run?.streaming ?? false}
+          thinking={run?.thinking ?? false}
+          queue={run?.queue ?? []}
+          draftSeed={draftSeed}
           models={modelGroups}
           model={state?.model ?? ""}
+          skills={skills}
           focusSignal={focusSignal}
           emptyHint={emptyHint}
-          onSend={(text) => void send(text)}
+          onSend={submitText}
           onStop={stop}
+          onQueueDispatch={(qid) => void dispatchQueued(qid)}
+          onQueueEdit={editQueued}
+          onQueueRemove={removeQueued}
           onApprove={(id, allow) => void approve(id, allow)}
-          onModeChange={setMode}
+          onAnswer={(id, text) => void answer(id, text)}
+          onModeChange={changeMode}
           onModelChange={(m) => void changeModel(m)}
           onOpenSidebar={() => {
             setSidebarOpen(true)
