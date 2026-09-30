@@ -38,6 +38,32 @@ type GeminiProvider struct {
 
 func (p *GeminiProvider) Name() string { return "gemini" }
 
+// ListModels 走 Gemini 的 GET {base}/models?key=...（name 形如 "models/gemini-2.5-pro"，去掉前缀）。
+func (p *GeminiProvider) ListModels(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var out struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	endpoint := fmt.Sprintf("%s/models?key=%s", p.baseURL, url.QueryEscape(p.apiKey))
+	if err := fetchJSON(ctx, p.httpClient(), endpoint, nil, &out); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(out.Models))
+	for _, mdl := range out.Models {
+		n := strings.TrimPrefix(mdl.Name, "models/")
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("供应商返回空模型列表")
+	}
+	return names, nil
+}
+
 func (p *GeminiProvider) Models() []string {
 	if p.model != "" {
 		return []string{p.model}
@@ -81,6 +107,11 @@ type gemResponseChunk struct {
 		Content      gemContent `json:"content"`
 		FinishReason string     `json:"finishReason"`
 	} `json:"candidates"`
+	UsageMetadata *struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -205,6 +236,16 @@ func readGeminiStream(ctx context.Context, body io.Reader, onEvent func(StreamEv
 		var chunk gemResponseChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
+		}
+		// 流式尾包的 usageMetadata 是累计值：直接覆盖记录，流结束时取最后一次
+		if chunk.UsageMetadata != nil {
+			out.Usage = &Usage{
+				InputTokens:  chunk.UsageMetadata.PromptTokenCount,
+				OutputTokens: chunk.UsageMetadata.CandidatesTokenCount,
+			}
+			if onEvent != nil {
+				_ = onEvent(StreamEvent{Type: EventUsage, Usage: out.Usage})
+			}
 		}
 		if chunk.Error != nil {
 			if onEvent != nil {

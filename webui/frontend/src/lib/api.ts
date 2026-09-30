@@ -9,6 +9,7 @@ import type {
   SkillDirs,
   SkillInfo,
   StateInfo,
+  UsageRecord,
   TaskFull,
   TaskMeta,
   Theme,
@@ -116,7 +117,10 @@ export const api = {
       body: JSON.stringify({ servers }),
     }).then((r) => json<{ servers: Record<string, MCPServerConfig> }>(r)),
 
-  skills: () => fetch("/api/skills").then((r) => json<{ skills: SkillInfo[] }>(r)),
+  skills: (projectDir?: string) =>
+    fetch(`/api/skills${projectDir ? `?project_dir=${encodeURIComponent(projectDir)}` : ""}`).then((r) =>
+      json<{ skills: SkillInfo[] }>(r),
+    ),
 
   skill: (name: string, source = "global") =>
     fetch(`/api/skills/${encodeURIComponent(name)}?source=${source}`).then((r) =>
@@ -175,6 +179,17 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ allow }),
     }).then((r) => json<{ ok: boolean }>(r)),
+
+  /** 回答一次 ask 工具的提问 */
+  answer: (id: string, answer: string) =>
+    fetch(`/api/questions/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer }),
+    }).then((r) => json<{ ok: boolean }>(r)),
+
+  /** token 用量统计（按天×模型聚合，日期升序） */
+  usage: () => fetch("/api/usage").then((r) => json<{ records: UsageRecord[] }>(r)),
 }
 
 // streamChat 发起 SSE 聊天；onEvent 收到每条事件，返回时流已结束。abort 信号可中断。

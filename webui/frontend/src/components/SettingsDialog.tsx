@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import {
   BlocksIcon,
   BrainIcon,
+  ChartNoAxesColumnIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
   ClipboardPasteIcon,
@@ -18,6 +19,7 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { UsagePanel } from "@/components/UsagePanel"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -67,6 +69,7 @@ const SECTIONS = [
   { id: "theme", label: "主题", icon: SunMoonIcon },
   { id: "memory", label: "记忆", icon: BrainIcon },
   { id: "plugins", label: "插件", icon: BlocksIcon },
+  { id: "usage", label: "使用量", icon: ChartNoAxesColumnIcon },
 ] as const
 
 type SectionId = (typeof SECTIONS)[number]["id"]
@@ -652,7 +655,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                       </div>
 
                       {dirs.global?.path && (
-                        <div className="text-muted-foreground truncate text-xs">
+                        <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">
                           全局技能目录：<code className="font-mono">{dirs.global.path}</code>
                           <span className="ml-1.5">
                             每个技能一个子目录，内含 SKILL.md
@@ -768,7 +771,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                                 <span className="font-medium">/{s.name}</span>
                                 <Badge variant="outline">{s.source === "project" ? "项目" : "全局"}</Badge>
                               </div>
-                              <div className="text-muted-foreground truncate text-xs">{s.description}</div>
+                              <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">{s.description}</div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
                               {s.source === "project" ? (
@@ -836,7 +839,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                       </div>
 
                       {dirs.mcp?.path && (
-                        <div className="text-muted-foreground truncate text-xs">
+                        <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">
                           配置文件：<code className="font-mono">{dirs.mcp.path}</code>
                           <span className="ml-1.5">按 JSON 结构加 servers，改完点刷新重连</span>
                         </div>
@@ -963,7 +966,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                               <span className="font-medium">{name}</span>
                               <Badge variant="secondary">{cfg.url ? "http" : "stdio"}</Badge>
                               {cfg.disabled && <Badge variant="outline">已禁用</Badge>}
-                              <span className="text-muted-foreground w-full truncate font-mono text-xs sm:w-auto sm:flex-1">
+                              <span className="text-muted-foreground w-full font-mono text-xs [overflow-wrap:anywhere] sm:w-auto sm:flex-1">
                                 {cfg.url || [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" ")}
                                 {st?.connected ? ` · ${st.tool_count} 个工具` : st?.error ? ` · ${st.error}` : ""}
                               </span>
@@ -992,6 +995,12 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange }: Set
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {section === "usage" && (
+                <div className="flex flex-col gap-3">
+                  <UsagePanel />
                 </div>
               )}
             </div>

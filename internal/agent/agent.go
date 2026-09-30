@@ -28,6 +28,7 @@ const (
 	EventToolOutput EventType = "tool_output"
 	EventToolEnd    EventType = "tool_end"
 	EventApproval   EventType = "approval" // 普通访问模式：等待用户确认写操作
+	EventQuestion   EventType = "question" // ask 工具：等待用户回答澄清问题
 	EventError      EventType = "error"
 	EventDone       EventType = "done" // 本轮问答结束
 )
@@ -41,6 +42,8 @@ type Event struct {
 	IsError bool
 	Err     error
 	Model   string
+	// Usage 仅在 EventDone 上有值：本次提问所有 LLM 调用累计的令牌用量。
+	Usage *llm.Usage
 	// Round 是 LLM 迭代轮次（从 0 开始）。
 	// 一次提问会跑多轮：每轮 = 一段文本 + 若干工具调用。
 	// UI 据此把每轮拆成独立消息，否则各轮文本与工具会全部堆在一起。
@@ -64,6 +67,9 @@ type Options struct {
 	// 返回 true 允许执行，false 拒绝。nil 表示不询问（完全访问）。
 	// callID 为本次工具调用 ID，便于 UI 把确认卡片与工具卡片对应起来。
 	Approve func(callID, name string, args map[string]any) bool
+	// Ask 在模型调用 ask 工具时被调用：向用户展示问题、阻塞等待回答，返回答案文本。
+	// 为 nil 时 ask 走注册表兜底（提示按合理假设继续）。
+	Ask func(callID, question string, options []string) string
 }
 
 // Agent 持有一个 LLM provider、工具注册表与消息历史。
@@ -80,6 +86,7 @@ type Agent struct {
 	extra    string
 	extraPrompt func() string
 	approve  func(callID, name string, args map[string]any) bool
+	question func(callID, question string, options []string) string
 	history  []llm.Message
 	lastTurnStart int
 }
@@ -103,6 +110,7 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		extra:         opts.SystemPromptExtra,
 		extraPrompt:   opts.ExtraPrompt,
 		approve:       opts.Approve,
+		question:      opts.Ask,
 		history:       opts.History,
 		lastTurnStart: -1,
 	}
@@ -125,6 +133,9 @@ func (a *Agent) SetMode(m Mode) { a.mode = m }
 
 // SetApprove 设置普通访问模式下的写操作审批回调（webui 每轮聊天时注入）。
 func (a *Agent) SetApprove(fn func(callID, name string, args map[string]any) bool) { a.approve = fn }
+
+// SetAsk 设置 ask 工具的提问回调（webui 每轮聊天时注入）。
+func (a *Agent) SetAsk(fn func(callID, question string, options []string) string) { a.question = fn }
 
 // Model 返回当前模型名。
 func (a *Agent) Model() string { return a.model }
@@ -158,7 +169,9 @@ Agent 模式: %s
 3. 工具输出可能被截断；重要信息可分段读取。
 4. 与用户对话默认使用简体中文；代码注释与标识符遵循项目惯例。
 5. 每轮调用工具后，必须根据工具结果继续推进，直到任务完成或信息足够。
-6. 不要编造文件内容；以工具返回的真实内容为准。`, a.cwd, modeDesc)
+6. 不要编造文件内容；以工具返回的真实内容为准。
+7. 任务包含 3 个以上步骤（调研+修改+验证等）时，先用 todo 工具建立任务清单，每完成一步都提交整份清单刷新进度，让用户实时看到处理到哪一步；一步都没有再开始下一步前，把上一步标 completed、当前步标 in_progress。
+8. 当歧义会实质影响结果、无法合理假设时，用 ask 工具向用户提一个简短问题（可带候选项），拿到回答再继续；不要连环追问，一次只问一个。`, a.cwd, modeDesc)
 	if a.extra != "" {
 		p += "\n\n额外要求（来自配置）:\n" + a.extra
 	}
@@ -230,6 +243,9 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		emit = func(Event) {}
 	}
 
+	// 整轮累计令牌用量（多轮 = 用户一次提问触发的多次 LLM 调用）
+	var totalUsage llm.Usage
+
 	for i := 0; i < a.maxIter; i++ {
 		round := i // 本轮序号，供 UI 分组
 		req := llm.ChatRequest{
@@ -252,6 +268,10 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			emit(Event{Type: EventError, Err: err, Round: round})
 			return err
 		}
+		if resp.Usage != nil {
+			totalUsage.InputTokens += resp.Usage.InputTokens
+			totalUsage.OutputTokens += resp.Usage.OutputTokens
+		}
 
 		a.history = append(a.history, llm.Message{
 			Role:      llm.RoleAssistant,
@@ -260,13 +280,39 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		})
 
 		if len(resp.ToolCalls) == 0 {
-			emit(Event{Type: EventDone, Model: a.model, Round: round})
+			u := totalUsage
+			emit(Event{Type: EventDone, Model: a.model, Round: round, Usage: &u})
 			return nil
 		}
 
 		for _, tc := range resp.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			// ask 工具：直接向用户提问并阻塞等回答（回调由 UI 注入）
+			if tc.Name == "ask" && a.question != nil {
+				q, _ := tc.Args["question"].(string)
+				var opts []string
+				if raw, ok := tc.Args["options"].([]any); ok {
+					for _, v := range raw {
+						if s, ok := v.(string); ok && s != "" {
+							opts = append(opts, s)
+						}
+					}
+				}
+				emit(Event{Type: EventToolStart, Tool: &tc, Round: round})
+				emit(Event{Type: EventQuestion, Tool: &tc, Round: round})
+				ans := a.question(tc.ID, q, opts)
+				if ans == "" {
+					ans = "（用户未回答，跳过该问题）"
+				}
+				emit(Event{Type: EventToolOutput, Tool: &tc, Output: ans, Round: round})
+				emit(Event{Type: EventToolEnd, Tool: &tc, Round: round})
+				a.history = append(a.history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolResult: &llm.ToolResult{CallID: tc.ID, Content: ans},
+				})
+				continue
 			}
 			// 普通访问模式：先推卡片再问用户，UI 可在原位显示「允许/拒绝」
 			if a.mode == ModePlan && a.approve != nil && !a.tools.IsReadOnly(tc.Name) {

@@ -56,6 +56,14 @@ export interface SkillInfo {
   source: string
 }
 
+/** token 用量统计（后端按 日期×模型 聚合） */
+export interface UsageRecord {
+  date: string // YYYY-MM-DD
+  model: string
+  input: number
+  output: number
+}
+
 // 技能详情（含 SKILL.md 原文，供编辑）
 export interface SkillDetail {
   name: string
@@ -132,10 +140,14 @@ export type ChatEvent =
   | { type: "start"; task_id: string; title: string; mode: string }
   | { type: "text"; text: string; round: number }
   | { type: "tool_start"; round: number; id: string; name: string; args: string }
+  | { type: "write_base"; round: number; id: string; old: string }
   | { type: "tool_output"; round: number; id: string; name: string; output: string; is_error: boolean }
   | { type: "tool_end"; round: number; id: string; name: string; is_error: boolean }
   | { type: "approval_pending"; round: number; id: string }
   | { type: "approval"; id: string; call_id: string; name: string; args: string }
   | { type: "approval_result"; id: string; call_id: string; allowed: boolean }
+  | { type: "question_pending"; round: number; id: string }
+  | { type: "question"; id: string; call_id: string; question: string; options?: string[] }
+  | { type: "question_answered"; id: string; call_id: string; answer: string }
   | { type: "error"; error: string; round: number }
   | { type: "done"; model?: string; round: number }

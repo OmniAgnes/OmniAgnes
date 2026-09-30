@@ -44,6 +44,38 @@ func (p *OpenAIProvider) Models() []string {
 	return nil
 }
 
+// ListModels 走 OpenAI 兼容的 GET {base}/models（ollama 同端点）。
+func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	// ollama 不校验 key；其余按 Bearer 传
+	headers := map[string]string{}
+	if p.apiKey != "" {
+		headers["Authorization"] = "Bearer " + p.apiKey
+	}
+	if err := fetchJSON(ctx, p.httpClient(), p.baseURL+"/models", headers, &out); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(out.Data))
+	seen := map[string]bool{}
+	for _, d := range out.Data {
+		if d.ID == "" || seen[d.ID] {
+			continue
+		}
+		seen[d.ID] = true
+		names = append(names, d.ID)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("供应商返回空模型列表")
+	}
+	return names, nil
+}
+
 type oaiMessage struct {
 	Role       string        `json:"role"`
 	Content    string        `json:"content,omitempty"`

@@ -19,6 +19,9 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string     { return "mock" }
 func (m *mockProvider) Models() []string { return []string{"mock-model"} }
+func (m *mockProvider) ListModels(ctx context.Context) ([]string, error) {
+	return []string{"mock-model"}, nil
+}
 func (m *mockProvider) Chat(ctx context.Context, req llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
 	resp := m.responses[0]
 	if m.idx < len(m.responses) {

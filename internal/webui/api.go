@@ -135,6 +135,29 @@ func (s *server) handleProjectsList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// 按"最后对话时间"倒序：项目取其中任务的最新 UpdatedAt，
+	// 没有任务的项目回落到自身创建时间——新添加的文件夹因此排在最前。
+	tasks, _ := s.store.ListTasks()
+	lastActive := map[string]time.Time{}
+	for _, t := range tasks {
+		if t.ProjectID == "" {
+			continue
+		}
+		if ts, ok := lastActive[t.ProjectID]; !ok || t.UpdatedAt.After(ts) {
+			lastActive[t.ProjectID] = t.UpdatedAt
+		}
+	}
+	sort.Slice(projects, func(i, j int) bool {
+		ti, ok := lastActive[projects[i].ID]
+		if !ok {
+			ti = projects[i].CreatedAt
+		}
+		tj, ok := lastActive[projects[j].ID]
+		if !ok {
+			tj = projects[j].CreatedAt
+		}
+		return ti.After(tj)
+	})
 	writeJSON(w, map[string]any{"projects": projects})
 }
 
@@ -359,10 +382,16 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return s.waitApproval(r.Context(), send, callID, name, args)
 	})
 	defer a.SetApprove(nil)
+	// ask 工具：向用户提问并阻塞等待回答。
+	a.SetAsk(func(callID, question string, options []string) string {
+		return s.waitQuestion(r.Context(), send, callID, question, options)
+	})
+	defer a.SetAsk(nil)
 
 	// 不用 Run（失败即回滚）：webui 保留失败轮次已产生的内容（至少保留提问），便于回溯
 	rollback := a.Prepare(text)
 	_ = rollback
+	errSent := false // Execute 内部对失败轮已 emit EventError（带 round）；外层不得重复发送
 	runErr := a.Execute(r.Context(), func(ev agent.Event) {
 		switch ev.Type {
 		case agent.EventText:
@@ -372,6 +401,15 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 				"type": "tool_start", "round": ev.Round,
 				"id": ev.Tool.ID, "name": ev.Tool.Name, "args": llm.MarshalToolArgs(ev.Tool.Args),
 			})
+			// write 会覆盖旧文件：此刻（执行前）抓旧内容快照发给前端渲染差异。
+			// 不进模型上下文，纯 UI 数据；超大约定阈值跳过。
+			if ev.Tool.Name == "write" && ev.Tool.Args != nil {
+				// plan 模式下审批通过才会走到这里执行；build 模式直接执行。
+				// 读取失败（新建/越界）时不发送，前端维持"仅内容"视图。
+				if old, ok := readBeforeWrite(s.cwdFor(t), ev.Tool); ok {
+					send(map[string]any{"type": "write_base", "round": ev.Round, "id": ev.Tool.ID, "old": old})
+				}
+			}
 		case agent.EventToolOutput:
 			send(map[string]any{
 				"type": "tool_output", "round": ev.Round, "id": ev.Tool.ID,
@@ -384,13 +422,21 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 			})
 		case agent.EventApproval:
 			send(map[string]any{"type": "approval_pending", "round": ev.Round, "id": ev.Tool.ID})
+		case agent.EventQuestion:
+			send(map[string]any{"type": "question_pending", "round": ev.Round, "id": ev.Tool.ID})
 		case agent.EventError:
+			errSent = true
 			send(map[string]any{"type": "error", "error": ev.Err.Error(), "round": ev.Round})
 		case agent.EventDone:
+			// 每次提问的累计 token 用量落盘（usage.jsonl），供设置页统计
+			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
+				recordUsage(config.DefaultDataDir(), ev.Model, ev.Usage)
+			}
 			send(map[string]any{"type": "done", "model": ev.Model, "round": ev.Round})
 		}
 	})
-	if runErr != nil {
+	if runErr != nil && !errSent {
+		// 兜底：Execute 未经事件流报错（如 ctx 取消）时才补发，避免同一错误显示两遍
 		send(map[string]any{"type": "error", "error": runErr.Error()})
 	}
 	// 持久化消息（无论成功失败都保存已有内容）
@@ -1019,6 +1065,44 @@ func (s *server) waitApproval(ctx context.Context, send func(map[string]any), ca
 	}
 }
 
+// readBeforeWrite 在 write 工具执行前读取目标文件的旧内容（供前端渲染差异）。
+// 新建文件、越界路径或超过 256KB 的大文件返回 false（跳过差异展示）。
+func readBeforeWrite(cwd string, tc *llm.ToolCall) (string, bool) {
+	p, _ := tc.Args["path"].(string)
+	if p == "" {
+		return "", false
+	}
+	if strings.HasPrefix(p, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if p == "~" {
+				p = home
+			} else {
+				p = filepath.Join(home, strings.TrimPrefix(p, "~/"))
+			}
+		}
+	}
+	abs := p
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(cwd, p)
+	}
+	abs = filepath.Clean(abs)
+	// 与工作目录安全边界保持一致：越界不读
+	base := filepath.Clean(cwd)
+	rel, err := filepath.Rel(base, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	st, err := os.Stat(abs)
+	if err != nil || st.IsDir() || st.Size() > 256*1024 {
+		return "", false
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
 // handleApproval 接收前端对某次写操作的确认结果。
 func (s *server) handleApproval(w http.ResponseWriter, r *http.Request) {
 	req, err := decode[struct {
@@ -1038,6 +1122,76 @@ func (s *server) handleApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	select {
 	case ar.ch <- req.Allow:
+	default:
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- 向用户提问（ask 工具） ----------
+
+// waitQuestion 通过 SSE 推送一条提问，阻塞等待前端答复。
+// 10 分钟未答复返回空串（agent 侧转为"用户未回答"提示继续）。
+func (s *server) waitQuestion(ctx context.Context, send func(map[string]any), callID, question string, options []string) string {
+	req := &questionReq{
+		id:       fmt.Sprintf("q-%d", s.approvalSeq.Add(1)),
+		question: question,
+		options:  options,
+		ch:       make(chan string, 1),
+	}
+	s.mu.Lock()
+	if s.questions == nil {
+		s.questions = map[string]*questionReq{}
+	}
+	s.questions[req.id] = req
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.questions, req.id)
+		s.mu.Unlock()
+	}()
+
+	payload := map[string]any{
+		"type":     "question",
+		"id":       req.id,
+		"call_id":  callID,
+		"question": question,
+	}
+	if len(options) > 0 {
+		payload["options"] = options
+	}
+	send(payload)
+
+	select {
+	case ans := <-req.ch:
+		send(map[string]any{"type": "question_answered", "id": req.id, "call_id": callID, "answer": ans})
+		return ans
+	case <-ctx.Done():
+		return ""
+	case <-time.After(10 * time.Minute):
+		return ""
+	}
+}
+
+// handleQuestionAnswer 接收用户对某次提问的回答。
+func (s *server) handleQuestionAnswer(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Answer string `json:"answer"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"answer": "..."}`, http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	s.mu.Lock()
+	qr, ok := s.questions[id]
+	s.mu.Unlock()
+	if !ok {
+		writeErr(w, "提问已失效", http.StatusNotFound)
+		return
+	}
+	select {
+	case qr.ch <- req.Answer:
 	default:
 	}
 	writeJSON(w, map[string]any{"ok": true})

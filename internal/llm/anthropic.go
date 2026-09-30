@@ -37,6 +37,34 @@ type AnthropicProvider struct {
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
+// ListModels 走 Anthropic 的 GET {base}/models。
+func (p *AnthropicProvider) ListModels(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	headers := map[string]string{
+		"x-api-key":          p.apiKey,
+		"anthropic-version":  "2023-06-01",
+	}
+	if err := fetchJSON(ctx, p.httpClient(), p.baseURL+"/models", headers, &out); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(out.Data))
+	for _, d := range out.Data {
+		if d.ID != "" {
+			names = append(names, d.ID)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("供应商返回空模型列表")
+	}
+	return names, nil
+}
+
 func (p *AnthropicProvider) Models() []string {
 	if p.model != "" {
 		return []string{p.model}

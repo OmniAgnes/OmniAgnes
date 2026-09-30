@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 )
 
 // Role 是消息角色。
@@ -99,8 +102,35 @@ type Provider interface {
 	Name() string
 	// Models 返回可用的模型列表（可能为空）。
 	Models() []string
+	// ListModels 向供应商 API 实时拉取模型清单（GET /models）。
+	// 不支持或失败时返回 error，调用方应回退到本地配置列表。
+	ListModels(ctx context.Context) ([]string, error)
 	// Chat 流式调用。onEvent 收到增量；返回最终结构化结果。
 	Chat(ctx context.Context, req ChatRequest, onEvent func(StreamEvent) error) (*ChatResponse, error)
+}
+
+// fetchJSON 发 GET 请求并把响应解析到 out（out 为 nil 时只检查状态码）。
+func fetchJSON(ctx context.Context, c *http.Client, url string, headers map[string]string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求 %s 失败: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("%d %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 // Registry 是 provider 工厂注册表。
