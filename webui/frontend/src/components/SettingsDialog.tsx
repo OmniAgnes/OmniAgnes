@@ -799,9 +799,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               <span className="font-medium">{name}</span>
                               <Badge variant="secondary">{cfg.url ? "http" : "stdio"}</Badge>
                               {cfg.disabled && <Badge variant="outline">已禁用</Badge>}
-                              <span className="text-muted-foreground w-full font-mono text-xs [overflow-wrap:anywhere] sm:w-auto sm:flex-1">
-                                {cfg.url || [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" ")}
-                                {st?.connected ? ` · ${st.tool_count} 个工具` : st?.error ? ` · ${st.error}` : ""}
+                              <span className="text-muted-foreground w-full text-xs sm:w-auto sm:flex-1">
+                                {st?.connected ? `${st.tool_count} 个工具` : st?.error ? st.error : ""}
                               </span>
                               <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                                 <Button

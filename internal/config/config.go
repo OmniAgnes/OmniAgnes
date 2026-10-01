@@ -221,7 +221,8 @@ func Default() *Config {
 //   - 数据目录 mcp/（~/.local/share/omni/mcp）
 //   - 主程序可执行文件同目录（桌面版随包内置）
 //
-// 配置里已有同名条目（包括已停用的）不覆盖，保留用户配置。
+// 配置里已有同名条目（包括已停用的）默认不覆盖，保留用户配置；
+// 但条目的 command 文件已不存在时视为失效路径，改用内置插件路径（env 等字段保留）。
 func (c *Config) builtinMCPServers() {
 	dirs := []string{
 		filepath.Join(".omni", "mcp"),
@@ -253,9 +254,20 @@ func (c *Config) builtinMCPServers() {
 			if c.MCPServers == nil {
 				c.MCPServers = map[string]MCPServerConfig{}
 			}
-			if _, ok := c.MCPServers[server]; !ok {
-				c.MCPServers[server] = MCPServerConfig{Command: filepath.Join(dir, name)}
+			// 同名条目保留用户配置；但 command 指向的文件已不存在（如卸载后残留的
+			// 旧开发路径）视为失效，用内置路径覆盖——env 等其他字段仍保留。
+			if cur, ok := c.MCPServers[server]; ok {
+				if _, err := os.Stat(cur.Command); err == nil {
+					continue
+				}
+				if cur.Command == "" || cur.URL != "" { // HTTP 或未填 command 的不算失效
+					continue
+				}
+				cur.Command = filepath.Join(dir, name)
+				c.MCPServers[server] = cur
+				continue
 			}
+			c.MCPServers[server] = MCPServerConfig{Command: filepath.Join(dir, name)}
 		}
 	}
 }
