@@ -574,7 +574,14 @@ export default function App() {
 
   // 真正发起一轮问答。同一任务串行（streaming 期间不并发），不同任务并行。
   // attachments = 已上传附件的绝对路径（随文本一起发给模型），attNames = 展示用文件名。
-  const doSend = async (tid: string, text: string, attachments: string[] = [], attNames?: string[]) => {
+  // replaceLast：AI 还没回复上一条时，重发直接替换最后一对 user+assistant（在当前行上改），不追加新行
+  const doSend = async (
+    tid: string,
+    text: string,
+    attachments: string[] = [],
+    attNames?: string[],
+    replaceLast = false,
+  ) => {
     const r = runsRef.current[tid]
     if (!r || r.streaming) return
     const ac = new AbortController()
@@ -583,17 +590,36 @@ export default function App() {
     r.streaming = true
     r.thinking = true
     r.lastRound = -1
-    const userItem: ViewItem = {
-      id: nextId(),
-      role: "user",
-      text,
-      attachments: attNames && attNames.length > 0 ? attNames : undefined,
-      tools: [],
+    if (replaceLast) {
+      const items = [...r.items]
+      const userItem = items[items.length - 2]
+      const asstItem = items[items.length - 1]
+      if (userItem && userItem.role === "user" && asstItem && asstItem.role === "assistant") {
+        userItem.text = text
+        userItem.attachments = attNames && attNames.length > 0 ? attNames : undefined
+        asstItem.text = ""
+        asstItem.error = undefined
+        asstItem.tools = []
+        asstItem.media = undefined
+        asstItem.thinking = undefined
+        asstItem.thinkingActive = false
+        asstItem.round = r.roundBase
+        r.items = items
+        bump()
+      }
+    } else {
+      const userItem: ViewItem = {
+        id: nextId(),
+        role: "user",
+        text,
+        attachments: attNames && attNames.length > 0 ? attNames : undefined,
+        tools: [],
+      }
+      // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上
+      const asstItem: ViewItem = { id: nextId(), role: "assistant", text: "", tools: [], round: r.roundBase }
+      r.items = [...r.items, userItem, asstItem]
+      bump()
     }
-    // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上
-    const asstItem: ViewItem = { id: nextId(), role: "assistant", text: "", tools: [], round: r.roundBase }
-    r.items = [...r.items, userItem, asstItem]
-    bump()
     try {
       await streamChat(tid, text, r.mode, state?.model ?? "", makeHandler(tid), ac.signal, attachments)
     } catch (e) {
@@ -639,7 +665,7 @@ export default function App() {
   }
 
   // 发送入口：有附件先上传（拿到落盘路径），再发起一轮问答。
-  const launch = (tid: string, text: string, files?: File[]): Promise<void> => {
+  const launch = (tid: string, text: string, files?: File[], replaceLast = false): Promise<void> => {
     const p = (async () => {
       let paths: string[] = []
       let names: string[] = []
@@ -653,7 +679,7 @@ export default function App() {
           return
         }
       }
-      return doSend(tid, text, paths, names)
+      return doSend(tid, text, paths, names, replaceLast)
     })()
     runPromises.current[tid] = p
     void p.finally(() => {
@@ -698,7 +724,16 @@ export default function App() {
       bump()
       if (!r.streaming) void flushQueue(activeTaskId)
     } else {
-      void launch(activeTaskId, t, files)
+      // AI 还没回复上一条（末条 user 后面跟的是空占位）：重发 = 替换当前行重跑一遍，不追加新消息
+      const last = r.items.at(-1)
+      const prev = r.items[r.items.length - 2]
+      const unanswered =
+        last?.role === "assistant" &&
+        prev?.role === "user" &&
+        !last.text &&
+        last.tools.length === 0 &&
+        !last.media?.length
+      void launch(activeTaskId, t, files, unanswered)
     }
   }
 

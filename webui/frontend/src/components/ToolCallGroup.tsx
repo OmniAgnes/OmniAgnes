@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 
 interface ToolCallGroupProps {
   tools: ToolRun[]
+  /** 有未回答的「提问」时，卡片上提供「去回答」重新打开输入框上方的提问横幅 */
+  onOpenQuestion?: () => void
 }
 
 /**
@@ -23,7 +25,7 @@ interface ToolCallGroupProps {
  * 用户不关心内部细节时只占一行；展开后逐条查看。
  * 待确认操作不在这里答复——统一由输入框上方的审批浮条处理（见 Chat）。
  */
-export function ToolCallGroup({ tools }: ToolCallGroupProps) {
+export function ToolCallGroup({ tools, onOpenQuestion }: ToolCallGroupProps) {
   // 始终默认收起：用户不关心工具调用细节，展开箭头足以表明有点可看。
   const [open, setOpen] = useState(false)
 
@@ -57,7 +59,7 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
       <CollapsibleContent>
         <div className="flex flex-col gap-0.5 pt-0.5">
           {tools.map((t) => (
-            <ToolCallView key={t.id} run={t} />
+            <ToolCallView key={t.id} run={t} onOpenQuestion={onOpenQuestion} />
           ))}
         </div>
       </CollapsibleContent>

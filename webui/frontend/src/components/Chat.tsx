@@ -12,7 +12,6 @@ import {
   CopyIcon,
   FolderIcon,
   GlobeIcon,
-  HelpCircleIcon,
   ListChecksIcon,
   ListTodoIcon,
   Loader2Icon,
@@ -283,6 +282,14 @@ export function Chat({
     return null
   }, [items])
 
+  // 提问横幅被临时收起（X）：收起后主输入卡恢复显示，
+  // 消息流里的「提问」卡片上有「去回答」可重新打开；来新问题默认展开
+  const [qClosed, setQClosed] = useState(false)
+  useEffect(() => {
+    setQClosed(false)
+  }, [pendingQ?.id])
+  const showQ = !!pendingQ && !qClosed
+
   // 任务清单：取最近一次 todo 工具调用的参数（全量覆盖语义，最后一次即最新）
   const todos = useMemo<TodoItem[]>(() => {
     for (let i = items.length - 1; i >= 0; i--) {
@@ -334,7 +341,9 @@ export function Chat({
             若也渲染成 div，每个都会吃一个 gap，多轮时空白越叠越大。 */}
         {(b.tools.length > 0 || b.replies.some((r) => r.text || r.thinking || r.thinkingActive)) && (
           <div className="flex flex-col gap-1.5">
-            {b.tools.length > 0 && <ToolCallGroup tools={b.tools} />}
+            {b.tools.length > 0 && (
+              <ToolCallGroup tools={b.tools} onOpenQuestion={() => setQClosed(false)} />
+            )}
             {b.replies
               .filter((r) => r.text || r.thinking || r.thinkingActive || r.media?.length)
               .map((item) => (
@@ -399,9 +408,18 @@ export function Chat({
         )}
       </div>
 
-      {/* 输入区：提问/审批/任务清单/错误浮条固定在输入框上方；左=访问模式，右=模型选择 + 发送 */}
+      {/* 输入区：提问/审批/任务清单/错误浮条固定在输入框上方；左=访问模式，右=模型选择 + 发送。
+          提问未答时主输入卡被提问横幅顶替（避免往队列里误发新消息），X 收起后恢复 */}
       <div className="px-3 pb-3 md:px-6 md:pb-4">
-        {pendingQ && <QuestionBanner run={pendingQ} onAnswer={onAnswer} />}
+        {showQ && pendingQ && (
+          <QuestionBanner
+            run={pendingQ}
+            onAnswer={onAnswer}
+            onClose={() => setQClosed(true)}
+            streaming={streaming}
+            onStop={onStop}
+          />
+        )}
         {pending && !pendingQ && <ApprovalBanner run={pending} onApprove={onApprove} />}
         {todosOpen && !pendingQ && <TodoPanel items={todos} active={streaming} />}
         {queue.length > 0 && (
@@ -413,6 +431,7 @@ export function Chat({
             <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{lastError}</span>
           </div>
         )}
+        {!showQ && (
         <div className="bg-card relative mx-auto max-w-3xl rounded-2xl border p-2 shadow-xs">
           <input
             ref={fileRef}
@@ -559,6 +578,7 @@ export function Chat({
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   )
@@ -890,13 +910,21 @@ function ApprovalBanner({  run,
   )
 }
 
-/** 提问横幅：ask 工具向用户要答案，候选项点击即答，也可自由输入。 */
+/** 提问横幅：ask 工具向用户要答案，候选项点击即答，也可自由输入。
+ * 样式跟随主题卡片（与主输入框同款），提问未答时顶替主输入框（避免误发进队列）；
+ * 右上角 X 可收起，收起后点消息流里「提问」卡片的「去回答」重新打开。 */
 function QuestionBanner({
   run,
   onAnswer,
+  onClose,
+  streaming,
+  onStop,
 }: {
   run: ToolRun
   onAnswer: (id: string, answer: string) => void
+  onClose: () => void
+  streaming: boolean
+  onStop: () => void
 }) {
   const [free, setFree] = useState("")
   const send = (text: string) => {
@@ -904,16 +932,22 @@ function QuestionBanner({
     if (t) onAnswer(run.questionId!, t)
   }
   return (
-    <div className="border-sky-500/50 bg-sky-500/8 mx-auto mb-2 flex max-w-3xl flex-col gap-2 rounded-xl border px-3.5 py-2.5">
-      <div className="flex items-start gap-2 text-sm">
-        <HelpCircleIcon className="text-sky-600 dark:text-sky-400 mt-0.5 size-4 shrink-0" />
-        <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-          <span className="text-sky-700 dark:text-sky-400 font-medium">AI 想问你：</span>
-          {run.question}
-        </span>
+    <div className="bg-card relative mx-auto mb-2 max-w-3xl rounded-2xl border p-2 shadow-xs">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground hover:text-foreground absolute top-1 right-1"
+        onClick={onClose}
+        title="先收起，点消息流里的「提问」卡片可再打开回答"
+      >
+        <XIcon className="size-4" />
+      </Button>
+      <div className="px-1 pt-0.5 text-sm">
+        <span className="font-medium">AI 想问你：</span>
+        <span className="whitespace-pre-wrap break-words">{run.question}</span>
       </div>
       {run.questionOptions && run.questionOptions.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pl-6">
+        <div className="mt-1.5 flex flex-wrap gap-1.5 px-1">
           {run.questionOptions.map((o) => (
             <button
               key={o}
@@ -926,7 +960,7 @@ function QuestionBanner({
           ))}
         </div>
       )}
-      <div className="flex gap-2 pl-6">
+      <div className="mt-1.5 flex items-center gap-2 px-1 pb-0.5">
         <input
           value={free}
           onChange={(e) => setFree(e.target.value)}
@@ -937,9 +971,20 @@ function QuestionBanner({
             }
           }}
           placeholder={run.questionOptions?.length ? "或输入其他答案…" : "输入你的回答…"}
-          className="bg-background border-input focus-visible:ring-ring min-w-0 flex-1 rounded-md border px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2"
+          className="text-muted-foreground min-w-0 flex-1 rounded-md bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70"
           autoFocus
         />
+        {streaming && (
+          <Button
+            variant="secondary"
+            size="icon"
+            className="shrink-0 rounded-full"
+            onClick={onStop}
+            title="中断生成"
+          >
+            <SquareIcon fill="currentColor" />
+          </Button>
+        )}
         <Button size="sm" className="h-8 shrink-0 px-3 text-xs" onClick={() => send(free)} disabled={!free.trim()}>
           回答
         </Button>

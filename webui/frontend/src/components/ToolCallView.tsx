@@ -156,7 +156,7 @@ export function toolApprovalLabel(run: ToolRun): { label: string; summary: strin
 }
 
 /** 工具调用卡片：图标 + 名称 + 摘要，点击展开详情。待确认浮条在输入框上方（见 Chat）。 */
-export function ToolCallView({ run }: { run: ToolRun }) {
+export function ToolCallView({ run, onOpenQuestion }: { run: ToolRun; onOpenQuestion?: () => void }) {
   const meta = metaOf(run.name)
   const Icon = meta.icon
   const args = parseArgs(run.args)
@@ -179,6 +179,18 @@ export function ToolCallView({ run }: { run: ToolRun }) {
           <span className="shrink-0 font-mono text-[11px] tabular-nums">
             <span className="text-emerald-600 dark:text-emerald-400">+{stat.added}</span>{" "}
             <span className="text-rose-600 dark:text-rose-400">-{stat.removed}</span>
+          </span>
+        )}
+        {/* 未回答的提问：横幅收起后的快捷入口（用 span 避免嵌套 button，点击不展开卡片） */}
+        {run.name === "ask" && run.questionId != null && run.questionAnswer === undefined && onOpenQuestion && (
+          <span
+            className="text-primary ml-auto shrink-0 text-[11px] font-medium cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenQuestion()
+            }}
+          >
+            去回答
           </span>
         )}
         {/* 状态图标靠右，展开箭头在最右。待确认由输入框上方浮条提示，这里只显示转圈。
