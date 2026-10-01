@@ -161,6 +161,7 @@ type Config struct {
 	Theme             string                     `json:"theme,omitempty"`           // dark | light | system
 	ThemeColor        string                     `json:"theme_color,omitempty"`     // 主题配色：zinc/violet/blue/emerald/amber/rose
 	MCPServers        map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+	DisabledSkills    []string                   `json:"disabled_skills,omitempty"` // 禁用的技能名，默认全部启用
 }
 
 // DefaultPath 返回默认配置文件路径。

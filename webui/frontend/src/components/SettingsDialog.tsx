@@ -116,9 +116,8 @@ interface MCPDraft {
   kind: "stdio" | "http"
   command: string
   argsText: string
-  envText: string
-  /** 已知插件（agnes/mimo）的环境变量：KEY 固定，用户只填值 */
-  knownEnv: Record<string, string>
+  /** 环境变量键值列表（左 KEY 右值，可增删多行） */
+  envRows: { key: string; value: string }[]
   url: string
   disabled: boolean
   isNew: boolean
@@ -130,37 +129,24 @@ function emptyMcpDraft(): MCPDraft {
     kind: "stdio",
     command: "",
     argsText: "",
-    envText: "",
-    knownEnv: {},
+    envRows: [],
     url: "",
     disabled: false,
     isNew: true,
   }
 }
 
-// envText（KEY=VALUE 每行一条）→ env 对象
-function parseEnv(text: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of text.split("\n")) {
-    const s = line.trim()
-    if (!s) continue
-    const i = s.indexOf("=")
-    if (i <= 0) continue
-    out[s.slice(0, i).trim()] = s.slice(i + 1).trim()
-  }
-  return out
-}
-
-function envToText(env?: Record<string, string>): string {
-  return Object.entries(env ?? {})
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n")
-}
-
-// 内置插件需要的环境变量：编辑弹窗里直接按 KEY 生成输入框，用户只填值
+// 内置插件需要的环境变量：编辑弹窗里按 KEY 预生成行，用户只填值
 const MCP_ENV_KEYS: Record<string, string[]> = {
   agnes: ["AGNES_API_KEY", "AGNES_IMAGE_MODEL", "AGNES_VIDEO_MODEL"],
   mimo: ["MIMO_API_KEY", "MIMO_TTS_MODEL"],
+}
+
+// 已知插件环境变量的默认值（预填进输入框，用户可改）
+const MCP_ENV_DEFAULTS: Record<string, string> = {
+  AGNES_IMAGE_MODEL: "agnes-image-2.5-flash",
+  AGNES_VIDEO_MODEL: "agnes-video-2.5-flash",
+  MIMO_TTS_MODEL: "mimo-v2.5-tts",
 }
 
 // 各环境变量输入框的占位提示
@@ -170,6 +156,22 @@ const MCP_ENV_PLACEHOLDERS: Record<string, string> = {
   AGNES_VIDEO_MODEL: "默认生视频模型（可选）：agnes-video-2.5-flash / agnes-video-2.5",
   MIMO_API_KEY: "填入 API Key（留空则未配置）",
   MIMO_TTS_MODEL: "默认 TTS 模型（可选）：mimo-v2.5-tts / -voicedesign / -voiceclone",
+}
+
+// seedEnvRows 生成某服务器的环境变量行：已知插件（agnes/mimo）按固定 KEY 预生成
+// （模型类变量带默认值），配置里其余自定义变量追加在后。
+function seedEnvRows(name: string, env?: Record<string, string>): { key: string; value: string }[] {
+  const rows: { key: string; value: string }[] = []
+  const used = new Set<string>()
+  for (const k of MCP_ENV_KEYS[name] ?? []) {
+    const v = env?.[k] ?? MCP_ENV_DEFAULTS[k] ?? ""
+    rows.push({ key: k, value: v })
+    used.add(k)
+  }
+  for (const [k, v] of Object.entries(env ?? {})) {
+    if (!used.has(k)) rows.push({ key: k, value: v })
+  }
+  return rows
 }
 
 // 常见插件需要的环境变量（配置里没填时在列表里提示，避免调用时才报错）
@@ -209,8 +211,17 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     }
   }
 
-  const refreshMcp = async (delayMs = 0) => {
-    const load = async () => {
+  // 启用/禁用技能：后端写进配置 disabled_skills，完成后刷新列表
+  const toggleSkill = async (name: string, disabled: boolean) => {
+    try {
+      await api.skillToggle(name, disabled)
+      await refreshSkills()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const refreshMcp = async (delayMs = 0) => {    const load = async () => {
       try {
         const [cfg, st] = await Promise.all([api.mcpConfig(), api.mcp()])
         setMcpServers(cfg.servers ?? {})
@@ -296,15 +307,12 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
   const startEditMcp = (name: string) => {
     setErr("")
     const cfg = mcpServers[name] ?? {}
-    const knownEnv: Record<string, string> = {}
-    for (const k of MCP_ENV_KEYS[name] ?? []) knownEnv[k] = cfg.env?.[k] ?? ""
     setMcpDraft({
       name,
       kind: cfg.url ? "http" : "stdio",
       command: cfg.command ?? "",
       argsText: (cfg.args ?? []).join(" "),
-      envText: envToText(cfg.env),
-      knownEnv,
+      envRows: seedEnvRows(name, cfg.env),
       url: cfg.url ?? "",
       disabled: Boolean(cfg.disabled),
       isNew: false,
@@ -320,11 +328,11 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     }
     const next = { ...mcpServers }
     delete next[name]
-    // 已知 KEY（agnes/mimo）取独立输入框的值；留空视为清除该变量
-    const env = parseEnv(mcpDraft.envText)
-    for (const [k, v] of Object.entries(mcpDraft.knownEnv)) {
-      if (v.trim() !== "") env[k] = v.trim()
-      else delete env[k]
+    // 环境变量：KEY 非空的行才保留；已知 KEY 值留空视为清除
+    const env: Record<string, string> = {}
+    for (const row of mcpDraft.envRows) {
+      const k = row.key.trim()
+      if (k) env[k] = row.value.trim()
     }
     next[name] =
       mcpDraft.kind === "http"
@@ -609,15 +617,27 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                         {skills.map((s) => (
                           <div
                             key={`${s.source}-${s.name}`}
-                            className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                            className={cn(
+                              "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
+                              s.disabled && "opacity-60",
+                            )}
                           >
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">/{s.name}</span>
-                                <Badge variant="outline">{s.source === "project" ? "项目" : "全局"}</Badge>
                               </div>
-                              <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">{s.description}</div>
+                              <div className="text-muted-foreground text-xs [overflow-wrap:anywhere] line-clamp-1">
+                                {s.description}
+                              </div>
                             </div>
+                            <Button
+                              variant={s.disabled ? "outline" : "secondary"}
+                              size="sm"
+                              className="shrink-0"
+                              onClick={() => void toggleSkill(s.name, !s.disabled)}
+                            >
+                              {s.disabled ? "禁用中" : "启用中"}
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -652,7 +672,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
 
                       {/* MCP 编辑弹窗：挂在列表上方不显眼，改成居中弹窗 */}
                       <Dialog open={mcpDraft !== null} onOpenChange={(o) => { if (!o) setMcpDraft(null) }}>
-                        <DialogContent className="max-h-[85dvh] overflow-y-auto p-5 sm:max-w-lg" showCloseButton>
+                        <DialogContent className="max-h-[85dvh] overflow-y-auto p-5 sm:max-w-2xl" showCloseButton>
                           <DialogHeader>
                             <DialogTitle>
                               {mcpDraft?.isNew ? "添加 MCP 服务器" : `编辑 ${mcpDraft?.name}`}
@@ -667,7 +687,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                   <Input
                                     value={mcpDraft.name}
                                     disabled={!mcpDraft.isNew}
-                                    onChange={(e) => setMcpDraft({ ...mcpDraft, name: e.target.value })}
+                                    onChange={(e) => {
+                                      const name = e.target.value
+                                      // 新建时输入已知插件名（agnes/mimo）→ 自动预生成环境变量行（模型带默认值）
+                                      const rows =
+                                        mcpDraft.isNew && mcpDraft.envRows.length === 0 && (MCP_ENV_KEYS[name] ?? []).length > 0
+                                          ? seedEnvRows(name, undefined)
+                                          : mcpDraft.envRows
+                                      setMcpDraft({ ...mcpDraft, name, envRows: rows })
+                                    }}
                                     placeholder="如 filesystem"
                                   />
                                 </div>
@@ -709,36 +737,61 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                     />
                                   </div>
                                   <div className="flex flex-col gap-1.5">
-                                    {(MCP_ENV_KEYS[mcpDraft.name] ?? []).length > 0 ? (
-                                      // 内置插件（agnes/mimo）：KEY 已知，直接给带名字的输入框，用户只填值
-                                      (MCP_ENV_KEYS[mcpDraft.name] ?? []).map((k) => (
-                                        <div key={k} className="flex items-center gap-2">
-                                          <Label className="text-muted-foreground w-36 shrink-0 font-mono text-xs">
-                                            {k}
-                                          </Label>
-                                          <Input
-                                            value={mcpDraft.knownEnv[k] ?? ""}
-                                            onChange={(e) =>
-                                              setMcpDraft({
-                                                ...mcpDraft,
-                                                knownEnv: { ...mcpDraft.knownEnv, [k]: e.target.value },
-                                              })
-                                            }
-                                            placeholder={MCP_ENV_PLACEHOLDERS[k] ?? "填入 Key（留空则未配置）"}
-                                          />
-                                        </div>
-                                      ))
-                                    ) : (
-                                      <>
-                                        <Label className="text-muted-foreground text-xs">环境变量（每行 KEY=VALUE）</Label>
-                                        <Textarea
-                                          value={mcpDraft.envText}
-                                          onChange={(e) => setMcpDraft({ ...mcpDraft, envText: e.target.value })}
-                                          className="min-h-20 font-mono text-xs"
-                                          placeholder={"API_KEY=xxx"}
+                                    <Label className="text-muted-foreground text-xs">环境变量</Label>
+                                    {mcpDraft.envRows.map((row, i) => (
+                                      <div key={i} className="flex items-center gap-2">
+                                        <Input
+                                          value={row.key}
+                                          onChange={(e) =>
+                                            setMcpDraft({
+                                              ...mcpDraft,
+                                              envRows: mcpDraft.envRows.map((r, j) =>
+                                                j === i ? { ...r, key: e.target.value } : r,
+                                              ),
+                                            })
+                                          }
+                                          placeholder="KEY"
+                                          className="w-44 shrink-0 font-mono text-xs"
                                         />
-                                      </>
-                                    )}
+                                        <Input
+                                          value={row.value}
+                                          onChange={(e) =>
+                                            setMcpDraft({
+                                              ...mcpDraft,
+                                              envRows: mcpDraft.envRows.map((r, j) =>
+                                                j === i ? { ...r, value: e.target.value } : r,
+                                              ),
+                                            })
+                                          }
+                                          placeholder={MCP_ENV_PLACEHOLDERS[row.key] ?? "值"}
+                                        />
+                                        <Button
+                                          variant="ghost"
+                                          size="icon-sm"
+                                          className="text-muted-foreground hover:text-destructive shrink-0"
+                                          onClick={() =>
+                                            setMcpDraft({
+                                              ...mcpDraft,
+                                              envRows: mcpDraft.envRows.filter((_, j) => j !== i),
+                                            })
+                                          }
+                                          title="删除此变量"
+                                        >
+                                          <Trash2Icon />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                    <div>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                          setMcpDraft({ ...mcpDraft, envRows: [...mcpDraft.envRows, { key: "", value: "" }] })
+                                        }
+                                      >
+                                        <PlusIcon /> 添加变量
+                                      </Button>
+                                    </div>
                                   </div>
                                 </>
                               ) : (
@@ -797,12 +850,10 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                 <CircleAlertIcon className="text-destructive size-4 shrink-0" />
                               )}
                               <span className="font-medium">{name}</span>
-                              <Badge variant="secondary">{cfg.url ? "http" : "stdio"}</Badge>
                               {cfg.disabled && <Badge variant="outline">已禁用</Badge>}
                               <span className="text-muted-foreground w-full text-xs sm:w-auto sm:flex-1">
                                 {st?.connected ? `${st.tool_count} 个工具` : st?.error ? st.error : ""}
-                              </span>
-                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              </span>                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                                 <Button
                                   variant="ghost"
                                   size="icon-sm"

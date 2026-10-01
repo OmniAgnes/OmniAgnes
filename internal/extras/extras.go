@@ -74,9 +74,15 @@ func (e *Extras) ExtraPrompt(projectDir string) string {
 		}
 	}
 	if e.Skills != nil {
-		if sks := e.Skills.For(projectDir); len(sks) > 0 {
+		enabled := make([]*skills.Skill, 0)
+		for _, sk := range e.Skills.For(projectDir) {
+			if !sk.Disabled {
+				enabled = append(enabled, sk)
+			}
+		}
+		if len(enabled) > 0 {
 			b.WriteString("\n\n## 可用技能\n")
-			b.WriteString(skills.Summary(sks))
+			b.WriteString(skills.Summary(enabled))
 		}
 	}
 	return b.String()

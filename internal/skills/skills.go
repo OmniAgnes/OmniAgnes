@@ -19,14 +19,17 @@ type Skill struct {
 	Description string `json:"description"`
 	Path        string `json:"path"`   // SKILL.md 绝对路径
 	Source      string `json:"source"` // global | project
+	Disabled    bool   `json:"disabled,omitempty"`
 }
 
 // Store 按目录加载技能。
 type Store struct {
 	GlobalDir string
+	// Disabled 记录被禁用的技能名（配置 disabled_skills）；nil 视为全部启用
+	Disabled map[string]bool
 }
 
-// For 返回某项目目录下的可用技能（全局 + 项目级，项目级覆盖同名）。
+// For 返回某项目目录下的可用技能（全局 + 项目级，项目级覆盖同名），含禁用标记。
 func (st *Store) For(projectDir string) []*Skill {
 	byName := map[string]*Skill{}
 	for _, dir := range []struct {
@@ -43,17 +46,21 @@ func (st *Store) For(projectDir string) []*Skill {
 	}
 	out := make([]*Skill, 0, len(byName))
 	for _, s := range byName {
+		s.Disabled = st.Disabled[s.Name]
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// Lookup 在项目目录下按名查找技能。
+// Lookup 在项目目录下按名查找技能（禁用的技能视为不存在）。
 func (st *Store) Lookup(projectDir, name string) (*Skill, bool) {
 	name = strings.TrimPrefix(name, "/")
 	for _, s := range st.For(projectDir) {
 		if s.Name == name {
+			if s.Disabled {
+				return nil, false
+			}
 			return s, true
 		}
 	}

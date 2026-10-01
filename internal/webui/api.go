@@ -1055,6 +1055,40 @@ func (s *server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"skills": skills})
 }
 
+// handleSkillToggle 启用/禁用技能，写进配置 disabled_skills 并同步到技能 Store。
+func (s *server) handleSkillToggle(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Name     string `json:"name"`
+		Disabled bool   `json:"disabled"`
+	}](r)
+	if err != nil {
+		writeErr(w, `请求体需为 {"name":"技能名","disabled":true}`, http.StatusBadRequest)
+		return
+	}
+	set := map[string]bool{}
+	for _, n := range s.cfg.DisabledSkills {
+		set[n] = true
+	}
+	if req.Disabled {
+		set[req.Name] = true
+	} else {
+		delete(set, req.Name)
+	}
+	s.cfg.DisabledSkills = nil
+	for n := range set {
+		s.cfg.DisabledSkills = append(s.cfg.DisabledSkills, n)
+	}
+	sort.Strings(s.cfg.DisabledSkills)
+	if err := s.cfg.Save(s.opts.ConfigPath); err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.opts.Extras != nil && s.opts.Extras.Skills != nil {
+		s.opts.Extras.Skills.Disabled = set
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
 // ---------- 目录直达（技能 / MCP 粘贴导入） ----------
 
 // openInFileManager 在系统文件管理器中打开目录或定位文件。

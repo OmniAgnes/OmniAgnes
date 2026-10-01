@@ -121,6 +121,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/skills/dirs", s.handleSkillDirs)
 	mux.HandleFunc("POST /api/skills/import", s.handleSkillImport)
 	mux.HandleFunc("POST /api/skills/open", s.handleSkillOpen)
+	mux.HandleFunc("POST /api/skills/toggle", s.handleSkillToggle)
 	mux.HandleFunc("GET /api/skills/{name}", s.handleSkillGet)
 	mux.HandleFunc("POST /api/skills", s.handleSkillCreate)
 	mux.HandleFunc("PUT /api/skills/{name}", s.handleSkillUpdate)

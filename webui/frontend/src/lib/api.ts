@@ -150,6 +150,14 @@ export const api = {
       json<{ dirs: SkillDirs }>(r),
     ),
 
+  /** 启用/禁用技能 */
+  skillToggle: (name: string, disabled: boolean) =>
+    fetch("/api/skills/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, disabled }),
+    }).then((r) => json<{ ok: boolean }>(r)),
+
   /** 在系统文件管理器中打开技能目录 */
   openSkillDir: (source: string, name?: string) =>
     fetch("/api/skills/open", {

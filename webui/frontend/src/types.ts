@@ -66,6 +66,7 @@ export interface SkillInfo {
   description: string
   path: string
   source: string
+  disabled?: boolean
 }
 
 /** token 用量统计（后端按 日期×模型 聚合） */
