@@ -157,8 +157,9 @@ export function Sidebar(props: SidebarProps) {
 
         {/* 桌面端没有顶栏品牌区，给「新建任务」留出顶部间距，别贴着标题栏 */}
         <div className={cn("px-3 pb-2", window.omniDesktop ? "pt-2.5" : "")}>
-          <Button className="w-full" onClick={() => onNewTask()}>
+          <Button variant="secondary" className="w-full justify-start" onClick={() => onNewTask()} title="新建任务（Ctrl + N）">
             <SquarePenIcon /> 新建任务
+            <kbd className="text-muted-foreground ml-auto text-[11px]">Ctrl + N</kbd>
           </Button>
         </div>
 

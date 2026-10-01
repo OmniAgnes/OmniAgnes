@@ -309,6 +309,20 @@ export default function App() {
     }
   }
 
+  // 全局快捷键：Ctrl+N（macOS 为 Cmd+N）新建任务；用 ref 持有最新的 newTask，避免每次渲染重绑监听
+  const newTaskRef = useRef(newTask)
+  newTaskRef.current = newTask
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault()
+        void newTaskRef.current()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
   // 点「任务」TAB：已有任务就选中最近的一条，没有则直接新建
   // tasks 已由后端按 UpdatedAt 降序返回，第一条即最近
   const focusTasksTab = async () => {

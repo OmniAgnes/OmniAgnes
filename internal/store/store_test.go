@@ -103,7 +103,7 @@ func TestProjectAddDedupeAndDelete(t *testing.T) {
 		t.Fatalf("项目字段不符: %+v", p1)
 	}
 
-	// 删除项目时，任务归属应被清空
+	// 删除项目为软删除：任务归属保留（任务隐藏），项目清单不再列出
 	ta, _ := s.CreateTask(p1.ID, "m", "build", "x")
 	if err := s.DeleteProject(p1.ID); err != nil {
 		t.Fatal(err)
@@ -112,12 +112,32 @@ func TestProjectAddDedupeAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ProjectID != "" {
-		t.Fatalf("删除项目后任务归属应为空: %q", got.ProjectID)
+	if got.ProjectID != p1.ID {
+		t.Fatalf("删除项目后任务归属应保留: %q", got.ProjectID)
 	}
 	projects, _ := s.ListProjects()
 	if len(projects) != 0 {
-		t.Fatalf("项目清单应为空: %d", len(projects))
+		t.Fatalf("项目清单应不含已删除项目: %d", len(projects))
+	}
+
+	// 重新添加同路径项目：复活原记录（同 ID），任务归属自动恢复
+	p3, err := s.AddProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.ID != p1.ID {
+		t.Fatalf("复活的项目应保持同一 ID: %s != %s", p3.ID, p1.ID)
+	}
+	got, err = s.GetTask(ta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProjectID != p3.ID {
+		t.Fatalf("重新添加后任务应恢复归属: %q", got.ProjectID)
+	}
+	projects, _ = s.ListProjects()
+	if len(projects) != 1 {
+		t.Fatalf("复活后项目清单应有 1 个: %d", len(projects))
 	}
 }
 

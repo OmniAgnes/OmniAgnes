@@ -42,6 +42,9 @@ type Project struct {
 	Name      string    `json:"name"`
 	Path      string    `json:"path"`
 	CreatedAt time.Time `json:"created_at"`
+	// Deleted 标记项目已被删除（软删除）：登记保留以便同路径重新添加时恢复，
+	// 任务归属不动，因此其任务在恢复前处于隐藏状态。
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // Store 是基于目录的存储。
@@ -242,6 +245,13 @@ func (s *Store) AddProject(path string) (*Project, error) {
 	}
 	for _, p := range projects {
 		if strings.EqualFold(p.Path, abs) {
+			// 同路径的已删除项目：复活原记录（ID 不变，原任务自动恢复归属）
+			if p.Deleted {
+				p.Deleted = false
+				if err := s.saveProjects(projects); err != nil {
+					return nil, err
+				}
+			}
 			return p, nil
 		}
 	}
@@ -253,14 +263,24 @@ func (s *Store) AddProject(path string) (*Project, error) {
 	return p, nil
 }
 
-// ListProjects 返回项目清单，按添加顺序。
+// ListProjects 返回未删除的项目清单，按添加顺序。
 func (s *Store) ListProjects() ([]*Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.loadProjects()
+	all, err := s.loadProjects()
+	if err != nil {
+		return nil, err
+	}
+	var out []*Project
+	for _, p := range all {
+		if !p.Deleted {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
-// GetProject 按 ID 查找项目。
+// GetProject 按 ID 查找未删除的项目。
 func (s *Store) GetProject(id string) (*Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -269,14 +289,15 @@ func (s *Store) GetProject(id string) (*Project, error) {
 		return nil, err
 	}
 	for _, p := range projects {
-		if p.ID == id {
+		if p.ID == id && !p.Deleted {
 			return p, nil
 		}
 	}
 	return nil, fmt.Errorf("项目不存在: %s", id)
 }
 
-// DeleteProject 删除项目登记；引用该项目的任务会被改为无项目归属（任务本身保留）。
+// DeleteProject 软删除项目登记：保留记录并标记 Deleted，任务归属不动——
+// 其任务随之隐藏；同路径再次添加项目时复活原记录，任务自动恢复。
 func (s *Store) DeleteProject(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,46 +305,16 @@ func (s *Store) DeleteProject(id string) error {
 	if err != nil {
 		return err
 	}
-	var kept []*Project
 	found := false
 	for _, p := range projects {
 		if p.ID == id {
 			found = true
-			continue
+			p.Deleted = true
+			break
 		}
-		kept = append(kept, p)
 	}
 	if !found {
 		return fmt.Errorf("项目不存在: %s", id)
 	}
-	if err := s.saveProjects(kept); err != nil {
-		return err
-	}
-	// 清空引用该项目的任务归属
-	entries, err := os.ReadDir(s.sessionsDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		path := filepath.Join(s.sessionsDir(), e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		t := &Task{}
-		if json.Unmarshal(data, t) != nil || t.ProjectID != id {
-			continue
-		}
-		t.ProjectID = ""
-		if data, err := json.MarshalIndent(t, "", "  "); err == nil {
-			_ = os.WriteFile(path, data, 0o644)
-		}
-	}
-	return nil
+	return s.saveProjects(projects)
 }
