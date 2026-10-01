@@ -168,7 +168,8 @@ export function ToolCallView({ run }: { run: ToolRun }) {
       {/* pr-2 而非 px-2：图标行左边不缩进，与 AI 回复正文左边缘对齐（用户要求） */}
       <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg py-1 pr-2 text-left text-xs transition-colors cursor-pointer">
         <Icon className="text-muted-foreground size-3.5 shrink-0" />
-        <span className="font-medium">{meta.label}</span>
+        {/* shrink-0：行宽不够时压缩摘要（省略号），操作名不允许被挤到换行 */}
+        <span className="font-medium shrink-0">{meta.label}</span>
         {summary && (
           <span className="text-muted-foreground min-w-0 truncate font-mono text-[11px]" title={summary}>
             {summary}
@@ -454,7 +455,7 @@ function DiffLines({ oldStr, newStr }: { oldStr: string; newStr: string }) {
           <span className="w-4 shrink-0 select-none text-center">
             {l.op === "add" ? "+" : l.op === "del" ? "-" : " "}
           </span>
-          <span className="min-w-0 flex-1 pr-2 whitespace-pre-wrap">{l.text || " "}</span>
+          <span className="min-w-0 flex-1 pr-2 whitespace-pre">{l.text || " "}</span>
         </div>
       ))}
     </div>
@@ -517,7 +518,10 @@ function CodeBlock({
   return (
     <pre
       className={cn(
-        "max-h-96 overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap",
+        // whitespace-pre（非 pre-wrap）：代码/bash 命令/输出不做折行，
+        // 超长行走容器自身的局部横向滚动（overflow-auto）；
+        // 否则全局 overflow-wrap:anywhere 会把命令从中间硬折行
+        "max-h-96 overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed whitespace-pre",
         tone === "error" && "border-destructive/40 bg-destructive/8 text-destructive",
         tone === "command" && "bg-muted/60",
         tone === "output" && "bg-muted/40",

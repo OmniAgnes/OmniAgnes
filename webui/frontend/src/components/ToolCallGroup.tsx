@@ -50,7 +50,7 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
           <WrenchIcon className="size-3.5 shrink-0" />
           <span className="shrink-0">工具调用</span>
           <span className="text-muted-foreground/80 tabular-nums">×{tools.length}</span>
-          <span className={cn("truncate text-[11px]", status.cls)}>{status.text}</span>
+          <span className={cn("min-w-0 truncate text-[11px]", status.cls)}>{status.text}</span>
           <ChevronDownIcon className="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
         </CollapsibleTrigger>
       </div>
