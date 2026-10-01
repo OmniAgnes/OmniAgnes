@@ -39,6 +39,8 @@ export interface ChatMessage {
   text?: string
   tool_calls?: ToolCallMsg[]
   tool_result?: ToolResultMsg
+  /** assistant 最终答复的工作耗时（毫秒）；持久化，重开会话后回复上仍显示「已工作」 */
+  elapsed_ms?: number
 }
 
 export interface TaskFull extends TaskMeta {

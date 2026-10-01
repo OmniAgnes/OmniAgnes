@@ -126,6 +126,9 @@ type Message struct {
 	Images     []Image     `json:"images,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolResult *ToolResult `json:"tool_result,omitempty"`
+	// ElapsedMs 是这一轮（最终回答）的工作耗时（毫秒），仅 assistant 最终答复上有值；
+	// 持久化后重启会话仍能在回复上显示「已工作」，不为 0 时省略。
+	ElapsedMs int64 `json:"elapsed_ms,omitempty"`
 }
 
 // NewTextMessage 便捷构造。

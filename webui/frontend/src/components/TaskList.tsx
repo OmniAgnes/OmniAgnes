@@ -1,11 +1,11 @@
 import { useState } from "react"
-import { ChevronDownIcon, ChevronUpIcon, Loader2Icon, XIcon } from "lucide-react"
+import { ChevronDownIcon, Loader2Icon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { TaskMeta } from "@/types"
 
-// 默认显示 5 条，超出折叠
+// 默认显示 5 条；「显示更多」每次再加载 5 条
 const VISIBLE = 5
 
 interface TaskListProps {
@@ -19,12 +19,13 @@ interface TaskListProps {
 }
 
 export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, emptyText }: TaskListProps) {
-  const [expanded, setExpanded] = useState(false)
+  // 当前展示的任务条数，点「显示更多」逐步 +VISIBLE，而不是一次全展开
+  const [visible, setVisible] = useState(VISIBLE)
   if (tasks.length === 0) {
     return <div className="text-muted-foreground px-2 py-1.5 text-xs">{emptyText ?? "暂无任务"}</div>
   }
-  const shown = expanded ? tasks : tasks.slice(0, VISIBLE)
-  const hidden = tasks.length - VISIBLE
+  const shown = tasks.slice(0, visible)
+  const hidden = tasks.length - visible
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -69,10 +70,10 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           variant="ghost"
           size="sm"
           className="text-muted-foreground justify-start text-[13px]"
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => setVisible((v) => Math.min(v + VISIBLE, tasks.length))}
         >
-          {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-          {expanded ? "收起" : "显示更多"}
+          <ChevronDownIcon />
+          显示更多
         </Button>
       )}
     </div>

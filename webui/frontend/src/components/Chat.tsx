@@ -9,6 +9,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  ClockIcon,
   CopyIcon,
   FolderIcon,
   GlobeIcon,
@@ -80,6 +81,8 @@ export interface ViewItem {
   thinkingActive?: boolean
   /** LLM 迭代轮次：一次提问会跑多轮，每轮 = 一段文本 + 若干工具调用 */
   round?: number
+  /** 本轮从用户发出到回复完成的工作耗时（毫秒）；仅当轮会话内存，不持久化 */
+  elapsedMs?: number
 }
 
 interface ChatProps {
@@ -93,6 +96,8 @@ interface ChatProps {
   thinking: boolean
   /** 上游瞬时故障的自动重试进度；非空时「处理中」指示器显示「重试 n/10」 */
   retry?: { attempt: number; max: number }
+  /** 当前正在回复（工作中）的起始时刻；回复生成中，末条回复上方显示动态「工作中 N 秒」 */
+  workSince?: number
   /** 处理中排队的消息（显示在输入框上方，可发送/编辑/删除） */
   queue: QueuedMsg[]
   /** seq 递增即把 text 回填输入框（队列「编辑」） */
@@ -135,6 +140,7 @@ export function Chat({
   streaming,
   thinking,
   retry,
+  workSince,
   queue,
   draftSeed,
   models,
@@ -164,6 +170,13 @@ export function Chat({
   const stickRef = useRef(true)
   // 是否离开底部：离开后显示「回到底部」悬浮按钮
   const [notBottom, setNotBottom] = useState(false)
+  // 「工作中 N 秒」动态跳表：回复生成期间每秒刷新一次
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (workSince == null) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [workSince])
   // 待发送的附件：随下一条消息一起上传发出
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
 
@@ -331,36 +344,54 @@ export function Chat({
       }
     }
 
-    return blocks.map((b, bi) => (
-      <div key={b.user?.id ?? `blk-${bi}`} className="flex flex-col gap-4">
-        {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} onEdit={onEditMessage} />}
+    return blocks.map((b, bi) => {
+      // 本次提问的工作耗时：生成中的那段固定显示动态「工作中 N 秒」在最上方，
+      // 其余已结束的段在其顶部固定显示定格的「已工作 N 秒」。
+      const live = workSince != null && bi === blocks.length - 1
+      let elapsedMs: number | undefined
+      if (!live) {
+        for (let i = b.replies.length - 1; i >= 0; i--) {
+          if (b.replies[i].elapsedMs != null) {
+            elapsedMs = b.replies[i].elapsedMs
+            break
+          }
+        }
+      }
+      return (
+        <div key={b.user?.id ?? `blk-${bi}`} className="flex flex-col gap-4">
+          {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} onEdit={onEditMessage} />}
 
-        {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
-            不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。
-            注意：只渲染有文本的回复——中间轮次（纯工具调用）的空 assistant 消息
-            若也渲染成 div，每个都会吃一个 gap，多轮时空白越叠越大。 */}
-        {(b.tools.length > 0 || b.replies.some((r) => r.text || r.thinking || r.thinkingActive)) && (
-          <div className="flex flex-col gap-1.5">
-            {b.tools.length > 0 && (
-              <ToolCallGroup tools={b.tools} onOpenQuestion={() => setQClosed(false)} />
-            )}
-            {b.replies
-              .filter((r) => r.text || r.thinking || r.thinkingActive || r.media?.length)
-              .map((item) => (
-                <div key={item.id} className="flex flex-col gap-1.5">
-                  {(item.thinking || item.thinkingActive) && (
-                    <ThinkingBlock text={item.thinking} active={item.thinkingActive} />
-                  )}
-                  {item.text && <Markdown text={item.text} />}
-                  {/* 本轮产出的多媒体（生成图片/视频/音频）：在最终回答里集中展示 */}
-                  {item.media && item.media.length > 0 && <MediaList atts={item.media} />}
-                  {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
-                </div>
-              ))}
-          </div>
-        )}
-      </div>
-    ))
+          {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
+              不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。
+              注意：只渲染有文本的回复——中间轮次（纯工具调用）的空 assistant 消息
+              若也渲染成 div，每个都会吃一个 gap，多轮时空白越叠越大。 */}
+          {(b.tools.length > 0 || b.replies.some((r) => r.text || r.thinking || r.thinkingActive)) && (
+            <div className="flex flex-col gap-1.5">
+              {/* 耗时标签固定在本段 AI 回复的最上方：下方内容流式更新/追加时它始终在最顶 */}
+              {(live || elapsedMs != null) && (
+                <ElapsedLabel live={live} liveSince={workSince} now={now} elapsedMs={elapsedMs} />
+              )}
+              {b.tools.length > 0 && (
+                <ToolCallGroup tools={b.tools} onOpenQuestion={() => setQClosed(false)} />
+              )}
+              {b.replies
+                .filter((r) => r.text || r.thinking || r.thinkingActive || r.media?.length)
+                .map((item) => (
+                  <div key={item.id} className="flex flex-col gap-1.5">
+                    {(item.thinking || item.thinkingActive) && (
+                      <ThinkingBlock text={item.thinking} active={item.thinkingActive} />
+                    )}
+                    {item.text && <Markdown text={item.text} />}
+                    {/* 本轮产出的多媒体（生成图片/视频/音频）：在最终回答里集中展示 */}
+                    {item.media && item.media.length > 0 && <MediaList atts={item.media} />}
+                    {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )
+    })
   }
 
   return (
@@ -582,6 +613,48 @@ export function Chat({
       </div>
     </div>
   )
+}
+
+/** 格式化工作耗时：<1 分钟只显示秒，>=1 分钟按「分+秒」，>=1 小时按「小时+分+秒」。 */
+function fmtElapsed(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) return `${h}小时${m}分钟${sec}秒`
+  if (m > 0) return `${m}分钟${sec}秒`
+  return `${sec}秒`
+}
+
+/** 回复上方的耗时标签：live 时为生成中的动态「工作中 N 秒」（每秒跳变），否则显示定格的「已工作 N 秒」。 */
+function ElapsedLabel({
+  live,
+  liveSince,
+  now,
+  elapsedMs,
+}: {
+  live: boolean
+  liveSince?: number
+  now: number
+  elapsedMs?: number
+}) {
+  if (live && liveSince != null) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-1 pt-1 text-xs">
+        <ClockIcon className="size-3.5 shrink-0" />
+        <span>工作中 {fmtElapsed(Math.max(0, now - liveSince))}</span>
+      </div>
+    )
+  }
+  if (elapsedMs != null) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-1 pt-1 text-xs">
+        <ClockIcon className="size-3.5 shrink-0" />
+        <span>已工作 {fmtElapsed(elapsedMs)}</span>
+      </div>
+    )
+  }
+  return null
 }
 
 /** 处理中动画：固定在消息流最末尾，跟着工具调用组下方。

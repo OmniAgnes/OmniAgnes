@@ -295,6 +295,15 @@ func contextWindow(history []llm.Message, keepTurns int) []llm.Message {
 	return history[start:]
 }
 
+// elapsedMs 返回整轮工作耗时（毫秒）。仅最终答复（无工具调用）记录；
+// 中间的工具轮返回 0，配合 json:"omitempty" 不落盘。
+func elapsedMs(tcs []llm.ToolCall, start time.Time) int64 {
+	if len(tcs) != 0 {
+		return 0
+	}
+	return time.Since(start).Milliseconds()
+}
+
 // Execute 在已 Prepare 的上下文上运行迭代循环。
 // 整轮执行期间持有 mu：TUI 与 webui 的并发请求将在此排队。
 func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
@@ -308,6 +317,8 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 	var totalUsage llm.Usage
 	// 本次提问产出的全部多媒体：回答结束时统一落盘并集中发给 UI 展示
 	var runMedia []llm.Attachment
+	// 本提问开始处理的时刻：结束时写出最终回复的工作耗时（毫秒）供持久化展示
+	turnStart := time.Now()
 
 	for i := 0; i < a.maxIter; i++ {
 		round := i // 本轮序号，供 UI 分组
@@ -346,6 +357,8 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			Role:      llm.RoleAssistant,
 			Text:      resp.Content,
 			ToolCalls: resp.ToolCalls,
+			// 最终答复（无工具调用）记录整轮工作耗时，持久化后重启仍可显示「已工作」
+			ElapsedMs: elapsedMs(resp.ToolCalls, turnStart),
 		})
 
 		if len(resp.ToolCalls) == 0 {
