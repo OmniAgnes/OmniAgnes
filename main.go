@@ -84,8 +84,13 @@ func main() {
 	if err := skills.SeedBuiltIn(config.DefaultSkillsDir()); err != nil {
 		fmt.Fprintf(os.Stderr, "omni: 内置技能同步失败: %v\n", err)
 	}
+	// 技能禁用名单 → 集合，供 Store 过滤
+	disabled := map[string]bool{}
+	for _, n := range cfg.DisabledSkills {
+		disabled[n] = true
+	}
 	ext := &extras.Extras{
-		Skills:     &skills.Store{GlobalDir: config.DefaultSkillsDir()},
+		Skills:     &skills.Store{GlobalDir: config.DefaultSkillsDir(), Disabled: disabled},
 		MemoryPath: config.DefaultMemoryPath(),
 	}
 	reg := tools.NewRegistry(&tools.Env{
