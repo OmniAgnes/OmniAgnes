@@ -385,13 +385,12 @@ export function Chat({
         {notBottom && (
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
             onClick={jumpToBottom}
             title="回到底部"
-            className="bg-card text-muted-foreground hover:text-foreground absolute right-4 bottom-3 z-20 rounded-full border shadow-md md:right-6"
+            className="bg-card text-muted-foreground hover:text-foreground absolute left-1/2 -translate-x-1/2 bottom-3 z-20 rounded-full border shadow-md"
           >
             <ChevronDownIcon />
-            回到底部
           </Button>
         )}
       </div>
