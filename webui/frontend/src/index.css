@@ -3,6 +3,13 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 内容自动换行：窗口/右侧面板变窄时，不可断行的长内容（URL、路径、工具输出长行、
+   表格单元格等）允许在任意位置断行，避免聊天区出现横向滚动条。
+   white-space: pre 的代码块不受影响（不换行，走自身 overflow-x 局部滚动）。 */
+body {
+  overflow-wrap: anywhere;
+}
+
 /* shadcn/ui 设计变量（neutral 基调，light/dark） */
 :root {
   --radius: 0.625rem;
