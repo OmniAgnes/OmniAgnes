@@ -2,6 +2,42 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.0.4 (2026-10-01)
+
+### ✨ 新功能
+
+**媒体生成插件（内置 MCP）**
+- 新增 `agnes` 插件：`generate_image`（agnes-image-2.5-flash / 2.1-flash，文生图与图生图，参考图支持本地文件转 data URI 直传）、`generate_video`（agnes-video-2.5-flash / 2.5-flash，text / keyframe / reference 三模式，本地素材转 data URI，异步轮询直到出片）
+- 新增 `mimo` 插件：`tts` 语音合成（mimo-v2.5-tts / voicedesign / voiceclone，预置音色、风格标签、唱歌模式）
+- 插件支持环境变量固定默认模型（`AGNES_IMAGE_MODEL` / `AGNES_VIDEO_MODEL` / `MIMO_TTS_MODEL`），在插件编辑弹窗里按名填写即可
+- 内置 MCP 自动注册：启动时扫描工作目录 `.omni/mcp`、数据目录 `~/.local/share/omni/mcp` 与内核同目录，构建产物放进去即生效，无需手动导入
+- 发布流程按平台（Windows/macOS × x64/arm64）交叉编译六个内置插件打进安装包，并断言包内插件齐全；exe 一律不入库
+
+**多模态展示**
+- 工具产出的图片 / 视频 / 音频在回答结束时集中展示：图片可点击放大、视频音频内联播放、标注本地保存路径
+- 生成媒体统一落盘 `<项目>/.omni/download/`，远程 URL 自动下载为本地文件；WAV 头长度自动修正，修复音频时长不显示
+- 生成的媒体不进模型上下文（省 token）；截图 / 读图工具保留视觉分析通道
+- 历史任务重新打开时媒体照常显示（从工具结果附件恢复）
+- 修复 MCP 插件回传图片的 base64 编码错误（OpenRouter 400）
+
+**项目记忆**
+- 项目级记忆：`<项目>/.omni/memory/` 下每日记忆（`YYYY-MM-DD.md`，带时间戳追加）与总记忆（`MEMORY.md`）
+- `memory` 工具升级三档 scope：day（项目今日，默认）/ total（项目总记忆）/ global（全局记忆），系统提示词自动注入三档内容
+- 项目技能（`.omni/skills`）与项目 MCP（`.omni/mcp`）照常加载；设置页保持只展示全局，项目级静默生效
+
+### 🎨 界面与交互
+
+- MCP 服务器编辑从列表上方的内嵌表单改为居中弹窗
+- 已知插件（agnes / mimo）的环境变量在编辑弹窗里按键名生成输入框，用户只填值；缺 Key 时列表里给出琥珀色提醒
+- 模型 API Key 输入框改为明文显示
+- 媒体展示去掉边框并左对齐
+
+### 🔧 其他
+
+- 截图工具跨平台梳理：macOS 用系统自带 `screencapture`，Linux 依次降级 grim / import / scrot / gnome-screenshot / spectacle；窗口级截图仅 Windows 支持，其他平台自动退化为全屏
+
+---
+
 ## v0.0.3 (2026-09-30)
 
 ### ✨ 新功能

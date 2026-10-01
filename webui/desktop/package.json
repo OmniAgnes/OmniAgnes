@@ -1,17 +1,17 @@
 {
-  "name": "omni-desktop",
-  "private": true,
-  "version": "0.0.3",
-  "description": "omni 桌面版：Electron 壳 + omni --web 内核",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "check:bin": "node check-bin.mjs",
-    "dist": "npm run check:bin && electron-builder --win --publish never",
-    "dist:mac": "npm run check:bin && electron-builder --mac --publish never"
-  },
-  "devDependencies": {
-    "electron": "^38.0.0",
-    "electron-builder": "^26.15.3"
-  }
+    "name":  "omni-desktop",
+    "private":  true,
+    "version":  "0.0.4",
+    "description":  "omni 妗岄潰鐗堬細Electron 澹?+ omni --web 鍐呮牳",
+    "main":  "main.js",
+    "scripts":  {
+                    "start":  "electron .",
+                    "check:bin":  "node check-bin.mjs",
+                    "dist":  "npm run check:bin \u0026\u0026 electron-builder --win --publish never",
+                    "dist:mac":  "npm run check:bin \u0026\u0026 electron-builder --mac --publish never"
+                },
+    "devDependencies":  {
+                            "electron":  "^38.0.0",
+                            "electron-builder":  "^26.15.3"
+                        }
 }
