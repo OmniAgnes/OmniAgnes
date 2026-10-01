@@ -596,10 +596,15 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		a.SetMode(agent.Mode(req.Mode))
 		t.Mode = req.Mode
 	}
-	// 每轮使用界面记住的模型（设置里已持久化）
-	if req.Model != "" && s.cfg.ProviderForModel(req.Model) != nil {
-		a.SetModel(req.Model)
-		t.Model = req.Model
+	// 每轮使用界面记住的模型（设置里已持久化）；
+	// 模型可能属于另一个 provider，须连 provider 一起切，否则模型名发错家被 400
+	if req.Model != "" {
+		if p := s.cfg.ProviderForModel(req.Model); p != nil {
+			if prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey()}); err == nil {
+				a.SetProvider(prov, req.Model)
+				t.Model = req.Model
+			}
+		}
 	}
 	// 标题来源：优先正文；只发附件时用首个附件的文件名，避免生成「未命名任务」
 	titleSeed := text

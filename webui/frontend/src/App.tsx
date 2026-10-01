@@ -604,6 +604,13 @@ export default function App() {
           }
           if (it.thinkingActive) it.thinkingActive = false
         }
+        // 上游正常结束却什么都没回（文本/工具/错误全空）：给个兜底提示，避免「加载一下就消失」
+        const last = rr.items.at(-1)
+        if (!ac.signal.aborted && last?.role === "assistant" && !last.text && !last.error && last.tools.length === 0 && !last.media?.length) {
+          const items = [...rr.items]
+          items[items.length - 1] = { ...last, error: "模型没有返回任何内容（上游可能响应为空），请重试或换个模型" }
+          rr.items = items
+        }
         // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
         rr.roundBase = Math.max(rr.roundBase, baseAtSend + rr.lastRound + 1)
         rr.streaming = false
@@ -853,6 +860,7 @@ export default function App() {
           onQueueDispatch={(qid) => void dispatchQueued(qid)}
           onQueueEdit={editQueued}
           onQueueRemove={removeQueued}
+          onEditMessage={(t) => setDraftSeed((s) => ({ text: t, seq: s.seq + 1 }))}
           onApprove={(id, allow) => void approve(id, allow)}
           onAnswer={(id, text) => void answer(id, text)}
           onModeChange={changeMode}

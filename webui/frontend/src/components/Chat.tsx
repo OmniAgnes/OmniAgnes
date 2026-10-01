@@ -111,6 +111,8 @@ interface ChatProps {
   onQueueEdit: (id: number) => void
   /** 队列项：删除 */
   onQueueRemove: (id: number) => void
+  /** 历史用户消息：回填输入框，编辑（或原样）后重发 */
+  onEditMessage: (text: string) => void
   onApprove: (id: string, allow: boolean) => void
   /** 回答一次 ask 工具的提问 */
   onAnswer: (id: string, answer: string) => void
@@ -141,6 +143,7 @@ export function Chat({
   onQueueDispatch,
   onQueueEdit,
   onQueueRemove,
+  onEditMessage,
   onApprove,
   onAnswer,
   onModeChange,
@@ -302,7 +305,7 @@ export function Chat({
 
     return blocks.map((b, bi) => (
       <div key={b.user?.id ?? `blk-${bi}`} className="flex flex-col gap-4">
-        {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} />}
+        {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} onEdit={onEditMessage} />}
 
         {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
             不吃段内的 gap-4 —— 否则工具行和它下面的回复之间会留出很大空白。
@@ -561,8 +564,8 @@ function ThinkingBlock({ text, active }: { text?: string; active?: boolean }) {
 const COLLAPSE_CHARS = 300
 const COLLAPSE_LINES = 8
 
-/** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；复制按钮悬停浮动到气泡下方右侧，不占布局空间；附件以标签展示。 */
-function UserBubble({ text, attachments }: { text: string; attachments?: string[] }) {
+/** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；悬停浮动显示 编辑/复制 按钮，不占布局空间；附件以标签展示。 */
+function UserBubble({ text, attachments, onEdit }: { text: string; attachments?: string[]; onEdit: (text: string) => void }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const long = text.length > COLLAPSE_CHARS || text.split("\n").length > COLLAPSE_LINES
@@ -592,7 +595,7 @@ function UserBubble({ text, attachments }: { text: string; attachments?: string[
   const copyBtn = (
     <span
       className={cn(
-        "group/copy absolute z-10 opacity-0 transition-opacity",
+        "group/copy absolute z-10 flex items-center gap-0.5 opacity-0 transition-opacity",
         "hover:opacity-100 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100",
         long ? "top-1/2 right-full -translate-y-1/2 mr-0.5" : "top-full right-0 mt-0.5",
       )}
@@ -602,6 +605,15 @@ function UserBubble({ text, attachments }: { text: string; attachments?: string[
         aria-hidden
         className={cn("absolute", long ? "-right-1 inset-y-0 w-1" : "-top-1 inset-x-0 h-1")}
       />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto relative shadow-sm"
+        onClick={() => onEdit(text)}
+        title="编辑后重发（原样发送也可以）"
+      >
+        <PencilLineIcon />
+      </Button>
       <Button
         variant="ghost"
         size="icon-sm"
