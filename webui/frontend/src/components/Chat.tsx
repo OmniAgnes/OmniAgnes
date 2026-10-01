@@ -345,9 +345,10 @@ export function Chat({
     }
 
     return blocks.map((b, bi) => {
-      // 本次提问的工作耗时：生成中的那段固定显示动态「工作中 N 秒」在最上方，
+      // 本次提问的工作耗时：显示中的那段（该任务仍在本团流式生成）顶部固定显示动态「工作中 N 秒」，
       // 其余已结束的段在其顶部固定显示定格的「已工作 N 秒」。
-      const live = workSince != null && bi === blocks.length - 1
+      // 必须同时满足 streaming——切到已完成/不活动的任务时不会误显示「工作中」。
+      const live = streaming && workSince != null && bi === blocks.length - 1
       let elapsedMs: number | undefined
       if (!live) {
         for (let i = b.replies.length - 1; i >= 0; i--) {

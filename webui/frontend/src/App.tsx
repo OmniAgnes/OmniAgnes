@@ -51,6 +51,8 @@ interface RunState {
   thinking: boolean
   /** 上游瞬时故障的自动重试进度；非空时「处理中」指示器显示「重试 n/10」 */
   retry?: { attempt: number; max: number }
+  /** 本任务当前工作（回复生成中）的起始时刻；按任务持有，切任务互不串扰 */
+  workSince?: number
   roundBase: number
   lastRound: number
   queue: QueuedMsg[]
@@ -98,8 +100,6 @@ export default function App() {
   const runPromises = useRef<Record<string, Promise<void>>>({})
   const [, setRunsV] = useState(0)
   const bump = useCallback(() => setRunsV((v) => v + 1), [])
-  // 当前正在工作（回复生成中）的起始时刻；供 Chat 显示动态「工作中 N 秒」
-  const [workSince, setWorkSince] = useState<number | undefined>()
 
   const idRef = useRef(0)
   const queueSeq = useRef(0)
@@ -591,10 +591,9 @@ export default function App() {
     const ac = new AbortController()
     abortRefs.current[tid] = ac
     const baseAtSend = r.roundBase
-    // 本轮开始工作的时刻：结束时据此算出「已工作」耗时；
-    // 同时用 state 暴露给 Chat，回复生成中渲染动态的「工作中 N 秒」
-    const sentAt = Date.now()
-    setWorkSince(sentAt)
+    // 本轮开始工作的时刻：记录到本任务上，结束时据此算出「已工作」耗时；
+    // 由 Chat 在本任务仍在流式生成时渲染动态的「工作中 N 秒」
+    r.workSince = Date.now()
     r.streaming = true
     r.thinking = true
     r.lastRound = -1
@@ -662,14 +661,14 @@ export default function App() {
         // 记录本轮「已工作」耗时：写到本轮最后一条 assistant 回复上，UI 在回复上方显示
         for (let i = rr.items.length - 1; i >= 0; i--) {
           if (rr.items[i].role === "assistant") {
-            rr.items[i].elapsedMs = Date.now() - sentAt
+            rr.items[i].elapsedMs = rr.workSince != null ? Date.now() - rr.workSince : undefined
             break
           }
         }
         rr.streaming = false
         rr.thinking = false
         rr.retry = undefined
-        setWorkSince(undefined)
+        rr.workSince = undefined
         bump()
       }
       await refreshTasks()
@@ -913,7 +912,7 @@ export default function App() {
           streaming={run?.streaming ?? false}
           thinking={run?.thinking ?? false}
           retry={run?.retry}
-          workSince={workSince}
+          workSince={run?.workSince}
           queue={run?.queue ?? []}
           draftSeed={draftSeed}
           models={modelGroups}

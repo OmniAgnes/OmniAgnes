@@ -431,6 +431,11 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 				})
 				continue
 			}
+			// 生成类工具产出了媒体（图/视频/音频）：提醒模型这些媒体会随最终回答
+			// 集中展示给用户，正文不要再贴一遍 markdown/链接，避免重复显示。
+			if len(media) > 0 {
+				out += "\n\n[系统] 以上媒体已生成，将随你的最终回答集中展示给用户；回复正文里不要再插入这些图片/视频/音频的 markdown 或链接。"
+			}
 			emit(Event{Type: EventToolOutput, Tool: &tc, Output: out, Attachments: media, Round: round})
 			emit(Event{Type: EventToolEnd, Tool: &tc, Round: round})
 			runMedia = append(runMedia, media...)
