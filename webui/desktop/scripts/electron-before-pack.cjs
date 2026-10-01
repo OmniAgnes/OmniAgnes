@@ -18,7 +18,7 @@
 // 因此必须改写源（bin/omni(.exe)），不能写 appOutDir——写了也会被随后的 extraResources 拷贝盖掉。
 //
 // 用 .cjs 不用 .mjs：electron-builder 用 require() 加载钩子文件。
-const { copyFileSync, existsSync, chmodSync } = require("node:fs")
+const { copyFileSync, existsSync, statSync, chmodSync, readdirSync } = require("node:fs")
 const { join } = require("node:path")
 
 /**
@@ -64,4 +64,20 @@ module.exports = async function beforePack(context) {
     chmodSync(target, 0o755)
   }
   console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} 内核：${staging} → ${target}`)
+
+  // 内置 MCP 插件：与内核同套路。CI 把各架构插件编进备料目录 bin/mcp-<平台>-<架构>/，
+  // 这里按目标架构把插件（pdf.exe、agnes.exe 等）覆盖拷到 bin/ 根目录——
+  // extraResources 随后把 bin/ 打进 resources/bin，内核按"自身同目录"自动注册它们。
+  const mcpStaging = join(binDir, `mcp-${platform.pkg}-${arch}`)
+  if (!existsSync(mcpStaging)) {
+    console.log(`[beforePack] 无 MCP 插件备料 ${mcpStaging}，沿用 bin/ 现有插件（本地打包）`)
+    return
+  }
+  for (const name of readdirSync(mcpStaging)) {
+    const src = join(mcpStaging, name)
+    if (!statSync(src).isFile()) continue
+    copyFileSync(src, join(binDir, name))
+    if (context.electronPlatformName === "darwin") chmodSync(join(binDir, name), 0o755)
+  }
+  console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} MCP 插件（${mcpStaging} → bin/）`)
 }

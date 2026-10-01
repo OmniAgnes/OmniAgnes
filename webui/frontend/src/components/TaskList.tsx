@@ -32,7 +32,8 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
         <div
           key={t.id}
           className={cn(
-            "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-xs",
+            // 13px：比默认 text-xs(12) 明显大一号，又不跟文件夹名的 text-sm(14) 抢视觉
+            "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-[13px]",
             activeTaskId === t.id && "bg-sidebar-accent",
           )}
         >
@@ -67,7 +68,7 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
         <Button
           variant="ghost"
           size="sm"
-          className="text-muted-foreground justify-start"
+          className="text-muted-foreground justify-start text-[13px]"
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}

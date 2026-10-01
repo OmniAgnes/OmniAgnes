@@ -194,18 +194,26 @@ function Flyout({
     }
   }, [models, model])
 
-  // 垂直定位：选中行中心对齐二级面板，clamp 进一级面板可视高度内
+  // 垂直定位：二级中心对齐一级选中行；按视口 clamp（不能贴死一级面板——
+  // 面板比二级矮时按面板 clamp 会把二级压回顶部，用户实测踩过）
   useLayoutEffect(() => {
     const list = listRef.current
-    if (!list) return
-    if (anchor) {
-      const listH = list.offsetHeight || 0
-      const center = anchor.offsetTop + anchor.offsetHeight / 2 - listH / 2
-      const max = Math.max(0, (list.parentElement?.clientHeight ?? listH) - listH)
-      setTop(Math.max(0, Math.min(center, max)))
-    } else {
+    const fly = list?.parentElement // 二级面板根（absolute，offsetParent = 外层弹层容器）
+    if (!list || !fly) return
+    if (!anchor) {
       setTop(0)
+      return
     }
+    const h = list.offsetHeight
+    const a = anchor.getBoundingClientRect()
+    // 期望：选中行中心 = 二级中心
+    let vpTop = a.top + a.height / 2 - h / 2
+    // 视口内留 8px 边距
+    vpTop = Math.max(8, Math.min(vpTop, window.innerHeight - h - 8))
+    // 视口坐标 → 相对 offsetParent（外层弹层容器，可能与一级面板同顶，dropUp 时不同）
+    const op = fly.offsetParent as HTMLElement | null
+    const opTop = op ? op.getBoundingClientRect().top : 0
+    setTop(vpTop - opTop)
   }, [anchor, models])
 
   return (

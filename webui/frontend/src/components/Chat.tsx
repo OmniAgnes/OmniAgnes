@@ -36,7 +36,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Textarea } from "@/components/ui/textarea"
 import { todosFromJson, type TodoItem } from "@/lib/todo"
 import { cn } from "@/lib/utils"
-import type { SkillInfo } from "@/types"
+import type { AttachmentInfo, SkillInfo } from "@/types"
+import { MediaList } from "./ToolCallView"
 
 const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
@@ -72,6 +73,8 @@ export interface ViewItem {
   error?: string
   /** 该消息随带的附件文件名（仅用户消息，展示用） */
   attachments?: string[]
+  /** 本轮产出的多媒体（生成图片/视频/音频），在回答里集中展示 */
+  media?: AttachmentInfo[]
   /** 模型思考/推理内容（本轮；不持久化，刷新后消失） */
   thinking?: string
   /** 本轮还在流式输出思考内容 */
@@ -309,13 +312,15 @@ export function Chat({
           <div className="flex flex-col gap-1.5">
             {b.tools.length > 0 && <ToolCallGroup tools={b.tools} />}
             {b.replies
-              .filter((r) => r.text || r.thinking || r.thinkingActive)
+              .filter((r) => r.text || r.thinking || r.thinkingActive || r.media?.length)
               .map((item) => (
                 <div key={item.id} className="flex flex-col gap-1.5">
                   {(item.thinking || item.thinkingActive) && (
                     <ThinkingBlock text={item.thinking} active={item.thinkingActive} />
                   )}
                   {item.text && <Markdown text={item.text} />}
+                  {/* 本轮产出的多媒体（生成图片/视频/音频）：在最终回答里集中展示 */}
+                  {item.media && item.media.length > 0 && <MediaList atts={item.media} />}
                   {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
                 </div>
               ))}
@@ -523,7 +528,7 @@ export function Chat({
 /** 处理中动画：固定在消息流最末尾，跟着工具调用组下方 */
 function ProcessingIndicator() {
   return (
-    <div className="text-muted-foreground flex items-center gap-2 px-2 py-1 text-sm">
+    <div className="text-muted-foreground flex items-center gap-2 py-1 pr-2 text-sm">
       <Loader2Icon className="size-3.5 shrink-0 animate-spin" />
       <span>处理中…</span>
     </div>
@@ -536,7 +541,7 @@ function ThinkingBlock({ text, active }: { text?: string; active?: boolean }) {
   const [open, setOpen] = useState(false)
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      <CollapsibleTrigger className="group text-muted-foreground hover:bg-muted/50 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors cursor-pointer">
+      <CollapsibleTrigger className="group text-muted-foreground hover:bg-muted/50 flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-xs transition-colors cursor-pointer">
         <BrainIcon className="size-3.5 shrink-0" />
         <span className={cn(active && "opacity-80")}>{active ? "思考中…" : "思考"}</span>
         <ChevronRightIcon className="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />

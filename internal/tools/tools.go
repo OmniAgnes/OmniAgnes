@@ -29,6 +29,10 @@ type Tool struct {
 	Parameters  map[string]any
 	ReadOnly    bool
 	Execute     func(ctx context.Context, args map[string]any, env *Env) (string, error)
+	// ExecuteMedia 可选：产出多媒体的工具（截图/读图/生图/生视频/语音合成）用它
+	// 把图片、视频、音频一并交给 UI 渲染。设置后 Registry.ExecuteWithMedia 优先走这里。
+	// 其中图片类附件还会作为多模态输入送进模型（见 agent）。
+	ExecuteMedia func(ctx context.Context, args map[string]any, env *Env) (string, []llm.Attachment, error)
 }
 
 // Registry 持有全部工具。
@@ -112,18 +116,29 @@ func (r *Registry) IsReadOnly(name string) bool {
 // Execute 带安全检查执行一次工具调用。
 // 返回 (输出, 是否为工具本身失败的标志，直接由 Execute 返回 error 表示失败)
 func (r *Registry) Execute(ctx context.Context, name string, args map[string]any, forceReadOnly bool) (string, error) {
+	out, _, err := r.ExecuteWithMedia(ctx, name, args, forceReadOnly)
+	return out, err
+}
+
+// ExecuteWithMedia 执行工具并一并返回多媒体附件（截图/读图/生图类工具用）。
+// 大多数工具不产多媒体，此时 media 为 nil，行为与 Execute 完全一致。
+func (r *Registry) ExecuteWithMedia(ctx context.Context, name string, args map[string]any, forceReadOnly bool) (string, []llm.Attachment, error) {
 	t, err := r.Lookup(name)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if forceReadOnly && !t.ReadOnly {
-		return "", fmt.Errorf("工具 %s 在 plan（只读）模式下不可用", name)
+		return "", nil, fmt.Errorf("工具 %s 在 plan（只读）模式下不可用", name)
+	}
+	// 产多媒体的工具走可选通道
+	if t.ExecuteMedia != nil {
+		return t.ExecuteMedia(ctx, args, r.env)
 	}
 	out, err := t.Execute(ctx, args, r.env)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return out, nil
+	return out, nil, nil
 }
 
 // Definitions 返回全部工具定义（llm.ToolDef）。
@@ -154,6 +169,29 @@ func (r *Registry) ReadOnlyDefinitions() []llm.ToolDef {
 	return defs
 }
 
+// windowsReservedNames 是 Windows 的保留设备名：这些名字无法作为普通文件/目录名使用，
+// 写入时会静默落到设备上（历史上 `> nul` 就会凭空造出一个名为 nul 的空文件）。
+// 匹配时忽略大小写与扩展名（nul / NUL / nul.txt 都算）。
+var windowsReservedNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// checkReservedName 拒绝 Windows 保留设备名路径。返回可读的错误说明。
+func checkReservedName(abs string) error {
+	base := filepath.Base(abs)
+	if dot := strings.IndexByte(base, '.'); dot > 0 {
+		base = base[:dot] // 去掉扩展名：nul.txt同样非法
+	}
+	if windowsReservedNames[strings.ToLower(base)] {
+		return fmt.Errorf("路径名 %q 是 Windows 保留设备名，不能作为文件使用；丢弃命令输出请用 /dev/null，临时产物请写到 .omni/log/", filepath.Base(abs))
+	}
+	return nil
+}
+
 // resolvePath 将相对/绝对路径解析为 cwd 内的绝对路径；unsafe 时允许越界。
 func resolvePath(cwd, p string, unsafe bool) (string, error) {
 	if p == "" {
@@ -174,6 +212,9 @@ func resolvePath(cwd, p string, unsafe bool) (string, error) {
 		abs = filepath.Join(cwd, p)
 	}
 	abs = filepath.Clean(abs)
+	if err := checkReservedName(abs); err != nil {
+		return "", err
+	}
 	if !unsafe {
 		base := filepath.Clean(cwd)
 		rel, err := filepath.Rel(base, abs)

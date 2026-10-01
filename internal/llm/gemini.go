@@ -76,6 +76,13 @@ type gemPart struct {
 	Thought          bool         `json:"thought,omitempty"` // true = 思考/推理内容
 	FunctionCall     *gemFuncCall `json:"functionCall,omitempty"`
 	FunctionResponse *gemFuncResp `json:"functionResponse,omitempty"`
+	InlineData       *gemBlob     `json:"inlineData,omitempty"` // 内联图片
+}
+
+// gemBlob 是 Gemini 的内联二进制数据。
+type gemBlob struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"` // base64
 }
 
 type gemFuncCall struct {
@@ -152,6 +159,17 @@ func (p *GeminiProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 			if m.Text != "" {
 				parts = append(parts, gemPart{Text: m.Text})
 			}
+			// 图片作为 inlineData 附在同一轮里
+			for _, im := range m.Images {
+				if im.Data == "" {
+					continue
+				}
+				mt := im.MediaType
+				if mt == "" {
+					mt = "image/png"
+				}
+				parts = append(parts, gemPart{InlineData: &gemBlob{MimeType: mt, Data: im.Data}})
+			}
 			for _, tc := range m.ToolCalls {
 				args := map[string]any{}
 				if err := json.Unmarshal(mustMarshalRaw(tc.Args), &args); err != nil {
@@ -173,6 +191,23 @@ func (p *GeminiProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 					},
 				}}
 				contents = append(contents, gemContent{Role: "function", Parts: parts})
+				// functionResponse 里塞不下图片，另起一条 user content 带 inlineData
+				if len(m.Images) > 0 {
+					iparts := make([]gemPart, 0, len(m.Images))
+					for _, im := range m.Images {
+						if im.Data == "" {
+							continue
+						}
+						mt := im.MediaType
+						if mt == "" {
+							mt = "image/png"
+						}
+						iparts = append(iparts, gemPart{InlineData: &gemBlob{MimeType: mt, Data: im.Data}})
+					}
+					if len(iparts) > 0 {
+						contents = append(contents, gemContent{Role: "user", Parts: iparts})
+					}
+				}
 			}
 		}
 	}

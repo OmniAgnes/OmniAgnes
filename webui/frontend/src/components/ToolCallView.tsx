@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useRef, useState } from "react"
 
 import {
   BracesIcon,
@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/collapsible"
 import { diffLines, diffStat } from "@/lib/diff"
 import { highlightToHtml, langFromPath } from "@/lib/highlight"
+import type { AttachmentInfo } from "@/types"
 import { todosFromArgs } from "@/lib/todo"
 import { cn } from "@/lib/utils"
 
@@ -164,7 +165,8 @@ export function ToolCallView({ run }: { run: ToolRun }) {
 
   return (
     <Collapsible className="overflow-hidden rounded-lg">
-      <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs transition-colors cursor-pointer">
+      {/* pr-2 而非 px-2：图标行左边不缩进，与 AI 回复正文左边缘对齐（用户要求） */}
+      <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg py-1 pr-2 text-left text-xs transition-colors cursor-pointer">
         <Icon className="text-muted-foreground size-3.5 shrink-0" />
         <span className="font-medium">{meta.label}</span>
         {summary && (
@@ -192,7 +194,7 @@ export function ToolCallView({ run }: { run: ToolRun }) {
 
       {/* 已作出选择的留下记录；待确认的按钮在输入框上方浮条中 */}
       {run.approvalId != null && run.approvalChoice != null && (
-        <div className="text-muted-foreground px-2.5 pb-1.5 text-[11px]">
+        <div className="text-muted-foreground pb-1.5 pr-2.5 text-[11px]">
           {run.approvalChoice ? "你允许了该操作" : "你拒绝了这个操作"}
         </div>
       )}
@@ -291,6 +293,95 @@ function ToolDetail({
 
       {/* 未识别的工具/MCP 工具：按键值展示，不给用户原始 JSON */}
       {!META[name] && <GenericArgs args={args} />}
+    </div>
+  )
+}
+
+/** 工具产出的多媒体列表：图片点击放大（灯罩遮罩，点击任意处关闭），视频/音频内联播放。
+ * 在最终回答里集中展示（不在工具卡片里渲染），本地文件标注保存路径。 */
+export function MediaList({ atts }: { atts: AttachmentInfo[] }) {
+  const [zoom, setZoom] = useState<AttachmentInfo | null>(null)
+  return (
+    <div className="flex flex-col gap-2">
+      {atts.map((a, i) => {
+        if (a.kind === "image") {
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <img
+                src={a.src}
+                alt={a.caption || "工具产出图片"}
+                className="max-h-64 w-auto max-w-full cursor-zoom-in self-start rounded-md object-contain"
+                onClick={() => setZoom(a)}
+              />
+              <MediaMeta att={a} />
+            </div>
+          )
+        }
+        if (a.kind === "video") {
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <video src={a.src} controls className="max-h-80 w-auto max-w-full self-start rounded-md" />
+              <MediaMeta att={a} />
+            </div>
+          )
+        }
+        if (a.kind === "audio") {
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <AudioPlayer src={a.src} />
+              <MediaMeta att={a} />
+            </div>
+          )
+        }
+        return null
+      })}
+
+      {/* 图片放大遮罩 */}
+      {zoom && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
+          onClick={() => setZoom(null)}
+        >
+          <img
+            src={zoom.src}
+            alt={zoom.caption || ""}
+            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 音频播放器：AI 生成的 WAV 头里长度字段常常未知，duration 会读成 Infinity、
+ * 进度条/时长不显示。这里在 loadedmetadata 时探测并做一次"快进回跳"逼浏览器算出真实时长。 */
+function AudioPlayer({ src }: { src: string }) {
+  const ref = useRef<HTMLAudioElement | null>(null)
+  const fixDuration = () => {
+    const el = ref.current
+    if (!el) return
+    if (Number.isFinite(el.duration) && el.duration > 0) return
+    el.ontimeupdate = () => {
+      el.ontimeupdate = null
+      el.currentTime = 0
+    }
+    el.currentTime = 1e101 // 跳到"末尾"迫使浏览器解析全文件长度
+  }
+  return <audio ref={ref} onLoadedMetadata={fixDuration} src={src} controls preload="metadata" className="w-full max-w-md" />
+}
+
+/** 媒体说明行：说明文字 + 本地保存路径（远程 URL 的不显示路径） */function MediaMeta({ att }: { att: AttachmentInfo }) {
+  const saved = att.path && !/^https?:\/\//.test(att.path)
+  if (!att.caption && !saved) return null
+  return (
+    <div className="text-muted-foreground text-[11px]">
+      {att.caption && <div>{att.caption}</div>}
+      {saved && (
+        <div className="font-mono [overflow-wrap:anywhere]" title={att.path}>
+          已保存到：{att.path}
+        </div>
+      )}
     </div>
   )
 }

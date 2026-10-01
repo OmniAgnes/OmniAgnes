@@ -73,7 +73,7 @@ func (p *AnthropicProvider) Models() []string {
 }
 
 type ancContentBlock struct {
-	Type string `json:"type"` // text | tool_use | tool_result | thinking
+	Type string `json:"type"` // text | image | tool_use | tool_result | thinking
 	Text string `json:"text,omitempty"`
 	ID   string `json:"id,omitempty"`
 	Name string `json:"name,omitempty"`
@@ -82,6 +82,15 @@ type ancContentBlock struct {
 	// tool_result
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`
+	// image 块的图片载荷
+	Source *ancImageSource `json:"source,omitempty"`
+}
+
+// ancImageSource 是 Anthropic 的内联图片源（只接受 base64，不接受 URL）。
+type ancImageSource struct {
+	Type      string `json:"type"` // "base64"
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 
 type ancMessage struct {
@@ -150,6 +159,13 @@ func (p *AnthropicProvider) Chat(ctx context.Context, req ChatRequest, onEvent f
 			// system 通过 system 字段传，这里跳过
 		case RoleUser, RoleAssistant:
 			var blocks []ancContentBlock
+			// 图片放前面，Anthropic 官方示例是先图后文
+			for _, im := range m.Images {
+				if im.Data == "" {
+					continue
+				}
+				blocks = append(blocks, ancImageBlock(im))
+			}
 			if m.Text != "" {
 				blocks = append(blocks, ancContentBlock{Type: "text", Text: m.Text})
 			}
@@ -161,15 +177,26 @@ func (p *AnthropicProvider) Chat(ctx context.Context, req ChatRequest, onEvent f
 					Input: mustMarshalRaw(tc.Args),
 				})
 			}
+			if len(blocks) == 0 {
+				continue // 空消息 Anthropic 会报错
+			}
 			messages = append(messages, ancMessage{Role: string(m.Role), Content: blocks})
 		case RoleTool:
 			if m.ToolResult != nil {
-				msg := ancMessage{Role: "user", Content: []ancContentBlock{{
+				blocks := []ancContentBlock{{
 					Type:      "tool_result",
 					ToolUseID: m.ToolResult.CallID,
 					Text:      m.ToolResult.Content,
 					IsError:   m.ToolResult.IsError,
-				}}}
+				}}
+				// tool_result 块本身不能嵌图片，图片作为同一条 user 消息里的
+				// 独立 image 块跟在后面对模型同样可见
+				for _, im := range m.Images {
+					if im.Data != "" {
+						blocks = append(blocks, ancImageBlock(im))
+					}
+				}
+				msg := ancMessage{Role: "user", Content: blocks}
 				// 合并相邻 user 消息（Anthropic 要求交替）
 				if len(messages) > 0 && messages[len(messages)-1].Role == "user" {
 					messages[len(messages)-1].Content = append(messages[len(messages)-1].Content, msg.Content...)
@@ -342,4 +369,16 @@ func mustMarshalRaw(v map[string]any) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return b
+}
+
+// ancImageBlock 把一张内联图片转成 Anthropic 的 image 内容块。
+func ancImageBlock(im Image) ancContentBlock {
+	mt := im.MediaType
+	if mt == "" {
+		mt = "image/png"
+	}
+	return ancContentBlock{
+		Type:   "image",
+		Source: &ancImageSource{Type: "base64", MediaType: mt, Data: im.Data},
+	}
 }

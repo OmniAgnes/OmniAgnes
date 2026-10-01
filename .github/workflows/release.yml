@@ -104,6 +104,14 @@ jobs:
           mkdir -p webui/desktop/bin
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-windows-x64.exe .
           GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-windows-arm64.exe .
+          # 内置 MCP 插件（dev/ 下的服务器）同样按目标架构编进备料目录，
+          # beforePack 钩子按架构换入 bin/，随 extraResources 进包（见 electron-before-pack.cjs）
+          for ARCH in x64 arm64; do
+            GA=$ARCH; [ "$ARCH" = x64 ] && GA=amd64
+            for P in pdf xlsx docx pptx agnes mimo; do
+              GOOS=windows GOARCH=$GA go build -trimpath -o "webui/desktop/bin/mcp-windows-$ARCH/$P.exe" "./dev/$P"
+            done
+          done
           # runner 是 x64：正式名先放 x64 那份（钩子会按每轮目标架构无条件从备料重覆盖）
           cp webui/desktop/bin/omni-windows-x64.exe webui/desktop/bin/omni.exe
           ls -l webui/desktop/bin
@@ -140,6 +148,13 @@ jobs:
               echo "::error::[$ARCH] 安装包内缺少内核二进制：$BIN"
               exit 1
             fi
+            # 内置 MCP 插件必须随包（内核按自身同目录自动注册）
+            for P in pdf xlsx docx pptx agnes mimo; do
+              if [ ! -f "$APPDIR/resources/bin/$P.exe" ]; then
+                echo "::error::[$ARCH] 安装包内缺少 MCP 插件：$APPDIR/resources/bin/$P.exe"
+                exit 1
+              fi
+            done
             SIZE=$(stat -c%s "$BIN")
             echo "[$ARCH] 内核二进制：$BIN（$SIZE 字节，预期 >10MB）"
             if [ "$SIZE" -lt 10000000 ]; then
@@ -242,6 +257,14 @@ jobs:
           mkdir -p webui/desktop/bin
           GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-darwin-arm64 .
           GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o webui/desktop/bin/omni-darwin-x64 .
+          # 内置 MCP 插件按目标架构编进备料目录，beforePack 钩子换入 bin/（同内核套路）
+          for ARCH in arm64 x64; do
+            GA=$ARCH; [ "$ARCH" = x64 ] && GA=amd64
+            for P in pdf xlsx docx pptx agnes mimo; do
+              mkdir -p "webui/desktop/bin/mcp-darwin-$ARCH"
+              GOOS=darwin GOARCH=$GA go build -trimpath -o "webui/desktop/bin/mcp-darwin-$ARCH/$P" "./dev/$P"
+            done
+          done
           # runner（macos-latest）是 Apple Silicon：正式名先放 arm64 那份（钩子按轮次无条件重覆盖）
           cp webui/desktop/bin/omni-darwin-arm64 webui/desktop/bin/omni
           chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-darwin-*
@@ -317,6 +340,14 @@ jobs:
               echo "::error::该文件权限：$(ls -l "$BIN")"
               exit 1
             fi
+            # 内置 MCP 插件必须随包且带 x 位
+            RESDIR=$(dirname "$BIN")
+            for P in pdf xlsx docx pptx agnes mimo; do
+              if [ ! -x "$RESDIR/$P" ]; then
+                echo "::error::[$ARCH] 安装包内缺少 MCP 插件（或无 x 位）：$RESDIR/$P"
+                exit 1
+              fi
+            done
           done
           echo "✓ 双架构内核均正常且可执行"
 

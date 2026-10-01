@@ -9,7 +9,27 @@ import { Titlebar } from "@/components/Titlebar"
 import { Button } from "@/components/ui/button"
 import { api, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
-import type { ChatEvent, Project, SkillInfo, StateInfo, TaskFull, TaskMeta, Theme } from "@/types"
+import type {
+  AttachmentInfo,
+  ChatEvent,
+  Project,
+  RawAttachment,
+  SkillInfo,
+  StateInfo,
+  TaskFull,
+  TaskMeta,
+  Theme,
+} from "@/types"
+
+/** 持久化的原始附件 → 可展示结构（Path→接口 URL、Data→data URL、URL 原样） */
+function attachmentToInfo(a: RawAttachment): AttachmentInfo {
+  const src = a.data
+    ? `data:${a.media_type || "application/octet-stream"};base64,${a.data}`
+    : a.path
+      ? `/api/attachment?path=${encodeURIComponent(a.path)}`
+      : (a.url ?? "")
+  return { kind: a.kind, media_type: a.media_type, caption: a.caption, src, path: a.path }
+}
 
 const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
@@ -193,6 +213,7 @@ export default function App() {
     const out: ViewItem[] = []
     let cur: ViewItem | null = null
     let round = 0
+    let runMedia: AttachmentInfo[] = []
     for (const m of t.messages ?? []) {
       if (m.role === "user") {
         // 历史里附件以「[附件] + 路径列表」附在正文后：展示时拆出来，只显示文件名
@@ -229,6 +250,18 @@ export default function App() {
           run.output = m.tool_result.content
           run.isError = m.tool_result.is_error ?? false
         }
+        // 工具产出的多媒体随历史恢复：先收集，最后统一挂到最后一条回答（与实时展示一致）
+        if (m.tool_result.attachments?.length) {
+          runMedia = [...runMedia, ...m.tool_result.attachments.map(attachmentToInfo)]
+        }
+      }
+    }
+    if (runMedia.length > 0) {
+      const lastAssistant = [...out].reverse().find((x) => x.role === "assistant")
+      if (lastAssistant) {
+        lastAssistant.media = [...(lastAssistant.media ?? []), ...runMedia]
+      } else {
+        out.push({ id: nextId(), role: "assistant", text: "", tools: [], media: runMedia })
       }
     }
     r.items = out
@@ -420,6 +453,15 @@ export default function App() {
             run.output = ev.output
             run.isError = ev.is_error
           }
+          r.items = items
+        }
+        break
+      case "media":
+        // 本轮产出的多媒体：挂到当前助手消息，在最终回答里集中展示
+        {
+          const items = [...r.items]
+          const cur = slotOf(items, r, ev.round)
+          cur.media = [...(cur.media ?? []), ...ev.attachments]
           r.items = items
         }
         break

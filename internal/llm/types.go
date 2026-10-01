@@ -31,12 +31,99 @@ type ToolResult struct {
 	CallID  string `json:"call_id"`
 	Content string `json:"content"`
 	IsError bool   `json:"is_error,omitempty"`
+	// Attachments 是工具产出的多媒体（截图、生成的图片/视频/音频），
+	// 供前端渲染；图片类同时会作为多模态输入送进模型。
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
-// Message 是多模态消息：文本或工具调用/结果的组合。
+// AttachmentKind 是多媒体附件类型。
+type AttachmentKind string
+
+const (
+	KindImage AttachmentKind = "image"
+	KindVideo AttachmentKind = "video"
+	KindAudio AttachmentKind = "audio"
+)
+
+// Attachment 是一条多媒体产出（图片/视频/音频）。
+// Data / URL / Path 三选一：Data 为 base64（小图内联），URL 为远程地址，
+// Path 为本地文件（大文件走 /api/attachment 端点按需读取，避免撑爆历史 JSON）。
+type Attachment struct {
+	Kind      AttachmentKind `json:"kind"`
+	MediaType string         `json:"media_type,omitempty"`
+	Data      string         `json:"data,omitempty"`
+	URL       string         `json:"url,omitempty"`
+	Path      string         `json:"path,omitempty"`
+	Caption   string         `json:"caption,omitempty"`
+	// ForModel 标记这张图需要送进模型（如截图/读图，供视觉分析）。
+	// 生成类工具（生图/生视频/TTS）的产出只给 UI 展示，不置此标记，省 token。
+	ForModel bool `json:"for_model,omitempty"`
+}
+
+// DataURL 拼 data URL（仅当有 Data 时有效）；无 Data 时回落到 URL。
+func (a Attachment) DataURL() string {
+	if a.Data == "" {
+		return a.URL
+	}
+	mt := a.MediaType
+	if mt == "" {
+		mt = string(a.Kind) + "/*"
+	}
+	return "data:" + mt + ";base64," + a.Data
+}
+
+// ByteSize 估算 base64 解码后的字节数。
+func (a Attachment) ByteSize() int {
+	if a.Data == "" {
+		return 0
+	}
+	n := len(a.Data) * 3 / 4
+	if len(a.Data)%4 != 0 {
+		n++
+	}
+	return n
+}
+
+// IsImage 报告是否为图片类附件。
+func (a Attachment) IsImage() bool { return a.Kind == KindImage }
+
+// Image 是一张随消息携带的图片（多模态）。
+// 只保存 data URL 形如 "data:image/png;base64,...."，由各 provider 在序列化时
+// 转成自家格式（OpenAI image_url / Anthropic source / Gemini inlineData）。
+type Image struct {
+	// MediaType 如 image/png、image/jpeg（不含 data: 前缀）
+	MediaType string `json:"media_type"`
+	// Data 是 base64 编码的原始字节（不含 data: URL 前缀）
+	Data string `json:"data"`
+}
+
+// DataURL 拼出完整 data URL。
+func (im Image) DataURL() string {
+	mt := im.MediaType
+	if mt == "" {
+		mt = "image/png"
+	}
+	return "data:" + mt + ";base64," + im.Data
+}
+
+// 估算字节数（base64 解码后的原始大小），用于超限判断。
+func (im Image) ByteSize() int {
+	if im.Data == "" {
+		return 0
+	}
+	// base64：4 字符 = 3 字节，减去可能的 '=' 填充
+	n := len(im.Data) * 3 / 4
+	if len(im.Data)%4 != 0 {
+		n++
+	}
+	return n
+}
+
+// Message 是多模态消息：文本、图片、工具调用/结果的组合。
 type Message struct {
 	Role       Role        `json:"role"`
 	Text       string      `json:"text,omitempty"`
+	Images     []Image     `json:"images,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolResult *ToolResult `json:"tool_result,omitempty"`
 }

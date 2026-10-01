@@ -13,7 +13,6 @@ import {
   RefreshCwIcon,
   SunMoonIcon,
   Trash2Icon,
-  XIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -67,6 +66,10 @@ const SECTIONS = [
   { id: "usage", label: "使用量", icon: ChartNoAxesColumnIcon },
 ] as const
 
+/** 新添加模型时自动填入的默认上下文/输出上限 */
+const DEFAULT_CONTEXT_WINDOW = 1_000_000
+const DEFAULT_MAX_OUTPUT_TOKENS = 128_000
+
 type SectionId = (typeof SECTIONS)[number]["id"]
 
 const PROVIDER_TYPES = [
@@ -114,6 +117,8 @@ interface MCPDraft {
   command: string
   argsText: string
   envText: string
+  /** 已知插件（agnes/mimo）的环境变量：KEY 固定，用户只填值 */
+  knownEnv: Record<string, string>
   url: string
   disabled: boolean
   isNew: boolean
@@ -126,6 +131,7 @@ function emptyMcpDraft(): MCPDraft {
     command: "",
     argsText: "",
     envText: "",
+    knownEnv: {},
     url: "",
     disabled: false,
     isNew: true,
@@ -149,6 +155,27 @@ function envToText(env?: Record<string, string>): string {
   return Object.entries(env ?? {})
     .map(([k, v]) => `${k}=${v}`)
     .join("\n")
+}
+
+// 内置插件需要的环境变量：编辑弹窗里直接按 KEY 生成输入框，用户只填值
+const MCP_ENV_KEYS: Record<string, string[]> = {
+  agnes: ["AGNES_API_KEY", "AGNES_IMAGE_MODEL", "AGNES_VIDEO_MODEL"],
+  mimo: ["MIMO_API_KEY", "MIMO_TTS_MODEL"],
+}
+
+// 各环境变量输入框的占位提示
+const MCP_ENV_PLACEHOLDERS: Record<string, string> = {
+  AGNES_API_KEY: "填入 API Key（留空则未配置）",
+  AGNES_IMAGE_MODEL: "默认生图模型（可选）：agnes-image-2.5-flash / agnes-image-2.1-flash",
+  AGNES_VIDEO_MODEL: "默认生视频模型（可选）：agnes-video-2.5-flash / agnes-video-2.5",
+  MIMO_API_KEY: "填入 API Key（留空则未配置）",
+  MIMO_TTS_MODEL: "默认 TTS 模型（可选）：mimo-v2.5-tts / -voicedesign / -voiceclone",
+}
+
+// 常见插件需要的环境变量（配置里没填时在列表里提示，避免调用时才报错）
+const MCP_ENV_HINTS: Record<string, string> = {
+  agnes: "AGNES_API_KEY（Agnes AI 生图/生视频，点编辑填写）",
+  mimo: "MIMO_API_KEY（MiMo 语音合成，点编辑填写）",
 }
 
 export function SettingsDialog({ open, onOpenChange, state, onStateChange, onProvidersSaved }: SettingsDialogProps) {
@@ -269,12 +296,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
   const startEditMcp = (name: string) => {
     setErr("")
     const cfg = mcpServers[name] ?? {}
+    const knownEnv: Record<string, string> = {}
+    for (const k of MCP_ENV_KEYS[name] ?? []) knownEnv[k] = cfg.env?.[k] ?? ""
     setMcpDraft({
       name,
       kind: cfg.url ? "http" : "stdio",
       command: cfg.command ?? "",
       argsText: (cfg.args ?? []).join(" "),
       envText: envToText(cfg.env),
+      knownEnv,
       url: cfg.url ?? "",
       disabled: Boolean(cfg.disabled),
       isNew: false,
@@ -290,13 +320,19 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     }
     const next = { ...mcpServers }
     delete next[name]
+    // 已知 KEY（agnes/mimo）取独立输入框的值；留空视为清除该变量
+    const env = parseEnv(mcpDraft.envText)
+    for (const [k, v] of Object.entries(mcpDraft.knownEnv)) {
+      if (v.trim() !== "") env[k] = v.trim()
+      else delete env[k]
+    }
     next[name] =
       mcpDraft.kind === "http"
         ? { url: mcpDraft.url.trim(), disabled: mcpDraft.disabled }
         : {
             command: mcpDraft.command.trim(),
             args: mcpDraft.argsText.split(/\s+/).filter(Boolean),
-            env: parseEnv(mcpDraft.envText),
+            env,
             disabled: mcpDraft.disabled,
           }
     setSaving(true)
@@ -614,106 +650,132 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                         </div>
                       </div>
 
-                      {mcpDraft && (
-                        <div className="flex flex-col gap-2.5 rounded-lg border p-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium">
-                              {mcpDraft.isNew ? "添加 MCP 服务器" : `编辑 ${mcpDraft.name}`}
-                            </span>
-                            <Button variant="ghost" size="icon-sm" onClick={() => setMcpDraft(null)} title="取消">
-                              <XIcon />
-                            </Button>
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="flex flex-col gap-1.5">
-                              <Label className="text-muted-foreground text-xs">名称</Label>
-                              <Input
-                                value={mcpDraft.name}
-                                disabled={!mcpDraft.isNew}
-                                onChange={(e) => setMcpDraft({ ...mcpDraft, name: e.target.value })}
-                                placeholder="如 filesystem"
-                              />
-                            </div>
-                            <div className="flex flex-col gap-1.5">
-                              <Label className="text-muted-foreground text-xs">连接方式</Label>
-                              <Select
-                                value={mcpDraft.kind}
-                                onValueChange={(v) =>
-                                  setMcpDraft({ ...mcpDraft, kind: v as "stdio" | "http" })
-                                }
-                              >
-                                <SelectTrigger size="sm" className="w-full">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="stdio">本地命令（stdio）</SelectItem>
-                                  <SelectItem value="http">远程 URL（HTTP）</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
+                      {/* MCP 编辑弹窗：挂在列表上方不显眼，改成居中弹窗 */}
+                      <Dialog open={mcpDraft !== null} onOpenChange={(o) => { if (!o) setMcpDraft(null) }}>
+                        <DialogContent className="max-h-[85dvh] overflow-y-auto p-5 sm:max-w-lg" showCloseButton>
+                          <DialogHeader>
+                            <DialogTitle>
+                              {mcpDraft?.isNew ? "添加 MCP 服务器" : `编辑 ${mcpDraft?.name}`}
+                            </DialogTitle>
+                          </DialogHeader>
 
-                          {mcpDraft.kind === "stdio" ? (
-                            <>
-                              <div className="flex flex-col gap-1.5">
-                                <Label className="text-muted-foreground text-xs">启动命令</Label>
-                                <Input
-                                  value={mcpDraft.command}
-                                  onChange={(e) => setMcpDraft({ ...mcpDraft, command: e.target.value })}
-                                  placeholder="npx"
-                                />
+                          {mcpDraft && (
+                            <div className="flex flex-col gap-2.5">
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-muted-foreground text-xs">名称</Label>
+                                  <Input
+                                    value={mcpDraft.name}
+                                    disabled={!mcpDraft.isNew}
+                                    onChange={(e) => setMcpDraft({ ...mcpDraft, name: e.target.value })}
+                                    placeholder="如 filesystem"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-muted-foreground text-xs">连接方式</Label>
+                                  <Select
+                                    value={mcpDraft.kind}
+                                    onValueChange={(v) =>
+                                      setMcpDraft({ ...mcpDraft, kind: v as "stdio" | "http" })
+                                    }
+                                  >
+                                    <SelectTrigger size="sm" className="w-full">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="stdio">本地命令（stdio）</SelectItem>
+                                      <SelectItem value="http">远程 URL（HTTP）</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
                               </div>
-                              <div className="flex flex-col gap-1.5">
-                                <Label className="text-muted-foreground text-xs">参数（空格分隔）</Label>
-                                <Input
-                                  value={mcpDraft.argsText}
-                                  onChange={(e) => setMcpDraft({ ...mcpDraft, argsText: e.target.value })}
-                                  placeholder="-y @modelcontextprotocol/server-filesystem C:\work"
-                                />
+
+                              {mcpDraft.kind === "stdio" ? (
+                                <>
+                                  <div className="flex flex-col gap-1.5">
+                                    <Label className="text-muted-foreground text-xs">启动命令</Label>
+                                    <Input
+                                      value={mcpDraft.command}
+                                      onChange={(e) => setMcpDraft({ ...mcpDraft, command: e.target.value })}
+                                      placeholder="npx"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1.5">
+                                    <Label className="text-muted-foreground text-xs">参数（空格分隔）</Label>
+                                    <Input
+                                      value={mcpDraft.argsText}
+                                      onChange={(e) => setMcpDraft({ ...mcpDraft, argsText: e.target.value })}
+                                      placeholder="-y @modelcontextprotocol/server-filesystem C:\work"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1.5">
+                                    {(MCP_ENV_KEYS[mcpDraft.name] ?? []).length > 0 ? (
+                                      // 内置插件（agnes/mimo）：KEY 已知，直接给带名字的输入框，用户只填值
+                                      (MCP_ENV_KEYS[mcpDraft.name] ?? []).map((k) => (
+                                        <div key={k} className="flex items-center gap-2">
+                                          <Label className="text-muted-foreground w-36 shrink-0 font-mono text-xs">
+                                            {k}
+                                          </Label>
+                                          <Input
+                                            value={mcpDraft.knownEnv[k] ?? ""}
+                                            onChange={(e) =>
+                                              setMcpDraft({
+                                                ...mcpDraft,
+                                                knownEnv: { ...mcpDraft.knownEnv, [k]: e.target.value },
+                                              })
+                                            }
+                                            placeholder={MCP_ENV_PLACEHOLDERS[k] ?? "填入 Key（留空则未配置）"}
+                                          />
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <>
+                                        <Label className="text-muted-foreground text-xs">环境变量（每行 KEY=VALUE）</Label>
+                                        <Textarea
+                                          value={mcpDraft.envText}
+                                          onChange={(e) => setMcpDraft({ ...mcpDraft, envText: e.target.value })}
+                                          className="min-h-20 font-mono text-xs"
+                                          placeholder={"API_KEY=xxx"}
+                                        />
+                                      </>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-muted-foreground text-xs">服务器 URL</Label>
+                                  <Input
+                                    value={mcpDraft.url}
+                                    onChange={(e) => setMcpDraft({ ...mcpDraft, url: e.target.value })}
+                                    placeholder="https://example.com/mcp"
+                                  />
+                                </div>
+                              )}
+
+                              <div className="flex items-center justify-between">
+                                <Label className="text-muted-foreground text-xs">启用</Label>
+                                <Button
+                                  variant={mcpDraft.disabled ? "outline" : "secondary"}
+                                  size="sm"
+                                  onClick={() => setMcpDraft({ ...mcpDraft, disabled: !mcpDraft.disabled })}
+                                >
+                                  {mcpDraft.disabled ? "已禁用" : "启用中"}
+                                </Button>
                               </div>
-                              <div className="flex flex-col gap-1.5">
-                                <Label className="text-muted-foreground text-xs">环境变量（每行 KEY=VALUE）</Label>
-                                <Textarea
-                                  value={mcpDraft.envText}
-                                  onChange={(e) => setMcpDraft({ ...mcpDraft, envText: e.target.value })}
-                                  className="min-h-20 font-mono text-xs"
-                                  placeholder={"API_KEY=xxx"}
-                                />
+
+                              {err && <div className="text-destructive text-sm">{err}</div>}
+                              <div className="flex justify-end gap-2">
+                                <Button variant="outline" size="sm" onClick={() => setMcpDraft(null)}>
+                                  取消
+                                </Button>
+                                <Button size="sm" disabled={saving} onClick={() => void saveMcp()}>
+                                  保存并连接
+                                </Button>
                               </div>
-                            </>
-                          ) : (
-                            <div className="flex flex-col gap-1.5">
-                              <Label className="text-muted-foreground text-xs">服务器 URL</Label>
-                              <Input
-                                value={mcpDraft.url}
-                                onChange={(e) => setMcpDraft({ ...mcpDraft, url: e.target.value })}
-                                placeholder="https://example.com/mcp"
-                              />
                             </div>
                           )}
-
-                          <div className="flex items-center justify-between">
-                            <Label className="text-muted-foreground text-xs">启用</Label>
-                            <Button
-                              variant={mcpDraft.disabled ? "outline" : "secondary"}
-                              size="sm"
-                              onClick={() => setMcpDraft({ ...mcpDraft, disabled: !mcpDraft.disabled })}
-                            >
-                              {mcpDraft.disabled ? "已禁用" : "启用中"}
-                            </Button>
-                          </div>
-
-                          {err && <div className="text-destructive text-sm">{err}</div>}
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" size="sm" onClick={() => setMcpDraft(null)}>
-                              取消
-                            </Button>
-                            <Button size="sm" disabled={saving} onClick={() => void saveMcp()}>
-                              保存并连接
-                            </Button>
-                          </div>
-                        </div>
-                      )}
+                        </DialogContent>
+                      </Dialog>
 
                       {Object.keys(mcpServers).length === 0 && !mcpDraft && (
                         <div className="text-muted-foreground text-sm">未配置 MCP 服务器</div>
@@ -722,6 +784,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                       <div className="flex flex-col gap-1.5">
                         {Object.entries(mcpServers).map(([name, cfg]) => {
                           const st = mcpStatus.find((x) => x.name === name)
+                          const envHint = MCP_ENV_HINTS[name]
+                          const envMissing = envHint && !Object.values(cfg.env ?? {}).some((v) => v.trim() !== "")
                           return (
                             <div
                               key={name}
@@ -758,6 +822,11 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                   <Trash2Icon />
                                 </Button>
                               </div>
+                              {envMissing && (
+                                <div className="text-amber-600 dark:text-amber-400 w-full text-xs">
+                                  还需要环境变量：{envHint}
+                                </div>
+                              )}
                             </div>
                           )
                         })}
@@ -843,7 +912,17 @@ function ProviderCard({
       setModelInput("")
       return
     }
-    onChange({ models, model: models[0] })
+    // 新增模型默认带上下文/输出参数（用户既有值不覆盖）
+    const opts = { ...provider.model_options }
+    for (const p of models) {
+      if (opts[p]) continue
+      const prev = opts[cur[cur.length - 1]]
+      opts[p] = {
+        context_window: prev?.context_window ?? DEFAULT_CONTEXT_WINDOW,
+        max_output_tokens: prev?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      }
+    }
+    onChange({ models, model: models[0], model_options: opts })
     setModelInput("")
   }
 
@@ -962,7 +1041,6 @@ function ProviderCard({
               <div className="flex flex-col gap-1.5">
                 <Label className="text-muted-foreground text-xs">API Key</Label>
                 <Input
-                  type="password"
                   value={provider.api_key ?? ""}
                   onChange={(e) => onChange({ api_key: e.target.value })}
                   placeholder="sk-…"

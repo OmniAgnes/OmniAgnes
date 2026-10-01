@@ -64,7 +64,7 @@ func builtinTools() []*Tool {
 		},
 		{
 			Name:        "bash",
-			Description: "在工作目录执行 shell 命令，返回 stdout+stderr。默认超时 10 秒，输出会被截断。",
+			Description: "在工作目录执行 shell 命令，返回 stdout+stderr。shell 是 bash（Windows 上为 Git Bash），不是 cmd：丢弃输出请用 /dev/null，禁用 cmd 风格的 > nul（会真的创建 nul 文件）。默认超时 10 秒，输出会被截断。",
 			Parameters: map[string]any{
 				"type":     "object",
 				"required": []string{"command"},
@@ -188,6 +188,7 @@ func builtinTools() []*Tool {
 				return "（当前界面不支持向用户提问，请按最合理的假设继续，并在回复中说明所做的假设）", nil
 			},
 		},
+		screenshotTool(),
 	}
 }
 

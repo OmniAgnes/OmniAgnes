@@ -387,7 +387,8 @@ function ProjectGroup(props: {
           <div
             key={t.id}
             className={cn(
-              "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-xs",
+              // 同 TaskList：13px，比 text-xs 大一号，与文件夹行的 text-sm 拉开层次
+              "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-[13px]",
               activeTaskId === t.id && "bg-sidebar-accent",
             )}
           >
@@ -423,7 +424,7 @@ function ProjectGroup(props: {
           <Button
             variant="ghost"
             size="sm"
-            className="text-muted-foreground hover:text-foreground h-6 justify-start px-2 text-xs"
+            className="text-muted-foreground hover:text-foreground h-6 justify-start px-2 text-[13px]"
             onClick={() => setLimit((n) => n + PAGE)}
           >
             显示更多

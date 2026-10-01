@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -14,14 +15,15 @@ import (
 )
 
 // resolveShell 返回执行命令所用的解释器。Windows 优先用 bash（Git Bash），无则回退 cmd。
-func resolveShell(command string) (string, []string) {
+// 第二个返回值 isBash 表示解释器是否为 POSIX bash——只有 bash 才需要做 nul → /dev/null 改写。
+func resolveShell(command string) (string, []string, bool) {
 	if runtime.GOOS != "windows" {
-		return "/bin/bash", []string{"-c", command}
+		return "/bin/bash", []string{"-c", command}, true
 	}
 	if bash := findBash(); bash != "" {
-		return bash, []string{"-c", command}
+		return bash, []string{"-c", command}, true
 	}
-	return "cmd", []string{"/c", command}
+	return "cmd", []string{"/c", command}, false
 }
 
 // findBash 定位 bash.exe：先查 PATH，再找 Git 安装目录（git.exe 位于 <root>\cmd，bash 在 <root>\bin）。
@@ -36,6 +38,26 @@ func findBash() string {
 		}
 	}
 	return ""
+}
+
+// nullRedirectRe 匹配 Windows cmd 风格的空设备重定向：> nul、2>nul、1> nul、&>nul、>>nul。
+// 前后必须有非单词边界，避免误伤 /dev/null、null、nullable 等正常词。
+var nullRedirectRe = regexp.MustCompile(`(?i)(>>?|&>)\s*(?:\./)?nul(?:\s|$|&|\||;|"|')`)
+
+// rewriteNullRedirect 把 cmd 风格的空设备重定向改写成 POSIX 的 /dev/null。
+//
+// 背景：模型在 Windows 上常沿用 cmd 习惯写 `> nul 2>&1`，但我们的 shell 是 bash——
+// bash 不认识 nul这个设备，会在工作目录里真的创建一个名为 nul 的空文件。
+// 这里做无条件改写（bash 语义下 > /dev/null 与 > nul 意图一致），返回改写后的命令与是否发生改写。
+func rewriteNullRedirect(command string) (string, bool) {
+	if !nullRedirectRe.MatchString(command) {
+		return command, false
+	}
+	out := nullRedirectRe.ReplaceAllString(command, `${1} /dev/null `)
+	// 收敛可能出现的重复空格（仅限重定向符与 /dev/null 之间那一处）。
+	out = strings.ReplaceAll(out, ">  /dev/null", "> /dev/null")
+	out = strings.ReplaceAll(out, "&>  /dev/null", "&> /dev/null")
+	return strings.TrimRight(out, " \t"), true
 }
 
 func execBash(ctx context.Context, args map[string]any, env *Env) (string, error) {
@@ -54,7 +76,14 @@ func execBash(ctx context.Context, args map[string]any, env *Env) (string, error
 	cmdCtx, stop := context.WithCancel(ctx)
 	defer stop()
 
-	shell, shellArgs := resolveShell(command)
+	shell, shellArgs, isBash := resolveShell(command)
+	// 用 bash 执行时把 cmd 风格的空设备重定向（> nul）改写成 /dev/null，
+	// 否则 bash 会在工作目录创建出一个名为 nul 的垃圾文件。
+	if isBash {
+		if fixed, changed := rewriteNullRedirect(command); changed {
+			shellArgs = []string{"-c", fixed}
+		}
+	}
 	cmd := exec.CommandContext(cmdCtx, shell, shellArgs...)
 	cmd.Dir = env.Cwd
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -214,6 +215,51 @@ func Default() *Config {
 }
 
 // Load 从路径加载配置；path 为空则尝试默认路径。文件不存在时返回默认配置且不报错。
+// builtinMCPServers 扫描内置插件目录，把其中的可执行文件自动注册为
+// MCP 服务器（名为文件名去扩展名）。扫描范围：
+//   - 工作目录 .omni/mcp/（本地开发构建产物，见 dev/README.md）
+//   - 数据目录 mcp/（~/.local/share/omni/mcp）
+//   - 主程序可执行文件同目录（桌面版随包内置）
+//
+// 配置里已有同名条目（包括已停用的）不覆盖，保留用户配置。
+func (c *Config) builtinMCPServers() {
+	dirs := []string{
+		filepath.Join(".omni", "mcp"),
+		filepath.Join(DefaultDataDir(), "mcp"),
+	}
+	if c.Cwd != "" { // 配置里指定了项目目录时，也扫它的 .omni/mcp
+		dirs = append(dirs, filepath.Join(c.Cwd, ".omni", "mcp"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Dir(exe))
+	}
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if runtime.GOOS == "windows" && filepath.Ext(name) != ".exe" {
+				continue
+			}
+			if name == "omni"+filepath.Ext(name) { // 跳过主程序本体
+				continue
+			}
+			server := strings.TrimSuffix(name, filepath.Ext(name))
+			if c.MCPServers == nil {
+				c.MCPServers = map[string]MCPServerConfig{}
+			}
+			if _, ok := c.MCPServers[server]; !ok {
+				c.MCPServers[server] = MCPServerConfig{Command: filepath.Join(dir, name)}
+			}
+		}
+	}
+}
+
 func Load(path string) (*Config, error) {
 	cfg := Default()
 	if path == "" {
@@ -261,6 +307,7 @@ func Load(path string) (*Config, error) {
 			}
 		}
 	}
+	cfg.builtinMCPServers()
 	return cfg, nil
 }
 

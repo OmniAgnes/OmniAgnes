@@ -2,8 +2,16 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"omni/internal/llm"
 	"omni/internal/tools"
@@ -31,7 +39,8 @@ const (
 	EventApproval   EventType = "approval" // 普通访问模式：等待用户确认写操作
 	EventQuestion   EventType = "question" // ask 工具：等待用户回答澄清问题
 	EventError      EventType = "error"
-	EventDone       EventType = "done" // 本轮问答结束
+	EventMedia      EventType = "media" // 本轮产出的多媒体（图片/视频/音频），在回答结束时集中发出
+	EventDone       EventType = "done"  // 本轮问答结束
 )
 
 // Event 是发给 UI 的单一事件。
@@ -43,6 +52,8 @@ type Event struct {
 	IsError bool
 	Err     error
 	Model   string
+	// Attachments 是工具产出的多媒体附件（图片/视频/音频），随 EventToolOutput 一起发出。
+	Attachments []llm.Attachment
 	// Usage 仅在 EventDone 上有值：本次提问所有 LLM 调用累计的令牌用量。
 	Usage *llm.Usage
 	// Round 是 LLM 迭代轮次（从 0 开始）。
@@ -76,19 +87,19 @@ type Options struct {
 // Agent 持有一个 LLM provider、工具注册表与消息历史。
 // TUI 与 webui 可能共用同一实例，历史相关操作以 mu 串行化。
 type Agent struct {
-	mu       sync.Mutex
-	provider llm.Provider
-	tools    *tools.Registry
-	model    string
-	mode     Mode
-	cwd      string
-	maxIter  int
-	maxToken int
-	extra    string
-	extraPrompt func() string
-	approve  func(callID, name string, args map[string]any) bool
-	question func(callID, question string, options []string) string
-	history  []llm.Message
+	mu            sync.Mutex
+	provider      llm.Provider
+	tools         *tools.Registry
+	model         string
+	mode          Mode
+	cwd           string
+	maxIter       int
+	maxToken      int
+	extra         string
+	extraPrompt   func() string
+	approve       func(callID, name string, args map[string]any) bool
+	question      func(callID, question string, options []string) string
+	history       []llm.Message
 	lastTurnStart int
 }
 
@@ -181,7 +192,9 @@ Agent 模式: %s
 5. 每轮调用工具后，必须根据工具结果继续推进，直到任务完成或信息足够。
 6. 不要编造文件内容；以工具返回的真实内容为准。
 7. 任务包含 3 个以上步骤（调研+修改+验证等）时，先用 todo 工具建立任务清单，每完成一步都提交整份清单刷新进度，让用户实时看到处理到哪一步；一步都没有再开始下一步前，把上一步标 completed、当前步标 in_progress。
-8. 当歧义会实质影响结果、无法合理假设时，用 ask 工具向用户提一个简短问题（可带候选项），拿到回答再继续；不要连环追问，一次只问一个。`, a.cwd, modeDesc)
+8. 当歧义会实质影响结果、无法合理假设时，用 ask 工具向用户提一个简短问题（可带候选项），拿到回答再继续；不要连环追问，一次只问一个。
+9. bash工具的 shell 是 bash（Windows 上是 Git Bash），不是 cmd。丢弃输出必须写 '>/dev/null 2>&1'，绝对不要写 cmd 风格的 '> nul'——bash 会把它当成普通文件名，在工作目录里凭空造出一个名为 nul 的垃圾文件。同理不要创建名为 nul 的任何文件。
+10. 调试日志、临时产物、脚本输出统一写到工作目录下的 .omni/log/（如 .omni/log/debug.log），不要散落在项目根目录或源码目录里；该目录已在 .gitignore 中。给用户的结论看工具返回即可，不要把完整日志贴进回复。`, a.cwd, modeDesc)
 	if a.extra != "" {
 		p += "\n\n额外要求（来自配置）:\n" + a.extra
 	}
@@ -255,6 +268,8 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 
 	// 整轮累计令牌用量（多轮 = 用户一次提问触发的多次 LLM 调用）
 	var totalUsage llm.Usage
+	// 本次提问产出的全部多媒体：回答结束时统一落盘并集中发给 UI 展示
+	var runMedia []llm.Attachment
 
 	for i := 0; i < a.maxIter; i++ {
 		round := i // 本轮序号，供 UI 分组
@@ -293,6 +308,12 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		})
 
 		if len(resp.ToolCalls) == 0 {
+			// 回答结束：把本次提问所有媒体附件统一落盘（内联的写到 .omni/media/），
+			// 并作为一条 media 事件集中发给 UI——展示在最终回答里，而不是埋在工具卡片里。
+			if len(runMedia) > 0 {
+				finalizeMedia(a.cwd, runMedia)
+				emit(Event{Type: EventMedia, Attachments: runMedia, Round: round})
+			}
 			u := totalUsage
 			emit(Event{Type: EventDone, Model: a.model, Round: round, Usage: &u})
 			return nil
@@ -346,7 +367,7 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			}
 			// 无审批回调的普通访问模式退化为强制只读
 			forceRO := a.mode == ModePlan && a.approve == nil
-			out, terr := a.tools.Execute(ctx, tc.Name, tc.Args, forceRO)
+			out, media, terr := a.tools.ExecuteWithMedia(ctx, tc.Name, tc.Args, forceRO)
 			if terr != nil {
 				emit(Event{Type: EventToolOutput, Tool: &tc, Output: "错误: " + terr.Error(), IsError: true, Round: round})
 				emit(Event{Type: EventToolEnd, Tool: &tc, IsError: true, Round: round})
@@ -356,13 +377,186 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 				})
 				continue
 			}
-			emit(Event{Type: EventToolOutput, Tool: &tc, Output: out, Round: round})
+			emit(Event{Type: EventToolOutput, Tool: &tc, Output: out, Attachments: media, Round: round})
 			emit(Event{Type: EventToolEnd, Tool: &tc, Round: round})
+			runMedia = append(runMedia, media...)
 			a.history = append(a.history, llm.Message{
-				Role:       llm.RoleTool,
-				ToolResult: &llm.ToolResult{CallID: tc.ID, Content: out},
+				Role: llm.RoleTool,
+				ToolResult: &llm.ToolResult{
+					CallID: tc.ID, Content: out, Attachments: media,
+				},
+				// 只有标记了 ForModel 的图片（截图/读图，供视觉分析）才进模型上下文；
+				// 生成类工具（生图/生视频/TTS）的产出只给 UI 展示，省 token。
+				// provider 序列化时会把它们展开成紧随其后的 user 消息（tool 角色不能带图）。
+				Images: imagesForModel(media),
 			})
 		}
 	}
 	return fmt.Errorf("达到最大迭代次数 %d，任务可能未完成", a.maxIter)
 }
+
+// finalizeMedia 把本次产出的媒体统一落到 <cwd>/.omni/download/：
+//   - 内联 base64（Data）解码写文件；
+//   - 远程 URL（如生视频返回的 mp4 地址）下载到本地；
+//   - 已有本地 Path 的（截图）不动。
+//
+// 下载/写盘成功后都回填 Path，前端展示直接用本地文件。
+// WAV 音频顺手修正头部长度字段——AI 生成的 WAV 头长度常为未知值，不改浏览器算不出时长。
+func finalizeMedia(cwd string, atts []llm.Attachment) {
+	if strings.TrimSpace(cwd) == "" {
+		return
+	}
+	dir := filepath.Join(cwd, ".omni", "download")
+	n := 0
+	mkdir := func() bool {
+		if n == 0 {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return false
+			}
+		}
+		n++
+		return true
+	}
+	for i := range atts {
+		a := &atts[i]
+		switch {
+		case a.Path != "" || a.Data == "" && a.URL == "":
+			// 已在本地，或既无数据也无地址
+		case a.Data != "":
+			if !mkdir() {
+				return
+			}
+			ext := extForMedia(*a)
+			fp := filepath.Join(dir, fmt.Sprintf("media-%d-%d%s", time.Now().Unix(), n, ext))
+			if data, err := base64.StdEncoding.DecodeString(a.Data); err == nil {
+				if strings.EqualFold(ext, ".wav") {
+					patchWavHeader(data)
+				}
+				if err := os.WriteFile(fp, data, 0o644); err == nil {
+					a.Path = fp
+				}
+			}
+		case isHTTP(a.URL):
+			if !mkdir() {
+				return
+			}
+			ext := extForMedia(*a)
+			fp := filepath.Join(dir, fmt.Sprintf("media-%d-%d%s", time.Now().Unix(), n, ext))
+			if data, err := downloadFile(a.URL); err == nil {
+				if strings.EqualFold(ext, ".wav") {
+					patchWavHeader(data)
+				}
+				if err := os.WriteFile(fp, data, 0o644); err == nil {
+					a.Path = fp
+				}
+			}
+		}
+	}
+}
+
+func isHTTP(u string) bool {
+	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
+}
+
+// downloadFile 下载远程媒体（上限 64MB）。
+func downloadFile(url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+}
+
+// patchWavHeader 原地修正 WAV 的 RIFF/data 块长度字段为真实大小。
+// TTS 服务常按流式写 WAV（长度字段置 0 或 0xFFFFFFFF），浏览器因此读不出时长。
+func patchWavHeader(data []byte) {
+	if len(data) < 44 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
+		return
+	}
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+	i := 12
+	for i+8 <= len(data) {
+		id := string(data[i : i+4])
+		sz := binary.LittleEndian.Uint32(data[i+4 : i+8])
+		if id == "data" {
+			if int64(sz) != int64(len(data)-i-8) {
+				binary.LittleEndian.PutUint32(data[i+4:i+8], uint32(len(data)-i-8))
+			}
+			return
+		}
+		i += 8 + int(sz)
+		if sz%2 == 1 { // RIFF 块按 2 字节对齐
+			i++
+		}
+	}
+}
+
+// extForMedia 按附件类型与 MIME 推断文件扩展名。
+func extForMedia(a llm.Attachment) string {
+	m := strings.ToLower(a.MediaType)
+	switch {
+	case strings.HasSuffix(m, "png"):
+		return ".png"
+	case strings.HasSuffix(m, "jpeg"), strings.HasSuffix(m, "jpg"):
+		return ".jpg"
+	case strings.HasSuffix(m, "webp"):
+		return ".webp"
+	case strings.HasSuffix(m, "gif"):
+		return ".gif"
+	case strings.HasSuffix(m, "wav"):
+		return ".wav"
+	case strings.HasSuffix(m, "mpeg"), strings.HasSuffix(m, "mp3"):
+		return ".mp3"
+	case strings.HasSuffix(m, "ogg"):
+		return ".ogg"
+	case strings.HasSuffix(m, "webm"):
+		return ".webm"
+	case a.Kind == llm.KindVideo:
+		return ".mp4"
+	case a.Kind == llm.KindAudio:
+		return ".wav"
+	default:
+		return ".bin"
+	}
+}
+
+// imagesForModel 从附件里挑出标记了 ForModel 的图片（截图/读图），转成模型可消费的
+// llm.Image。生成类工具的产出（未标记）不进上下文，省 token。
+// 落盘的图片在这里按需读文件；读失败就跳过（不影响工具本身已成功的事实）。
+func imagesForModel(media []llm.Attachment) []llm.Image {
+	var out []llm.Image
+	for _, a := range media {
+		if !a.IsImage() || !a.ForModel {
+			continue
+		}
+		im := llm.Image{MediaType: a.MediaType, Data: a.Data}
+		if im.Data == "" && a.Path != "" {
+			b, err := os.ReadFile(a.Path)
+			if err != nil {
+				continue
+			}
+			im.Data = base64.StdEncoding.EncodeToString(b)
+		}
+		if im.Data == "" {
+			continue
+		}
+		if im.MediaType == "" {
+			im.MediaType = "image/png"
+		}
+		if im.ByteSize() > maxToolImageBytes {
+			continue
+		}
+		out = append(out, im)
+	}
+	return out
+}
+
+// maxToolImageBytes 单张图片送进模型的上限（原始字节），webui 附件端点限流用。
+const maxToolImageBytes = 4 << 20
+
+// MaxToolImageBytes 暴露给其他包（webui 附件端点限流用）。
+func MaxToolImageBytes() int { return maxToolImageBytes }

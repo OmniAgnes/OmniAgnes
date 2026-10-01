@@ -25,12 +25,14 @@ extraResources:
   # omni 内核二进制（主进程打包态从 resources/bin 读取）；
   # 打包前先在仓库根目录执行 go build -o webui/desktop/bin/omni.exe .
   # （CI 上由各架构交叉编译产物填入，见 release.yml）
-  # filter 排除交叉架构的备料文件，防止把两份内核都打进安装包。
+  # filter 排除交叉架构的备料文件（内核 omni-*、MCP 插件备料目录 mcp-*），
+  # 防止把两份内核/插件都打进安装包。
   - from: bin
     to: bin
     filter:
       - "!omni-windows-*"
       - "!omni-darwin-*"
+      - "!mcp-*"
 win:
   # 应用图标：build/icon.ico（由 make_icon.py 生成，源图为 build/icon.svg）
   icon: build/icon.ico

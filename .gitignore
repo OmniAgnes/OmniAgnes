@@ -28,3 +28,13 @@ dev/bin/
 
 # WorkBuddy 临时文件（调试脚本等）
 .workbuddy/tmp/
+
+# 调试日志（约定写到 .omni/log/）
+.omni/log/
+
+# Windows 误建的垃圾文件：cmd 风格 `> nul` 在 bash 下会真的创建
+/nul
+NUL
+
+# ���� MCP ����������exe ����⣬CI ��ƽ̨�ֳ����룩
+.omni/mcp/

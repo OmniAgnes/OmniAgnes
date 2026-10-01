@@ -28,8 +28,9 @@ func (e *Extras) RegisterTools(reg *tools.Registry, projectDir string) {
 	if e.Skills != nil {
 		reg.Register(e.skillTool(projectDir))
 	}
-	if e.MemoryPath != "" {
-		reg.Register(memory.Tool(e.MemoryPath))
+	// 记忆工具：全局 + 项目（<projectDir>/.omni/memory/）都可注册
+	if e.MemoryPath != "" || strings.TrimSpace(projectDir) != "" {
+		reg.Register(memory.Tool(e.MemoryPath, projectDir))
 	}
 	if e.MCP != nil {
 		e.MCP.RegisterInto(reg)
@@ -44,17 +45,32 @@ func (e *Extras) RefreshMCPTools(reg *tools.Registry) {
 	e.MCP.RegisterInto(reg)
 }
 
-// ExtraPrompt 构建系统提示词的动态附加段（技能清单 + 全局记忆）。
+// ExtraPrompt 构建系统提示词的动态附加段（记忆 + 技能清单）。
 // 返回空串表示没有附加内容。
 func (e *Extras) ExtraPrompt(projectDir string) string {
 	if e == nil {
 		return ""
 	}
 	var b strings.Builder
-	if e.MemoryPath != "" {
+	if e.MemoryPath != "" || strings.TrimSpace(projectDir) != "" {
+		b.WriteString("\n\n## 记忆\n以下是跨会话保存的长期记忆，回答时参考。可用 memory 工具更新" +
+			"（scope：day=项目今日记忆 / total=项目总记忆 / global=全局记忆）：\n\n")
 		if mem := memory.Load(e.MemoryPath); mem != "" {
-			b.WriteString("\n\n## 全局记忆\n以下是跨会话保存的长期记忆，回答时参考。可用 memory 工具更新（用户偏好、项目背景、重要约定等）：\n\n")
+			b.WriteString("### 全局记忆\n\n")
 			b.WriteString(mem)
+			b.WriteString("\n\n")
+		}
+		if strings.TrimSpace(projectDir) != "" {
+			if mem := memory.Load(memory.TotalPath(projectDir)); mem != "" {
+				b.WriteString("### 项目总记忆\n\n")
+				b.WriteString(mem)
+				b.WriteString("\n\n")
+			}
+			if mem := memory.Load(memory.DailyPath(projectDir)); mem != "" {
+				b.WriteString("### 项目今日记忆\n\n")
+				b.WriteString(mem)
+				b.WriteString("\n\n")
+			}
 		}
 	}
 	if e.Skills != nil {

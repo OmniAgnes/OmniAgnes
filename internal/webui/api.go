@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -413,6 +414,150 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"files": files})
 }
 
+// ---------- 多媒体附件 ----------
+
+// handleAttachment 把工具产出/上传的本地媒体文件按需回给前端。
+// 图片走 <img>、视频走 <video>、音频走 <audio>，都靠这个端点取字节。
+//
+// 安全：只允许读取「数据目录 / 已登记项目目录 / 服务进程工作目录 / 系统临时目录」
+// 之下的文件，避免把任意路径变成文件读取接口。
+func (s *server) handleAttachment(w http.ResponseWriter, r *http.Request) {
+	p := strings.TrimSpace(r.URL.Query().Get("path"))
+	if p == "" {
+		writeErr(w, "缺少 path 参数", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		writeErr(w, "非法路径", http.StatusBadRequest)
+		return
+	}
+	if !s.attachmentAllowed(abs) {
+		writeErr(w, "该路径不在允许的目录内", http.StatusForbidden)
+		return
+	}
+	st, err := os.Stat(abs)
+	if err != nil || st.IsDir() {
+		writeErr(w, "文件不存在", http.StatusNotFound)
+		return
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		writeErr(w, "读取失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	if ct := mediaContentType(abs); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	// 附件内容按路径不变，可长久缓存；同时支持 Range（视频拖动进度条必需）
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, filepath.Base(abs), st.ModTime(), f)
+}
+
+// attachmentAllowed 判断路径是否落在允许读取的根目录之下。
+func (s *server) attachmentAllowed(abs string) bool {
+	roots := []string{config.DefaultDataDir(), os.TempDir()}
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, cwd)
+	}
+	// 内核的启动工作目录（桌面版是 --cwd 传入的目录）：生成的媒体落在它的 .omni/download/ 下
+	if s.opts.StartCwd != "" {
+		roots = append(roots, s.opts.StartCwd)
+	}
+	if s.cfg != nil && s.cfg.Cwd != "" {
+		roots = append(roots, s.cfg.Cwd)
+	}
+	if s.store != nil {
+		if ps, err := s.store.ListProjects(); err == nil {
+			for _, p := range ps {
+				roots = append(roots, p.Path)
+			}
+		}
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		ra, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(ra, abs)
+		if err != nil {
+			continue
+		}
+		if rel == "." || (!strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)) {
+			return true
+		}
+	}
+	return false
+}
+
+// mediaContentType 按扩展名给出 MIME 类型（未知返回空串，交给 http 自己嗅探）。
+func mediaContentType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".mp4":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".m4a":
+		return "audio/mp4"
+	case ".ogg", ".oga":
+		return "audio/ogg"
+	case ".flac":
+		return "audio/flac"
+	case ".pdf":
+		return "application/pdf"
+	}
+	return ""
+}
+
+// attachmentPayload 把附件转成前端可用的 JSON。
+// 本地文件转成 /api/attachment?path=... （大文件按需读取，不进 SSE 正文），
+// 内联 base64 与远程 URL 原样透传。
+func attachmentPayload(atts []llm.Attachment) []map[string]any {
+	out := make([]map[string]any, 0, len(atts))
+	for _, a := range atts {
+		item := map[string]any{"kind": string(a.Kind), "media_type": a.MediaType, "caption": a.Caption}
+		switch {
+		case a.Path != "":
+			item["src"] = "/api/attachment?path=" + url.QueryEscape(a.Path)
+			item["path"] = a.Path
+		case a.Data != "":
+			// 内联图直接给 data URL（前端 <img> 可直接用）
+			item["src"] = a.DataURL()
+		case a.URL != "":
+			item["src"] = a.URL
+		default:
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 // ---------- 聊 ----------
 
 // handleChat 以 SSE 流式返回一轮问答，并把消息持久化到任务。
@@ -515,7 +660,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// 不用 Run（失败即回滚）：webui 保留失败轮次已产生的内容（至少保留提问），便于回溯
 	rollback := a.Prepare(text)
 	_ = rollback
-	errSent := false // Execute 内部对失败轮已 emit EventError（带 round）；外层不得重复发送
+	errSent := false     // Execute 内部对失败轮已 emit EventError（带 round）；外层不得重复发送
 	var lastCk time.Time // 进行中任务的检查点节流：至少间隔 3s 落盘一次
 	runErr := a.Execute(r.Context(), func(ev agent.Event) {
 		switch ev.Type {
@@ -538,10 +683,14 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case agent.EventToolOutput:
-			send(map[string]any{
+			payload := map[string]any{
 				"type": "tool_output", "round": ev.Round, "id": ev.Tool.ID,
 				"name": ev.Tool.Name, "output": ev.Output, "is_error": ev.IsError,
-			})
+			}
+			if len(ev.Attachments) > 0 {
+				payload["attachments"] = attachmentPayload(ev.Attachments)
+			}
+			send(payload)
 		case agent.EventToolEnd:
 			send(map[string]any{
 				"type": "tool_end", "round": ev.Round, "id": ev.Tool.ID,
@@ -560,6 +709,12 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		case agent.EventError:
 			errSent = true
 			send(map[string]any{"type": "error", "error": ev.Err.Error(), "round": ev.Round})
+		case agent.EventMedia:
+			// 本次提问产出的多媒体在回答结束时集中发出（挂到最终回答展示）
+			send(map[string]any{
+				"type": "media", "round": ev.Round,
+				"attachments": attachmentPayload(ev.Attachments),
+			})
 		case agent.EventDone:
 			// 每次提问的累计 token 用量落盘（usage.jsonl），供设置页统计
 			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {

@@ -20,6 +20,18 @@ export interface ToolResultMsg {
   call_id: string
   content: string
   is_error?: boolean
+  /** 工具产出的多媒体（持久化历史里的原始结构，重开软件后恢复展示用） */
+  attachments?: RawAttachment[]
+}
+
+/** 持久化历史里的原始附件（对应后端 llm.Attachment：Data/URL/Path 三选一） */
+export interface RawAttachment {
+  kind: "image" | "video" | "audio"
+  media_type?: string
+  caption?: string
+  data?: string
+  url?: string
+  path?: string
 }
 
 export interface ChatMessage {
@@ -143,6 +155,15 @@ export interface StateInfo {
   start_cwd: string
 }
 
+// 工具产出的多媒体附件（截图/生成图片/视频/音频），src 可为本地接口路径、data URL 或远程 URL
+export interface AttachmentInfo {
+  kind: "image" | "video" | "audio"
+  media_type?: string
+  caption?: string
+  src: string
+  path?: string
+}
+
 // SSE 聊天事件
 // round = LLM 迭代轮次（从 0 开始）。一次提问会跑多轮，
 // 每轮 = 一段文本 + 若干工具调用，UI 按 round 拆成独立消息。
@@ -152,7 +173,7 @@ export type ChatEvent =
   | { type: "thinking"; text: string; round: number }
   | { type: "tool_start"; round: number; id: string; name: string; args: string }
   | { type: "write_base"; round: number; id: string; old: string }
-  | { type: "tool_output"; round: number; id: string; name: string; output: string; is_error: boolean }
+  | { type: "tool_output"; round: number; id: string; name: string; output: string; is_error: boolean; attachments?: AttachmentInfo[] }
   | { type: "tool_end"; round: number; id: string; name: string; is_error: boolean }
   | { type: "approval_pending"; round: number; id: string }
   | { type: "approval"; id: string; call_id: string; name: string; args: string }
@@ -161,4 +182,5 @@ export type ChatEvent =
   | { type: "question"; id: string; call_id: string; question: string; options?: string[] }
   | { type: "question_answered"; id: string; call_id: string; answer: string }
   | { type: "error"; error: string; round: number }
+  | { type: "media"; round: number; attachments: AttachmentInfo[] }
   | { type: "done"; model?: string; round: number }

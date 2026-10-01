@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"omni/internal/config"
+	"omni/internal/llm"
 	"omni/internal/tools"
 )
 
@@ -232,18 +234,25 @@ func convertTool(server string, session *mcp.ClientSession, tl *mcp.Tool) *tools
 	desc = fmt.Sprintf("[mcp:%s] %s", server, desc)
 	readOnly := tl.Annotations != nil && tl.Annotations.ReadOnlyHint
 
+	call := func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{
+			Name:      tl.Name,
+			Arguments: args,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
 	return &tools.Tool{
 		Name:        name,
 		Description: desc,
 		Parameters:  inputSchema(tl.InputSchema),
 		ReadOnly:    readOnly,
-		Execute: func(ctx context.Context, args map[string]any, env *tools.Env) (string, error) {
-			res, err := session.CallTool(ctx, &mcp.CallToolParams{
-				Name:      tl.Name,
-				Arguments: args,
-			})
+		ExecuteMedia: func(ctx context.Context, args map[string]any, env *tools.Env) (string, []llm.Attachment, error) {
+			res, err := call(ctx, args)
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			out := contentToText(res.Content)
 			if out == "" && res.StructuredContent != nil {
@@ -252,11 +261,69 @@ func convertTool(server string, session *mcp.ClientSession, tl *mcp.Tool) *tools
 				}
 			}
 			if res.IsError {
-				return out, fmt.Errorf("%s", out)
+				return out, nil, fmt.Errorf("%s", out)
 			}
-			return out, nil
+			return out, contentToMedia(res.Content), nil
 		},
 	}
+}
+
+// contentToMedia 把 MCP 内容块里的多媒体（图片/音频/带 MIME 的资源与链接）提取成附件，
+// 供 UI 渲染（图片还会送进多模态模型）。纯文本块不产出附件。
+func contentToMedia(contents []mcp.Content) []llm.Attachment {
+	var out []llm.Attachment
+	for _, c := range contents {
+		switch t := c.(type) {
+		case *mcp.ImageContent:
+			// SDK 已把 wire 上的 base64 解成原始字节，这里再转回 base64（llm.Attachment.Data 约定存 base64）
+			out = append(out, llm.Attachment{Kind: llm.KindImage, MediaType: t.MIMEType, Data: base64.StdEncoding.EncodeToString(t.Data)})
+		case *mcp.AudioContent:
+			out = append(out, llm.Attachment{Kind: llm.KindAudio, MediaType: t.MIMEType, Data: base64.StdEncoding.EncodeToString(t.Data)})
+		case *mcp.ResourceLink:
+			if a, ok := resourceAttachment(t.MIMEType, t.URI); ok {
+				out = append(out, a)
+			}
+		case *mcp.EmbeddedResource:
+			if t.Resource == nil {
+				continue
+			}
+			mime := t.Resource.MIMEType
+			if a, ok := resourceAttachment(mime, t.Resource.URI); ok {
+				out = append(out, a)
+				continue
+			}
+			// 内联 blob：按 MIME 转 base64 附件
+			if len(t.Resource.Blob) == 0 {
+				continue
+			}
+			b64 := base64.StdEncoding.EncodeToString(t.Resource.Blob)
+			switch {
+			case strings.HasPrefix(mime, "image/"):
+				out = append(out, llm.Attachment{Kind: llm.KindImage, MediaType: mime, Data: b64})
+			case strings.HasPrefix(mime, "audio/"):
+				out = append(out, llm.Attachment{Kind: llm.KindAudio, MediaType: mime, Data: b64})
+			case strings.HasPrefix(mime, "video/"):
+				out = append(out, llm.Attachment{Kind: llm.KindVideo, MediaType: mime, Data: b64})
+			}
+		}
+	}
+	return out
+}
+
+// resourceAttachment 把远程 http(s) 资源转成 URL 型附件；kind 按 MIME 或扩展名推断。
+func resourceAttachment(mime, uri string) (llm.Attachment, bool) {
+	if !strings.HasPrefix(uri, "http://") && !strings.HasPrefix(uri, "https://") {
+		return llm.Attachment{}, false
+	}
+	switch {
+	case strings.HasPrefix(mime, "image/"), mime == "" && (strings.HasSuffix(uri, ".png") || strings.HasSuffix(uri, ".jpg") || strings.HasSuffix(uri, ".jpeg") || strings.HasSuffix(uri, ".webp") || strings.HasSuffix(uri, ".gif")):
+		return llm.Attachment{Kind: llm.KindImage, MediaType: mime, URL: uri}, true
+	case strings.HasPrefix(mime, "video/"), mime == "" && (strings.HasSuffix(uri, ".mp4") || strings.HasSuffix(uri, ".webm") || strings.HasSuffix(uri, ".mov")):
+		return llm.Attachment{Kind: llm.KindVideo, MediaType: mime, URL: uri}, true
+	case strings.HasPrefix(mime, "audio/"), mime == "" && (strings.HasSuffix(uri, ".mp3") || strings.HasSuffix(uri, ".wav") || strings.HasSuffix(uri, ".m4a")):
+		return llm.Attachment{Kind: llm.KindAudio, MediaType: mime, URL: uri}, true
+	}
+	return llm.Attachment{}, false
 }
 
 // inputSchema 把 MCP 的 inputSchema 转为 JSON Schema map。

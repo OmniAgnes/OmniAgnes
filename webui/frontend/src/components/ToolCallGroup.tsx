@@ -42,7 +42,8 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="flex items-center gap-1.5">
-        <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground hover:bg-muted/50 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors cursor-pointer">
+        {/* pr-2 而非 px-2：图标行左边不缩进，与下方 AI 回复正文左边缘对齐（用户要求） */}
+        <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground hover:bg-muted/50 flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pr-2 text-left text-xs transition-colors cursor-pointer">
           {StatusIcon && (
             <StatusIcon className={cn("size-3.5 shrink-0", status.cls, running > 0 && "animate-spin")} />
           )}
