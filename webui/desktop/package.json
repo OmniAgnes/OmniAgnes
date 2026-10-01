@@ -1,7 +1,7 @@
 {
     "name":  "omni-desktop",
     "private":  true,
-    "version":  "0.0.8",
+    "version":  "0.0.9",
     "description":  "omni 妗岄潰鐗堬細Electron 澹?+ omni --web 鍐呮牳",
     "main":  "main.js",
     "scripts":  {
