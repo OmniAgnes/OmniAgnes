@@ -1,8 +1,8 @@
-﻿{
+{
     "name":  "omni-desktop",
     "private":  true,
     "version":  "0.0.6",
-    "description":  "omni 濡楀矂娼伴悧鍫窗Electron 婢?+ omni --web 閸愬懏鐗?,
+    "description":  "omni 妗岄潰鐗堬細Electron 澹?+ omni --web 鍐呮牳",
     "main":  "main.js",
     "scripts":  {
                     "start":  "electron .",
