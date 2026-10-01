@@ -711,6 +711,8 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 			send(map[string]any{"type": "approval_pending", "round": ev.Round, "id": ev.Tool.ID})
 		case agent.EventQuestion:
 			send(map[string]any{"type": "question_pending", "round": ev.Round, "id": ev.Tool.ID})
+		case agent.EventRetry:
+			send(map[string]any{"type": "retry", "round": ev.Round, "attempt": ev.Retry.Attempt, "max": ev.Retry.Max})
 		case agent.EventError:
 			errSent = true
 			send(map[string]any{"type": "error", "error": ev.Err.Error(), "round": ev.Round})

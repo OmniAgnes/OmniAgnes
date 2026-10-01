@@ -49,6 +49,8 @@ interface RunState {
   items: ViewItem[]
   streaming: boolean
   thinking: boolean
+  /** 上游瞬时故障的自动重试进度；非空时「处理中」指示器显示「重试 n/10」 */
+  retry?: { attempt: number; max: number }
   roundBase: number
   lastRound: number
   queue: QueuedMsg[]
@@ -78,6 +80,8 @@ export default function App() {
   const [loadErr, setLoadErr] = useState("")
   // 递增即让右侧输入框聚焦（新建任务、打开任务、点「任务」TAB）
   const [focusSignal, setFocusSignal] = useState(0)
+  // 递增即让聊天消息列表滚到底部（侧栏点击任务、重开当前任务）
+  const [taskOpenSignal, setTaskOpenSignal] = useState(0)
   // 当前项目可用技能（输入 / 时提示补全）
   const [skills, setSkills] = useState<SkillInfo[]>([])
   // 无任务时（首次发送会即时建任务）新任务默认用的访问模式；有任务时以 run.mode 为准
@@ -272,6 +276,8 @@ export default function App() {
   const openTask = async (id: string) => {
     setActiveTaskId(id)
     focusInput()
+    // 点开任务即归底：含重开当前任务（标题不变时 [title] 效果不会触发）
+    setTaskOpenSignal((n) => n + 1)
     // 已有运行状态（可能正在后台执行）：直接复用，绝不用服务端快照覆盖实时进度
     if (runsRef.current[id]) {
       bump()
@@ -375,6 +381,8 @@ export default function App() {
     if ("round" in ev) {
       r.lastRound = Math.max(r.lastRound, ev.round)
     }
+    // 重试指示：模型恢复活动（任何非 retry 事件）即清掉，指示器回到「处理中…」
+    if (ev.type !== "retry") r.retry = undefined
     switch (ev.type) {
       case "start":
         r.title = ev.title
@@ -404,6 +412,10 @@ export default function App() {
           if (cur.thinkingActive) cur.thinkingActive = false
           r.items = items
         }
+        break
+      case "retry":
+        // 上游瞬时故障、provider 自动重试中：挂在运行状态上，由「处理中」指示器显示
+        r.retry = { attempt: ev.attempt, max: ev.max }
         break
       case "thinking":
         {
@@ -615,6 +627,7 @@ export default function App() {
         rr.roundBase = Math.max(rr.roundBase, baseAtSend + rr.lastRound + 1)
         rr.streaming = false
         rr.thinking = false
+        rr.retry = undefined
         bump()
       }
       await refreshTasks()
@@ -848,12 +861,14 @@ export default function App() {
           items={run?.items ?? []}
           streaming={run?.streaming ?? false}
           thinking={run?.thinking ?? false}
+          retry={run?.retry}
           queue={run?.queue ?? []}
           draftSeed={draftSeed}
           models={modelGroups}
           model={state?.model ?? ""}
           skills={skills}
           focusSignal={focusSignal}
+          taskOpenSignal={taskOpenSignal}
           emptyHint={emptyHint}
           onSend={submitText}
           onStop={stop}

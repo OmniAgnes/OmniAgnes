@@ -92,6 +92,8 @@ interface ChatProps {
   streaming: boolean
   /** 收到用户消息后、模型首个 token 前的「思考中」状态 */
   thinking: boolean
+  /** 上游瞬时故障的自动重试进度；非空时「处理中」指示器显示「重试 n/10」 */
+  retry?: { attempt: number; max: number }
   /** 处理中排队的消息（显示在输入框上方，可发送/编辑/删除） */
   queue: QueuedMsg[]
   /** seq 递增即把 text 回填输入框（队列「编辑」） */
@@ -102,6 +104,8 @@ interface ChatProps {
   skills: SkillInfo[]
   /** 递增即触发输入框聚焦（新建任务、打开任务、点 TAB 后自动对焦） */
   focusSignal?: number
+  /** 递增即把消息列表滚到底部（侧栏点击任务、重开当前任务） */
+  taskOpenSignal?: number
   emptyHint?: React.ReactNode
   onSend: (text: string, files?: File[]) => void
   onStop: () => void
@@ -131,12 +135,14 @@ export function Chat({
   items,
   streaming,
   thinking,
+  retry,
   queue,
   draftSeed,
   models,
   model,
   skills,
   focusSignal,
+  taskOpenSignal,
   emptyHint,
   onSend,
   onStop,
@@ -157,6 +163,8 @@ export function Chat({
   const fileRef = useRef<HTMLInputElement>(null)
   // 用户手动上滚后不再强行拉回底部，直到重新滚到底
   const stickRef = useRef(true)
+  // 是否离开底部：离开后显示「回到底部」悬浮按钮
+  const [notBottom, setNotBottom] = useState(false)
   // 待发送的附件：随下一条消息一起上传发出
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
 
@@ -172,22 +180,32 @@ export function Chat({
   const [slashIdx, setSlashIdx] = useState(0)
   useEffect(() => setSlashIdx(0), [draft])
 
-  // 记录是否贴近底部：贴底才自动跟随新内容
+  // 记录是否贴近底部：贴底才自动跟随新内容；离底显示「回到底部」悬浮按钮
   const onScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    stickRef.current = near
+    setNotBottom((prev) => (prev === !near ? prev : !near))
   }
 
-  // 滚到底（切任务、首次渲染）时立刻归位
+  // 滚到底（切任务、首次渲染、点「回到底部」按钮）时立刻归位
   const jumpToBottom = () => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
+    stickRef.current = true
+    setNotBottom(false)
   }
 
   useEffect(() => {
     jumpToBottom()
   }, [])
+
+  // 侧栏点击任务（含重开当前任务）：立即归底并恢复贴底跟随
+  useEffect(() => {
+    if (taskOpenSignal == null) return
+    jumpToBottom()
+  }, [taskOpenSignal])
 
   // 新建任务 / 打开任务 / 点「任务」TAB 后，右侧输入框自动对焦
   useEffect(() => {
@@ -204,9 +222,8 @@ export function Chat({
     inputRef.current?.focus()
   }, [draftSeed])
 
-  // 切换任务时列表整体替换：归位到底部，并对新任务恢复"贴底跟随"
+  // 切换任务时列表整体替换：归位到底部（jumpToBottom 会恢复贴底跟随）
   useEffect(() => {
-    stickRef.current = true
     jumpToBottom()
   }, [title])
 
@@ -353,15 +370,30 @@ export function Chat({
         )}
       </div>
 
-      {/* 消息流：原生滚动容器（min-h-0 保证在 flex 里能收缩） */}
-      <div ref={scrollRef} onScroll={onScroll} className="omni-scroll min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-6 md:px-6">
-          {items.length === 0 && emptyHint}
-          {renderItems()}
+      {/* 消息流：原生滚动容器（min-h-0 保证在 flex 里能收缩）；
+          上滚离开底部时右下角浮现「回到底部」按钮 */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} onScroll={onScroll} className="omni-scroll h-full overflow-y-auto">
+          <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-6 md:px-6">
+            {items.length === 0 && emptyHint}
+            {renderItems()}
 
-          {/* 底部固定区：处理中动画，永远在消息流最后 */}
-          {showThinking && <ProcessingIndicator />}
+            {/* 底部固定区：处理中动画，永远在消息流最后 */}
+            {showThinking && <ProcessingIndicator retry={retry} />}
+          </div>
         </div>
+        {notBottom && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={jumpToBottom}
+            title="回到底部"
+            className="bg-card text-muted-foreground hover:text-foreground absolute right-4 bottom-3 z-20 rounded-full border shadow-md md:right-6"
+          >
+            <ChevronDownIcon />
+            回到底部
+          </Button>
+        )}
       </div>
 
       {/* 输入区：提问/审批/任务清单/错误浮条固定在输入框上方；左=访问模式，右=模型选择 + 发送 */}
@@ -513,7 +545,8 @@ export function Chat({
               )}
               {streaming ? (
                 <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title="中断生成">
-                  <SquareIcon />
+                  {/* 实心方块：更像"停止"语义（lucide 默认是描边空心） */}
+                  <SquareIcon fill="currentColor" />
                 </Button>
               ) : (
                 <Button size="icon" className="rounded-full" onClick={submit} title="发送">
@@ -528,12 +561,13 @@ export function Chat({
   )
 }
 
-/** 处理中动画：固定在消息流最末尾，跟着工具调用组下方 */
-function ProcessingIndicator() {
+/** 处理中动画：固定在消息流最末尾，跟着工具调用组下方。
+ * 上游自动重试中显示「重试 n/10」（重试结束、模型恢复输出后自动回到「处理中…」）。 */
+function ProcessingIndicator({ retry }: { retry?: { attempt: number; max: number } }) {
   return (
     <div className="text-muted-foreground flex items-center gap-2 py-1 pr-2 text-sm">
       <Loader2Icon className="size-3.5 shrink-0 animate-spin" />
-      <span>处理中…</span>
+      <span>{retry ? `重试 ${retry.attempt}/${retry.max}` : "处理中…"}</span>
     </div>
   )
 }
@@ -912,9 +946,10 @@ function QuestionBanner({
 }
 
 /** 任务清单面板：agent 的 todo 工具进度，固定在输入框上方，可折叠。
- * active = 当前轮还在运行；出错/中断后 in_progress 条目不再转圈，下轮开始才恢复。 */
+ * 新出现的清单默认收起，避免遮挡消息流；active = 当前轮还在运行；
+ * 出错/中断后 in_progress 条目不再转圈，下轮开始才恢复。 */
 function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const done = items.filter((t) => t.status === "completed").length
   return (
     <div className="bg-card mx-auto mb-2 max-w-3xl rounded-xl border px-3 py-2 shadow-xs">

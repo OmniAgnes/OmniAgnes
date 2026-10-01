@@ -40,6 +40,7 @@ const (
 	EventQuestion   EventType = "question" // ask 工具：等待用户回答澄清问题
 	EventError      EventType = "error"
 	EventMedia      EventType = "media" // 本轮产出的多媒体（图片/视频/音频），在回答结束时集中发出
+	EventRetry      EventType = "retry" // 上游瞬时故障，provider 正在自动重试（供 UI 显示重试进度）
 	EventDone       EventType = "done"  // 本轮问答结束
 )
 
@@ -56,6 +57,8 @@ type Event struct {
 	Attachments []llm.Attachment
 	// Usage 仅在 EventDone 上有值：本次提问所有 LLM 调用累计的令牌用量。
 	Usage *llm.Usage
+	// Retry 仅在 EventRetry 上有值：上游重试进度。
+	Retry *llm.RetryInfo
 	// Round 是 LLM 迭代轮次（从 0 开始）。
 	// 一次提问会跑多轮：每轮 = 一段文本 + 若干工具调用。
 	// UI 据此把每轮拆成独立消息，否则各轮文本与工具会全部堆在一起。
@@ -287,6 +290,9 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			case llm.EventReasoning:
 				// 思考/推理内容：只透传给 UI 展示，不进历史
 				emit(Event{Type: EventReasoning, Text: ev.Text, Round: round})
+			case llm.EventRetry:
+				// 上游瞬时故障正在自动重试：透传重试进度，不进思考流
+				emit(Event{Type: EventRetry, Retry: ev.Retry, Round: round})
 			case llm.EventError:
 				emit(Event{Type: EventError, Err: ev.Err, Round: round})
 			}

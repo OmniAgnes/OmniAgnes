@@ -151,12 +151,19 @@ const (
 	EventDone      StreamEventType = "done"
 	EventError     StreamEventType = "error"
 	EventUsage     StreamEventType = "usage" // 令牌用量
+	EventRetry     StreamEventType = "retry" // 上游瞬时故障，provider 正在自动重试（仅 UI 展示）
 )
 
 // Usage 记录令牌统计。
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+}
+
+// RetryInfo 描述一次上游重试的进度（仅 UI 展示用，不进历史）。
+type RetryInfo struct {
+	Attempt int // 当前第几次重试（从 1 起）
+	Max     int // 最多重试次数
 }
 
 // StreamEvent 是流式回调事件。
@@ -166,6 +173,7 @@ type StreamEvent struct {
 	Tool  *ToolCall
 	Usage *Usage
 	Err   error
+	Retry *RetryInfo
 }
 
 // ChatRequest 是 Chat 的入参。

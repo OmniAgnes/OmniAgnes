@@ -287,9 +287,9 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 		return nil, err
 	}
 
-	// 带退避重试地发起请求。
-	// 为什么要重试：中转网关/免费模型（如 openrouter 的 :free 档）渠道池浅，
-	// 偶发返回 503「无可用渠道」/ 502 / 429，单次失败不代表模型不可用。
+	// 带重试地发起请求（瞬时故障最多重试 10 次、每次间隔 5 秒）。
+	// 为什么要重试：中转网关/免费模型（如 openrouter 的 :free 档、agnes）渠道池浅，
+	// 偶发返回 500「上游失败」/ 503「无可用渠道」/ 502 / 429，单次失败不代表模型不可用。
 	// 只对可重试的状态码重试；4xx（如 401 key 失效）立刻返回，避免掩盖真实配置错误。
 	resp, err := p.doWithRetry(ctx, body, onEvent)
 	if err != nil {
@@ -305,32 +305,40 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 }
 
 // retryableStatus 可重试的 HTTP 状态码：网关/限流类瞬时错误。
-// 刻意不含 400/401/403/404 —— 那是请求或配置本身有问题，重试没意义。
+// 500 也算——中转网关（如 agnes）上游故障时回「请求上游失败，请稍后重试」，属瞬时故障。
+// 刻意不含 4xx（如 400/401/403/404）—— 那是请求或配置本身有问题，重试没意义。
 func retryableStatus(code int) bool {
 	switch code {
-	case http.StatusTooManyRequests, // 429 限流
-		http.StatusBadGateway,          // 502
-		http.StatusServiceUnavailable,  // 503
-		http.StatusGatewayTimeout:      // 504
+	case http.StatusInternalServerError,     // 500 上游瞬时故障
+		http.StatusTooManyRequests,           // 429 限流
+		http.StatusBadGateway,                // 502
+		http.StatusServiceUnavailable,        // 503
+		http.StatusGatewayTimeout:            // 504
 		return true
 	}
 	return false
 }
 
-// doWithRetry 发送请求，遇可重试状态码按指数退避重试。
+// 重试策略：最多 10 次重试（含首次共 11 次请求），每次重试前固定等 5 秒。
+// 网关/免费模型渠道池浅，偶发 500/503/429，单次失败不代表模型不可用。
+const (
+	maxRetries = 10
+	retryDelay = 5 * time.Second
+)
+
+// doWithRetry 发送请求，遇可重试状态码或网络错误按固定间隔重试。
 // 重试之间会通过 onEvent 发一条 reasoning 提示，让用户知道正在重试（否则界面像卡死）。
 func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent func(StreamEvent) error) (*http.Response, error) {
-	const maxAttempts = 3
+	maxAttempts := maxRetries + 1
 	var lastErr error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
-			// 退避：1s → 2s（受 ctx 取消控制）
-			delay := time.Duration(1<<(attempt-2)) * time.Second
+			// 每次重试前等 5 秒（受 ctx 取消控制）
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(delay):
+			case <-time.After(retryDelay):
 			}
 		}
 
@@ -348,7 +356,7 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent f
 			if attempt == maxAttempts {
 				return nil, lastErr
 			}
-			notifyRetry(onEvent, attempt, maxAttempts, err)
+			notifyRetry(onEvent, attempt, maxRetries)
 			continue
 		}
 
@@ -362,20 +370,21 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent f
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
 		lastErr = fmt.Errorf("provider 返回 %d", resp.StatusCode)
-		notifyRetry(onEvent, attempt, maxAttempts, lastErr)
+		notifyRetry(onEvent, attempt, maxRetries)
 	}
 
 	return nil, lastErr
 }
 
-// notifyRetry 在重试前给前端一条提示，避免长等待时界面看起来像卡死。
-func notifyRetry(onEvent func(StreamEvent) error, attempt, max int, cause error) {
+// notifyRetry 在重试前给前端一条独立的重试事件（不混进模型思考流），
+// 让界面在「处理中」位置显示重试进度，避免长等待时看起来像卡死。
+func notifyRetry(onEvent func(StreamEvent) error, attempt, max int) {
 	if onEvent == nil {
 		return
 	}
 	_ = onEvent(StreamEvent{
-		Type: EventReasoning,
-		Text: fmt.Sprintf("[重试 %d/%d] 上游暂时不可用（%v），正在重连…", attempt, max, cause),
+		Type:  EventRetry,
+		Retry: &RetryInfo{Attempt: attempt, Max: max},
 	})
 }
 
