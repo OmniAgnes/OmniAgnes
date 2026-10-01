@@ -19,16 +19,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { UsagePanel } from "@/components/UsagePanel"
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -182,6 +172,11 @@ const MCP_ENV_HINTS: Record<string, string> = {
 
 export function SettingsDialog({ open, onOpenChange, state, onStateChange, onProvidersSaved }: SettingsDialogProps) {
   const [section, setSection] = useState<SectionId>("model")
+  // 每次打开弹窗递增：强制使用量面板重挂载重新拉取（对话期间数据会变化）
+  const [usageSeq, setUsageSeq] = useState(0)
+  useEffect(() => {
+    if (open) setUsageSeq((s) => s + 1)
+  }, [open])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [theme, setTheme] = useState<Theme>(state?.theme ?? "dark")
   const [themeColor, setThemeColor] = useState<ThemeColor>(state?.theme_color ?? "zinc")
@@ -194,7 +189,6 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
   const [mcpDraft, setMcpDraft] = useState<MCPDraft | null>(null)
   const [dirs, setDirs] = useState<SkillDirs>({})
   const [toast, setToast] = useState("")
-  const [confirm, setConfirm] = useState<{ name: string } | null>(null)
   const [err, setErr] = useState("")
   const [saving, setSaving] = useState(false)
   /** 供应商配置保存成功提示（区别于技能/MCP 的 toast） */
@@ -357,12 +351,13 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     }
   }
 
-  // 删除 MCP 服务器
-  const removeMcp = async (name: string) => {
+  // 启用/禁用 MCP 服务器（列表直接切换，等同编辑弹窗里的启用开关）
+  const toggleMcp = async (name: string) => {
     setErr("")
     try {
-      const next = { ...mcpServers }
-      delete next[name]
+      const cur = mcpServers[name]
+      if (!cur) return
+      const next = { ...mcpServers, [name]: { ...cur, disabled: !cur.disabled } }
       const r = await api.saveMcpConfig(next)
       setMcpServers(r.servers ?? {})
       void refreshMcp(1200)
@@ -636,7 +631,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               className="shrink-0"
                               onClick={() => void toggleSkill(s.name, !s.disabled)}
                             >
-                              {s.disabled ? "禁用中" : "启用中"}
+                              {s.disabled ? "禁用" : "启用"}
                             </Button>
                           </div>
                         ))}
@@ -812,7 +807,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                   size="sm"
                                   onClick={() => setMcpDraft({ ...mcpDraft, disabled: !mcpDraft.disabled })}
                                 >
-                                  {mcpDraft.disabled ? "已禁用" : "启用中"}
+                                  {mcpDraft.disabled ? "禁用" : "启用"}
                                 </Button>
                               </div>
 
@@ -853,7 +848,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               {cfg.disabled && <Badge variant="outline">已禁用</Badge>}
                               <span className="text-muted-foreground w-full text-xs sm:w-auto sm:flex-1">
                                 {st?.connected ? `${st.tool_count} 个工具` : st?.error ? st.error : ""}
-                              </span>                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              </span>
+                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                                 <Button
                                   variant="ghost"
                                   size="icon-sm"
@@ -862,16 +858,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                 >
                                   <PencilIcon />
                                 </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  className="text-muted-foreground hover:text-destructive"
-                                  onClick={() => setConfirm({ name })}
-                                  title="删除服务器"
-                                >
-                                  <Trash2Icon />
-                                </Button>
                               </div>
+                              <Button
+                                variant={cfg.disabled ? "outline" : "secondary"}
+                                size="sm"
+                                className="shrink-0"
+                                onClick={() => void toggleMcp(name)}
+                              >
+                                {cfg.disabled ? "禁用" : "启用"}
+                              </Button>
                               {envMissing && (
                                 <div className="text-amber-600 dark:text-amber-400 w-full text-xs">
                                   还需要环境变量：{envHint}
@@ -886,42 +881,11 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                 </div>
               )}
 
-              {section === "usage" && (
-                <div className="flex flex-col gap-3">
-                  <UsagePanel />
-                </div>
-              )}
+              {section === "usage" && <UsagePanel key={usageSeq} />}
             </div>
           </div>
         </div>
 
-        {/* 删除 MCP 服务器确认 */}
-        <AlertDialog
-          open={confirm !== null}
-          onOpenChange={(o) => {
-            if (!o) setConfirm(null)
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>删除 MCP 服务器？</AlertDialogTitle>
-              <AlertDialogDescription>
-                将从配置中移除「{confirm?.name}」并断开连接，不影响已保存的配置文件。
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  if (confirm) void removeMcp(confirm.name)
-                  setConfirm(null)
-                }}
-              >
-                删除
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </DialogContent>
     </Dialog>
   )
@@ -1042,10 +1006,6 @@ function ProviderCard({
             )}
           />
           <span className="truncate text-sm font-medium">{provider.name || "未命名供应商"}</span>
-          <Badge variant="secondary">{PROVIDER_TYPES.find((t) => t.value === provider.type)?.label ?? provider.type}</Badge>
-          <span className="text-muted-foreground truncate text-xs">
-            {(provider.models ?? []).length} 个模型
-          </span>
         </button>
         <Button
           variant="ghost"

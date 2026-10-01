@@ -75,6 +75,8 @@ export interface UsageRecord {
   model: string
   input: number
   output: number
+  /** 聚合结果：合并进该 (日期, 模型) 的对话次数 */
+  calls?: number
 }
 
 // 技能详情（含 SKILL.md 原文，供编辑）

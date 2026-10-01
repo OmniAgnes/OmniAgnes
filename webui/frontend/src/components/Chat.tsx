@@ -595,7 +595,7 @@ function UserBubble({ text, attachments, onEdit }: { text: string; attachments?:
   const copyBtn = (
     <span
       className={cn(
-        "group/copy absolute z-10 flex items-center gap-0.5 opacity-0 transition-opacity",
+        "group/copy absolute z-10 flex items-center gap-1.5 opacity-0 transition-opacity",
         "hover:opacity-100 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100",
         long ? "top-1/2 right-full -translate-y-1/2 mr-0.5" : "top-full right-0 mt-0.5",
       )}

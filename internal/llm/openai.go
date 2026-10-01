@@ -272,6 +272,8 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 		"messages":    messages,
 		"stream":      true,
 		"temperature": 0.2,
+		// 流式模式下 usage 默认不下发，必须显式请求，否则用量统计全是 0
+		"stream_options": map[string]any{"include_usage": true},
 	}
 	if len(tools) > 0 {
 		payload["tools"] = tools

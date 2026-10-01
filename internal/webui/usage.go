@@ -27,6 +27,8 @@ type usageRecord struct {
 	Model  string `json:"model"`
 	Input  int    `json:"input"`
 	Output int    `json:"output"`
+	// Calls 仅聚合结果里有值：合并进该 (日期, 模型) 的记录条数 = 对话次数
+	Calls int `json:"calls,omitempty"`
 }
 
 // recordUsage 尽力落盘一条用量；失败静默（统计不能影响对话）。
@@ -79,11 +81,19 @@ func (s *server) handleUsage(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				cp := rec
 				cp.TS = 0
+				if cp.Calls == 0 {
+					cp.Calls = 1
+				}
 				cur = &cp
 				sums[k] = cur
+				continue
 			}
 			cur.Input += rec.Input
 			cur.Output += rec.Output
+			if rec.Calls == 0 {
+				rec.Calls = 1
+			}
+			cur.Calls += rec.Calls
 		}
 	}
 

@@ -96,7 +96,8 @@ export function UsagePanel() {
     for (const r of filtered) {
       input += r.input
       output += r.output
-      calls += r.input + r.output > 0 ? 1 : 0
+      // 聚合记录带 calls（合并的记录条数 = 对话次数）；无该字段的旧数据按 1 条算
+      calls += r.calls ?? 1
     }
     return { input, output, all: input + output, calls }
   }, [filtered])
@@ -111,7 +112,7 @@ export function UsagePanel() {
         if (r.date !== day) continue
         input += r.input
         output += r.output
-        if (r.input + r.output > 0) calls += 1
+        calls += r.calls ?? 1
       }
       return { input, output, all: input + output, calls }
     }
