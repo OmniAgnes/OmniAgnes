@@ -17,26 +17,30 @@ func ResolveProvider(cfg *config.Config) (Provider, string, error) {
 		if target == "" {
 			target = cfg.Model
 		}
-		var pick *config.ProviderConfig
-		if target != "" {
-			for i := range cfg.Providers {
-				if cfg.Providers[i].Model == target || cfg.Providers[i].HasModel(target) {
-					pick = &cfg.Providers[i]
-					break
-				}
+	var pick *config.ProviderConfig
+	if target != "" {
+		for i := range cfg.Providers {
+			if cfg.Providers[i].Model == target || cfg.Providers[i].HasModel(target) {
+				pick = &cfg.Providers[i]
+				break
 			}
 		}
-		if pick == nil {
-			for i := range cfg.Providers {
-				if cfg.Providers[i].Default {
-					pick = &cfg.Providers[i]
-					break
-				}
+	}
+	// 目标指向的供应商若无可用 key（远程 API），跳过——避免 resolve 落到失效条目上
+	if pick != nil && pick.ResolveAPIKey() == "" && pick.Type != "ollama" && !strings.Contains(pick.BaseURL, "localhost") {
+		pick = nil
+	}
+	if pick == nil {
+		for i := range cfg.Providers {
+			if cfg.Providers[i].Default {
+				pick = &cfg.Providers[i]
+				break
 			}
 		}
-		if pick == nil {
-			pick = &cfg.Providers[0]
-		}
+	}
+	if pick == nil {
+		pick = &cfg.Providers[0]
+	}
 		p := *pick
 		apiKey := p.ResolveAPIKey()
 		// ollama/本地端点无需 key

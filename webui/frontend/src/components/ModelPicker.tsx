@@ -14,6 +14,8 @@ interface ModelPickerProps {
 /** 一级（供应商）面板宽度，供二级定位用 */
 const PANEL_W = 160 // w-40
 const PANEL_GAP = 6
+/** 一级面板最大高度 max-h-72，用于翻向判断 */
+const PANEL_H = 288
 
 /**
  * 二级模型选择（点击展开）：
@@ -41,6 +43,9 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
   // 贴近输入框右下方；空间不足时向上翻转
   const [dropUp, setDropUp] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
 
   // 统一关闭：清掉展开项，保证下次打开只有一级
   const close = () => {
@@ -59,7 +64,6 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
     const anchor = wrapRef.current
     if (!anchor) return
     const rect = anchor.getBoundingClientRect()
-    const PANEL_H = 288 // max-h-72
     setDropUp(window.innerHeight - rect.bottom < PANEL_H + 16 && rect.top > PANEL_H)
   }, [open])
 
@@ -109,9 +113,9 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
           }}
           className="absolute z-50"
         >
-          {/* 一级面板：在文档流里，位置由 right:0 锚定，不受二级影响 */}
-          <div className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
-            <div className="omni-scroll max-h-72 overflow-y-auto p-1">
+          {/* 一级面板：在文档流里，位置由 right:0锚定，不受二级影响 */}
+          <div ref={panelRef} className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
+            <div ref={scrollRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
               {groups.length === 0 ? (
                 <div className="text-muted-foreground px-2 py-1.5 text-xs">没有可用供应商</div>
               ) : (
@@ -119,6 +123,10 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
                   <button
                     key={g.provider}
                     type="button"
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(g.provider, el)
+                      else rowRefs.current.delete(g.provider)
+                    }}
                     // 点击才展开二级；已展开时悬停可在供应商间快速切换
                     onMouseEnter={() => {
                       if (hoverProvider) setHoverProvider(g.provider)
@@ -141,9 +149,14 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
             </div>
           </div>
 
-          {/* 二级：absolute 钉在一级左侧，出现/消失都不影响一级位置 */}
+          {/* 二级：absolute 钉在一级左侧，垂直方向锚定到一级当前选中行的中心 */}
           {hoverProvider && (
-            <Flyout models={models} model={model} pick={pick} />
+            <Flyout
+              models={models}
+              model={model}
+              pick={pick}
+              anchor={rowRefs.current.get(hoverProvider)}
+            />
           )}
         </div>
       )}
@@ -151,22 +164,56 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
   )
 }
 
-/** 二级：模型飞层，绝对定位在一级面板左侧。 */
+/** 二级：模型飞层，绝对定位在一级面板左侧，垂直方向锚定到一级当前选中行。 */
 function Flyout({
   models,
   model,
   pick,
+  anchor,
 }: {
   models: string[]
   model: string
   pick: (m: string) => void
+  /** 一级选中行按钮：二级 top 相对它（offsetTop 天然以一级面板为基准，无需再减 scrollTop） */
+  anchor?: HTMLButtonElement | null
 }) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef<HTMLButtonElement>(null)
+  // 默认顶对齐；有锚点时中心对齐
+  const [top, setTop] = useState(0)
+
+  // 当前模型滚到可视区（provider 下模型多时默认定位到选中项）
+  useEffect(() => {
+    const list = listRef.current
+    const item = activeRef.current
+    if (!list || !item) return
+    const t = item.offsetTop
+    if (t < list.scrollTop) list.scrollTop = t
+    else if (t + item.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = t + item.offsetHeight - list.clientHeight
+    }
+  }, [models, model])
+
+  // 垂直定位：选中行中心对齐二级面板，clamp 进一级面板可视高度内
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    if (anchor) {
+      const listH = list.offsetHeight || 0
+      const center = anchor.offsetTop + anchor.offsetHeight / 2 - listH / 2
+      const max = Math.max(0, (list.parentElement?.clientHeight ?? listH) - listH)
+      setTop(Math.max(0, Math.min(center, max)))
+    } else {
+      setTop(0)
+    }
+  }, [anchor, models])
+
   return (
     <div
-      className="bg-popover text-popover-foreground absolute top-0 z-0 w-56 rounded-md border shadow-md"
-      style={{ right: PANEL_W + PANEL_GAP }}
+      className="bg-popover text-popover-foreground absolute z-0 w-56 rounded-md border shadow-md"
+      style={{ right: PANEL_W + PANEL_GAP, top }}
     >
-      <div className="omni-scroll max-h-72 overflow-y-auto p-1">
+      <div ref={listRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
         {models.length === 0 ? (
           <div className="text-muted-foreground px-2 py-1.5 text-xs">该供应商下没有模型</div>
         ) : (
@@ -174,6 +221,7 @@ function Flyout({
             <button
               key={m}
               type="button"
+              ref={m === model ? activeRef : undefined}
               onClick={() => pick(m)}
               className={cn(
                 "flex w-full cursor-pointer items-center gap-1.5 rounded-[5px] px-2 py-1.5 text-left text-xs transition-colors",
