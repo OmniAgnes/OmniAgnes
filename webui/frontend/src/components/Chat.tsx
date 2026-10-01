@@ -293,7 +293,11 @@ export function Chat({
     }
     return []
   }, [items])
-  const todosOpen = todos.length > 0 && todos.some((t) => t.status !== "completed")
+  // 显隐规则：清单只作为「当前轮次的实时进度」——处理中（streaming/thinking）且有未完成项才显示；
+  // 本轮结束立即收起（哪怕是中途停下），避免旧清单常驻输入框上方；
+  // 下一轮再次出现 todo 时自动弹出。完整的清单记录保留在消息流的 todo 工具卡里可回看。
+  const todosOpen =
+    showThinking && todos.length > 0 && todos.some((t) => t.status !== "completed")
 
   /**
    * 渲染消息流。
