@@ -9,6 +9,7 @@ import { Titlebar } from "@/components/Titlebar"
 import { Button } from "@/components/ui/button"
 import { api, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
+import { extractExternalURLs } from "@/lib/sources"
 import type {
   AttachmentInfo,
   ChatEvent,
@@ -53,6 +54,8 @@ interface RunState {
   retry?: { attempt: number; max: number }
   /** 本任务当前工作（回复生成中）的起始时刻；按任务持有，切任务互不串扰 */
   workSince?: number
+  /** 本轮从工具参数里收集到的外部 URL（来源站点），整轮结束挂到最终回复上 */
+  pendingSources?: string[]
   roundBase: number
   lastRound: number
   queue: QueuedMsg[]
@@ -220,8 +223,23 @@ export default function App() {
     let cur: ViewItem | null = null
     let round = 0
     let runMedia: AttachmentInfo[] = []
+    // 本轮（两条用户消息之间）的来源站点：从工具调用参数里推导，挂到该轮最终回复上
+    let turnSources: string[] = []
+    const seenSources = new Set<string>()
+    const flushSources = () => {
+      if (turnSources.length === 0) return
+      for (let i = out.length - 1; i >= 0; i--) {
+        if (out[i].role === "assistant") {
+          out[i].sources = [...turnSources]
+          break
+        }
+      }
+      turnSources = []
+      seenSources.clear()
+    }
     for (const m of t.messages ?? []) {
       if (m.role === "user") {
+        flushSources()
         // 历史里附件以「[附件] + 路径列表」附在正文后：展示时拆出来，只显示文件名
         let text = m.text ?? ""
         let atts: string[] | undefined
@@ -250,6 +268,7 @@ export default function App() {
             isError: false,
             running: false,
           })
+          extractExternalURLs(tc.arguments, turnSources, seenSources)
         }
         out.push(cur)
       } else if (m.role === "tool" && m.tool_result && cur) {
@@ -264,6 +283,7 @@ export default function App() {
         }
       }
     }
+    flushSources()
     if (runMedia.length > 0) {
       const lastAssistant = [...out].reverse().find((x) => x.role === "assistant")
       if (lastAssistant) {
@@ -463,6 +483,16 @@ export default function App() {
               running: true,
             })
           }
+          // 从工具参数里收集外部 URL，整轮结束后作为「来源」挂在最终回复上
+          try {
+            const urls = extractExternalURLs(JSON.parse(ev.args))
+            for (const u of urls) {
+              if (!r.pendingSources) r.pendingSources = []
+              if (!r.pendingSources.includes(u)) r.pendingSources.push(u)
+            }
+          } catch {
+            // args 不是合法 JSON（理论不会），跳过来源收集
+          }
           r.items = items
         }
         break
@@ -608,6 +638,8 @@ export default function App() {
     // 本轮开始工作的时刻：记录到本任务上，结束时据此算出「已工作」耗时；
     // 由 Chat 在本任务仍在流式生成时渲染动态的「工作中 N 秒」
     r.workSince = Date.now()
+    // 本轮来源站点从空开始收集
+    r.pendingSources = []
     r.streaming = true
     r.thinking = true
     r.lastRound = -1
@@ -624,6 +656,7 @@ export default function App() {
         asstItem.media = undefined
         asstItem.thinking = undefined
         asstItem.thinkingActive = false
+        asstItem.sources = undefined
         asstItem.round = r.roundBase
         r.items = items
         bump()
@@ -672,13 +705,15 @@ export default function App() {
         }
         // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
         rr.roundBase = Math.max(rr.roundBase, baseAtSend + rr.lastRound + 1)
-        // 记录本轮「已工作」耗时：写到本轮最后一条 assistant 回复上，UI 在回复上方显示
+        // 记录本轮「已工作」耗时与来源站点：写到本轮最后一条 assistant 回复上
         for (let i = rr.items.length - 1; i >= 0; i--) {
           if (rr.items[i].role === "assistant") {
             rr.items[i].elapsedMs = rr.workSince != null ? Date.now() - rr.workSince : undefined
+            if (rr.pendingSources?.length) rr.items[i].sources = [...rr.pendingSources]
             break
           }
         }
+        rr.pendingSources = undefined
         rr.streaming = false
         rr.thinking = false
         rr.retry = undefined

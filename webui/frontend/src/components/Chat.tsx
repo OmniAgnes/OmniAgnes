@@ -35,6 +35,8 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Textarea } from "@/components/ui/textarea"
 import { todosFromJson, type TodoItem } from "@/lib/todo"
+import { openInBrowser } from "@/lib/browser"
+import { sourceName } from "@/lib/sources"
 import { cn } from "@/lib/utils"
 import type { AttachmentInfo, SkillInfo } from "@/types"
 import { MediaList } from "./ToolCallView"
@@ -75,6 +77,8 @@ export interface ViewItem {
   attachments?: string[]
   /** 本轮产出的多媒体（生成图片/视频/音频），在回答里集中展示 */
   media?: AttachmentInfo[]
+  /** 本轮工具调用触达过的外部 URL（来源站点），回复末尾「来源：」行展示，点击进内置浏览器 */
+  sources?: string[]
   /** 模型思考/推理内容（本轮；不持久化，刷新后消失） */
   thinking?: string
   /** 本轮还在流式输出思考内容 */
@@ -385,6 +389,28 @@ export function Chat({
                     {item.text && <Markdown text={item.text} />}
                     {/* 本轮产出的多媒体（生成图片/视频/音频）：在最终回答里集中展示 */}
                     {item.media && item.media.length > 0 && <MediaList atts={item.media} />}
+                    {/* 来源站点：本轮工具调用触达过的外部 URL，点击进内置浏览器（网页端开新标签页） */}
+                    {item.sources && item.sources.length > 0 && (
+                      <div className="text-muted-foreground flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs">
+                        <span>来源：</span>
+                        {item.sources.map((u, i) => (
+                          <span key={u} className="flex items-center gap-1">
+                            {i > 0 && <span className="text-muted-foreground/50">|</span>}
+                            <a
+                              href={u}
+                              title={u}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                openInBrowser(u)
+                              }}
+                              className="hover:text-foreground cursor-pointer underline-offset-2 hover:underline"
+                            >
+                              {sourceName(u)}
+                            </a>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
                   </div>
                 ))}
