@@ -9,6 +9,7 @@
   ],
   "max_tool_output": 4000,
   "bash_timeout_seconds": 10,
+  "max_history_turns": 20,
   "theme": "dark",
   "mcp_servers": {
     "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },

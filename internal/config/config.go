@@ -19,7 +19,7 @@ const (
 // （上下文窗口、最大输出、支持的输入模态、是否开推理），因此这些参数按模型
 // 粒度配置；未设置的字段回落到供应商级同名字段。
 type ModelOptions struct {
-	ContextWindow   int      `json:"context_window,omitempty"`   // 上下文窗口（token）
+	ContextWindow   int      `json:"context_window,omitempty"`    // 上下文窗口（token）
 	MaxOutputTokens int      `json:"max_output_tokens,omitempty"` // 最大输出 token
 	InputTypes      []string `json:"input_types,omitempty"`       // 支持的输入类型：text/image/video/pdf/audio
 	Reasoning       string   `json:"reasoning,omitempty"`         // 推理等级：default | off | on
@@ -32,14 +32,14 @@ func (o ModelOptions) Empty() bool {
 
 // ProviderConfig 描述单个 LLM 提供方。
 type ProviderConfig struct {
-	Name    string `json:"name,omitempty"`    // 显示名称
-	Type    string `json:"type"`              // openai | anthropic | gemini | ollama
-	Model   string `json:"model,omitempty"`   // 主模型（与 models[0] 同步）
+	Name    string   `json:"name,omitempty"`   // 显示名称
+	Type    string   `json:"type"`             // openai | anthropic | gemini | ollama
+	Model   string   `json:"model,omitempty"`  // 主模型（与 models[0] 同步）
 	Models  []string `json:"models,omitempty"` // 该供应商可用模型（首个为主模型）
-	BaseURL string `json:"base_url,omitempty"`
-	APIKey  string `json:"api_key,omitempty"`
-	EnvKey  string `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
-	Default bool   `json:"default,omitempty"`
+	BaseURL string   `json:"base_url,omitempty"`
+	APIKey  string   `json:"api_key,omitempty"`
+	EnvKey  string   `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
+	Default bool     `json:"default,omitempty"`
 
 	// 以下为供应商级默认值，模型未单独配置时生效（兼容旧配置文件）
 	ContextWindow   int      `json:"context_window,omitempty"`
@@ -77,7 +77,6 @@ func (p *ProviderConfig) OptionsFor(model string) ModelOptions {
 	}
 	return o
 }
-
 
 // ProviderForModel 返回提供指定模型的供应商配置；找不到返回 nil。
 func (c *Config) ProviderForModel(model string) *ProviderConfig {
@@ -128,7 +127,6 @@ func (p *ProviderConfig) Normalize() {
 	}
 }
 
-
 // HasModel 报告该供应商是否提供指定模型。
 func (p *ProviderConfig) HasModel(model string) bool {
 	for _, m := range p.Models {
@@ -158,8 +156,9 @@ type Config struct {
 	Cwd               string                     `json:"cwd,omitempty"` // 工作目录；为空则取启动时目录
 	SessionDir        string                     `json:"session_dir,omitempty"`
 	SystemPromptExtra string                     `json:"system_prompt_extra,omitempty"`
-	Theme             string                     `json:"theme,omitempty"`           // dark | light | system
-	ThemeColor        string                     `json:"theme_color,omitempty"`     // 主题配色：zinc/violet/blue/emerald/amber/rose
+	MaxHistoryTurns   int                        `json:"max_history_turns"`     // 上下文保留的最近用户提问轮数；0 用默认
+	Theme             string                     `json:"theme,omitempty"`       // dark | light | system
+	ThemeColor        string                     `json:"theme_color,omitempty"` // 主题配色：zinc/violet/blue/emerald/amber/rose
 	MCPServers        map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 	DisabledSkills    []string                   `json:"disabled_skills,omitempty"` // 禁用的技能名，默认全部启用
 }

@@ -1338,6 +1338,7 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 		Cwd:               cwd,
 		MaxIterations:     500,
 		MaxTokens:         maxTokens,
+		MaxHistoryTurns:   s.cfg.MaxHistoryTurns,
 		SystemPromptExtra: s.cfg.SystemPromptExtra,
 		// 恢复持久化的历史消息：重启后继续对话时模型仍记得之前的内容
 		History: t.Messages,

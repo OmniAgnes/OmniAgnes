@@ -77,10 +77,10 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 }
 
 type oaiMessage struct {
-	Role       string         `json:"role"`
-	Content    any            `json:"content,omitempty"` // string 或 []oaiContentPart
-	ToolCalls  []oaiToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Role       string        `json:"role"`
+	Content    any           `json:"content,omitempty"` // string 或 []oaiContentPart
+	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
 // oaiContentPart 是 OpenAI 多模态 content 数组里的一项。
@@ -309,11 +309,11 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 // 刻意不含 4xx（如 400/401/403/404）—— 那是请求或配置本身有问题，重试没意义。
 func retryableStatus(code int) bool {
 	switch code {
-	case http.StatusInternalServerError,     // 500 上游瞬时故障
-		http.StatusTooManyRequests,           // 429 限流
-		http.StatusBadGateway,                // 502
-		http.StatusServiceUnavailable,        // 503
-		http.StatusGatewayTimeout:            // 504
+	case http.StatusInternalServerError, // 500 上游瞬时故障
+		http.StatusTooManyRequests,    // 429 限流
+		http.StatusBadGateway,         // 502
+		http.StatusServiceUnavailable, // 503
+		http.StatusGatewayTimeout:     // 504
 		return true
 	}
 	return false
@@ -398,6 +398,13 @@ func (p *OpenAIProvider) httpError(resp *http.Response) error {
 		msg = strings.TrimSpace(string(data))
 	}
 	// 中转网关常见文案不含 provider 名，补上便于定位是哪条配置
+	// 上下文超限（400 context length）单独透传，提醒新建对话/缩短历史，避免被当成"换个模型"
+	if resp.StatusCode == http.StatusBadRequest && msg != "" {
+		lower := strings.ToLower(msg)
+		if strings.Contains(lower, "context") && (strings.Contains(lower, "length") || strings.Contains(lower, "exceed")) {
+			return fmt.Errorf("provider %s(%s) 返回 400: %s（对话上下文过长，请新建对话或缩短历史后重试）", p.model, p.baseURL, msg)
+		}
+	}
 	return fmt.Errorf("provider %s(%s) 返回 %d: %s", p.model, p.baseURL, resp.StatusCode, msg)
 }
 

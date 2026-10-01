@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,5 +194,38 @@ func TestAgentRegenerateRollsBack(t *testing.T) {
 	h := a.History()
 	if len(h) != 2 || h[1].Text != "第二版回答" {
 		t.Fatalf("unexpected history after regen: %+v", h)
+	}
+}
+
+func TestContextWindow(t *testing.T) {
+	user := func(i int) llm.Message {
+		return llm.NewTextMessage(llm.RoleUser, fmt.Sprintf("u%d", i))
+	}
+	asst := func(i int) llm.Message {
+		return llm.NewTextMessage(llm.RoleAssistant, fmt.Sprintf("a%d", i))
+	}
+	// 6 轮：u0 a0 u1 a1 u2 a2 u3 a3 u4 a4 u5 a5
+	var hist []llm.Message
+	for i := 0; i < 6; i++ {
+		hist = append(hist, user(i), asst(i))
+	}
+
+	got := contextWindow(hist, 2)
+	if len(got) != 4 || got[0].Text != "u4" || got[3].Text != "a5" {
+		t.Fatalf("keep last 2 turns = %+v", got)
+	}
+
+	// 轮数超出实际用户数时整段返回
+	all := contextWindow(hist, 99)
+	if len(all) != len(hist) {
+		t.Fatalf("keep-all len = %d, want %d", len(all), len(hist))
+	}
+
+	// 非法参数不裁剪
+	if w := contextWindow(hist, 0); len(w) != len(hist) {
+		t.Fatalf("keep 0 should not crop, got %d", len(w))
+	}
+	if w := contextWindow(nil, 2); w != nil {
+		t.Fatalf("nil history should stay nil")
 	}
 }

@@ -78,6 +78,9 @@ type Options struct {
 	ExtraPrompt func() string
 	// History 是初始消息历史（恢复持久化会话用）；为空则从空白开始。
 	History []llm.Message
+	// MaxHistoryTurns 发送给模型的上下文里保留的最近用户提问轮数；
+	// 超出部分本轮不发给模型（完整历史仍持久化）。<=0 用默认值 defaultHistoryTurns。
+	MaxHistoryTurns int
 	// Approve 在普通访问（ModePlan）模式下于写操作前被调用，
 	// 返回 true 允许执行，false 拒绝。nil 表示不询问（完全访问）。
 	// callID 为本次工具调用 ID，便于 UI 把确认卡片与工具卡片对应起来。
@@ -104,6 +107,7 @@ type Agent struct {
 	question      func(callID, question string, options []string) string
 	history       []llm.Message
 	lastTurnStart int
+	maxKeepTurns  int
 }
 
 // New 创建 Agent。
@@ -113,6 +117,10 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 	}
 	if opts.MaxTokens <= 0 {
 		opts.MaxTokens = 8192
+	}
+	keep := opts.MaxHistoryTurns
+	if keep <= 0 {
+		keep = defaultHistoryTurns
 	}
 	return &Agent{
 		provider:      provider,
@@ -127,6 +135,7 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		approve:       opts.Approve,
 		question:      opts.Ask,
 		history:       opts.History,
+		maxKeepTurns:  keep,
 		lastTurnStart: -1,
 	}
 }
@@ -260,6 +269,32 @@ func (a *Agent) SetLastTurnStart() {
 	a.lastTurnStart = len(a.history)
 }
 
+// defaultHistoryTurns 发送给模型的上下文里保留的最近用户提问轮数。
+// 对话历史无限增长会让每次请求体积不断变大，超过模型上下文窗口后上游常返回空响应；
+// 这里做滑动窗口：只把最近几轮发给模型，完整历史仍持久化（UI 展示与重启恢复不受影响）。
+const defaultHistoryTurns = 20
+
+// contextWindow 截取 history 中最近 keepTurns 个用户提问轮次。
+// 从某个 user 消息处开始切——新一轮自含（先 user，再同轮的 assistant/tool），
+// 切在这里不会截断跨轮的 tool 引用；用户轮不足时整段返回。
+func contextWindow(history []llm.Message, keepTurns int) []llm.Message {
+	if keepTurns <= 0 || len(history) <= 1 {
+		return history
+	}
+	count := 0
+	start := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == llm.RoleUser {
+			count++
+			if count == keepTurns {
+				start = i
+				break
+			}
+		}
+	}
+	return history[start:]
+}
+
 // Execute 在已 Prepare 的上下文上运行迭代循环。
 // 整轮执行期间持有 mu：TUI 与 webui 的并发请求将在此排队。
 func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
@@ -279,7 +314,7 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		req := llm.ChatRequest{
 			Model:     a.model,
 			System:    a.BuildSystemPrompt(),
-			Messages:  a.history,
+			Messages:  contextWindow(a.history, a.maxKeepTurns),
 			Tools:     a.toolDefs(),
 			MaxTokens: a.maxToken,
 		}
