@@ -207,4 +207,4 @@ export type ChatEvent =
   | { type: "media"; round: number; attachments: AttachmentInfo[] }
   /** 上游瞬时故障，provider 自动重试中（重试次数/总次数） */
   | { type: "retry"; attempt: number; max: number; round: number }
-  | { type: "done"; model?: string; round: number }
+  | { type: "done"; model?: string; round: number; input_tokens?: number; output_tokens?: number }

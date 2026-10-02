@@ -6,14 +6,15 @@ import (
 	"omni-server/internal/store"
 )
 
-// 会员列表
+// 会员列表（分页）
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.store.ListUsers()
+	page, size := pageReq(r)
+	users, total, err := s.store.ListUsersPage(page, size)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+	writeJSON(w, http.StatusOK, map[string]any{"users": users, "total": total, "page": page, "page_size": size})
 }
 
 // 积分赠送/回退

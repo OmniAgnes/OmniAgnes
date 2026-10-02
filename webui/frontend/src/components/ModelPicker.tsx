@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CoinsIcon, PackageIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 
 import type { ModelGroup } from "@/components/Chat"
 import { useI18n } from "@/lib/i18n"
@@ -140,7 +140,7 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
   }
 
   // 一级行渲染（内置组在前，供应商在后）
-  const renderRow = (key: string, label: React.ReactNode, withIcon: boolean) => (
+  const renderRow = (key: string, label: React.ReactNode) => (
     <button
       key={key}
       type="button"
@@ -160,7 +160,6 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
           : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
       )}
     >
-      {withIcon && <PackageIcon className="size-3.5 shrink-0" />}
       <span className="truncate" title={typeof label === "string" ? label : undefined}>
         {label}
       </span>
@@ -196,25 +195,8 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
                 <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noProvider")}</div>
               ) : (
                 <>
-                  {/* 积分行：登录用户才显示；余额为 0 时不显示数字 */}
-                  {serverUser && (
-                    <div
-                      className="text-muted-foreground flex items-center gap-1.5 px-2 py-1.5 text-xs"
-                      title={t("me.credits")}
-                    >
-                      <CoinsIcon className="size-3.5 shrink-0" />
-                      <span className="flex-1">{t("me.credits")}</span>
-                      <span className="shrink-0 tabular-nums">{serverUser.balance > 0 ? serverUser.balance : null}</span>
-                    </div>
-                  )}
-                  {builtin.length === 0 && groups.length === 0 ? null : (
-                    <>
-                      {builtin.length > 0 && renderRow(BUILTIN, t("mp.builtin"), true)}
-                      {groups.map((g) =>
-                        renderRow(g.provider || t("a.other"), g.provider || t("a.other"), false),
-                      )}
-                    </>
-                  )}
+                  {builtin.length > 0 && renderRow(BUILTIN, t("mp.builtin"))}
+                  {groups.map((g) => renderRow(g.provider || t("a.other"), g.provider || t("a.other")))}
                 </>
               )}
             </div>

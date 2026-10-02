@@ -28,6 +28,39 @@ export interface CreditRecord {
   expires_at?: string
   remaining?: number
 }
+/** AI 请求记录（管理端返回额外带 phone） */
+export interface UsageLog {
+  id: number
+  user_id: number
+  model: string
+  input_tokens: number
+  output_tokens: number
+  credits: number
+  /** ok=已计费 / insufficient=积分不足未扣 / error=请求失败 */
+  status: string
+  error?: string
+  created_at: string
+  phone?: string
+}
+/** 会员使用量页数据：summary/credit 为汇总，items 按 list 分页 */
+export interface MemberUsage {
+  summary: { requests: number; input_tokens: number; output_tokens: number; credits: number }
+  credit: { got: number; spent: number }
+  /** ai=AI 请求记录 / spent=消耗记录 / got=获取记录 */
+  list: "ai" | "spent" | "got"
+  total: number
+  page: number
+  page_size: number
+  items: (UsageLog | CreditRecord)[]
+}
+/** 管理端使用量数据：overview 为总览，items 按 list 分页 */
+export interface AdminUsage {
+  overview: { users: number; granted: number; spent: number; today_requests: number; today_credits: number }
+  total: number
+  page: number
+  page_size: number
+  items: (UsageLog | (CreditRecord & { phone: string }))[]
+}
 export interface ProviderModel {
   key: string
   context_window?: number
@@ -106,19 +139,36 @@ export const api = {
     req<{ token: string; user: User; is_new: boolean }>("POST", "/api/auth/login", { phone, code, agreement }),
   logout: () => req<any>("POST", "/api/auth/logout"),
   me: async () => {
-    const r = await req<{ user: User; records: CreditRecord[] }>("GET", "/api/me")
-    return { user: r.user, records: r.records ?? [] }
+    const r = await req<{ user: User }>("GET", "/api/me")
+    return r.user
   },
   /** 用户修改自己的手机号（新号需验证码） */
   mePhone: (phone: string, code: string) =>
     req<{ user: User }>("POST", "/api/me/phone", { phone, code }),
 
-  adminUsers: async () => {
-    const r = await req<{ users: User[] }>("GET", "/api/admin/users")
-    return { users: r.users ?? [] }
+  /** 会员使用量：汇总 + 按 list 分页的记录（ai=请求记录/spent=消耗/got=获取） */
+  usage: (list: "ai" | "spent" | "got", page = 1, pageSize = 20) =>
+    req<MemberUsage>("GET", `/api/usage?list=${list}&page=${page}&page_size=${pageSize}`),
+  /** 桌面端上报一次 AI 请求（按模型倍率扣积分；积分不足抛错） */
+  reportUsage: (v: { model: string; input_tokens: number; output_tokens: number; status?: string; error?: string }) =>
+    req<{ credits: number; balance: number }>("POST", "/api/usage", v),
+
+  adminUsers: async (page = 1, pageSize = 20) => {
+    const r = await req<{ users: User[]; total: number }>("GET", `/api/admin/users?page=${page}&page_size=${pageSize}`)
+    return { users: r.users ?? [], total: r.total ?? 0 }
   },
   adminCredit: (id: number, amount: number, reason: string) =>
     req<{ balance: number }>("POST", `/api/admin/users/${id}/credit`, { amount, reason }),
+  /** 管理端使用量：总览 + 按 list 分页的全体记录（ai=请求记录/credit=积分流水，phone 非空按手机号过滤） */
+  adminUsage: (v: { list?: "ai" | "credit"; page?: number; pageSize?: number; phone?: string } = {}) => {
+    const q = new URLSearchParams({
+      list: v.list ?? "ai",
+      page: String(v.page ?? 1),
+      page_size: String(v.pageSize ?? 20),
+    })
+    if (v.phone) q.set("phone", v.phone)
+    return req<AdminUsage>("GET", "/api/admin/usage?" + q.toString())
+  },
   adminSettings: () => req<AdminSettings>("GET", "/api/admin/settings"),
   saveAdminSettings: (v: Partial<AdminSettings>) =>
     req<AdminSettings>("POST", "/api/admin/settings", v),

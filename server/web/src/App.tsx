@@ -4,11 +4,11 @@ import { ChevronDownIcon } from "lucide-react"
 import { AdminPanel } from "@/components/AdminPanel"
 import { ChangePhoneDialog } from "@/components/ChangePhoneDialog"
 import { LoginPanel } from "@/components/LoginPanel"
-import { MePanel } from "@/components/MePanel"
+import { MemberPanel, type MemberSection } from "@/components/MemberPanel"
 import { Button } from "@/components/ui/button"
 import { api, getToken, setToken, type Site, type User } from "@/lib/api"
 
-/** hash 路由：#/me、#/admin、#/admin/members|models|providers|settings。不同界面 URL 不同，可分享、刷新不 404。 */
+/** hash 路由：#/me、#/me/usage、#/admin、#/admin/members|usage|models|providers|settings。不同界面 URL 不同，可分享、刷新不 404。 */
 function useHashRoute(): string {
   const [route, setRoute] = useState(() => location.hash.replace(/^#/, "") || "/")
   useEffect(() => {
@@ -23,17 +23,22 @@ const nav = (h: string) => {
   location.hash = h
 }
 
-type AdminSection = "members" | "models" | "providers" | "settings"
+type AdminSection = "members" | "usage" | "models" | "providers" | "settings"
 function sectionOf(route: string): AdminSection | null {
   if (!route.startsWith("/admin")) return null
   const seg = route.split("/")[2]
-  return seg === "models" || seg === "providers" || seg === "settings" ? (seg as AdminSection) : "members"
+  return seg === "usage" || seg === "models" || seg === "providers" || seg === "settings" ? (seg as AdminSection) : "members"
+}
+
+function memberSectionOf(route: string): MemberSection | null {
+  if (route === "/me/usage") return "usage"
+  if (route === "/me") return "account"
+  return null
 }
 
 export function App() {
   const route = useHashRoute()
   const [user, setUser] = useState<User | null>(null)
-  const [records, setRecords] = useState<any[]>([])
   const [site, setSite] = useState<Site>({ title: "", footer: "", agreement: "", test_mode: false })
   const [booting, setBooting] = useState(true)
 
@@ -43,9 +48,7 @@ export function App() {
       return
     }
     try {
-      const r = await api.me()
-      setUser(r.user)
-      setRecords(r.records)
+      setUser(await api.me())
     } catch {
       // token 失效/过期：登出态
       setToken("")
@@ -75,13 +78,14 @@ export function App() {
   }
 
   const adminSection = sectionOf(route)
+  const memberSection = memberSectionOf(route)
 
   // 路由守卫：非管理员访问后台回我的页；未知路由回我的页
   useEffect(() => {
     if (booting || !user) return
     if (adminSection && !user.is_admin) nav("/me")
-    else if (!adminSection && route !== "/me") nav("/me")
-  }, [user, route, adminSection, booting])
+    else if (!adminSection && !memberSection) nav("/me")
+  }, [user, route, adminSection, memberSection, booting])
 
   if (booting) {
     return <div className="text-muted-foreground flex min-h-screen items-center justify-center text-sm">加载中…</div>
@@ -112,7 +116,12 @@ export function App() {
         {showAdmin ? (
           <AdminPanel section={adminSection!} onNav={(s) => nav(`/admin/${s}`)} />
         ) : (
-          <MePanel user={user} records={records} onLogout={() => void logout()} />
+          <MemberPanel
+            section={memberSection ?? "account"}
+            user={user}
+            onNav={(s) => nav(s === "usage" ? "/me/usage" : "/me")}
+            onLogout={() => void logout()}
+          />
         )}
       </main>
       {site.footer && <Footer text={site.footer} />}

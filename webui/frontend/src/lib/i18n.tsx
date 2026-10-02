@@ -85,6 +85,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "a.emptyReply": "模型没有返回任何内容（上游可能响应为空），请重试或换个模型",
     "a.other": "其他",
     "toast.claimed": "已领取今日积分 {n}",
+    "toast.noCredit": "积分不足，本次消耗未记账，请充值或联系管理员",
 
     // ---- 聊天区 ----
     "c.menu": "菜单",
@@ -423,6 +424,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "a.emptyReply": "模型沒有返回任何內容（上游可能回應為空），請重試或換個模型",
     "a.other": "其他",
     "toast.claimed": "已領取今日積分 {n}",
+    "toast.noCredit": "積分不足，本次消耗未記賬，請充值或聯繫管理員",
 
     // ---- 對話區 ----
     "c.menu": "選單",
@@ -761,6 +763,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "a.emptyReply": "The model returned no content (upstream response may be empty). Retry or switch model",
     "a.other": "Other",
     "toast.claimed": "Claimed {n} credits for today",
+    "toast.noCredit": "Not enough credits: this usage was not billed. Top up or contact the admin",
 
     // ---- Chat ----
     "c.menu": "Menu",

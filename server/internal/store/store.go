@@ -484,29 +484,6 @@ func (s *Store) AddCredit(userID int64, delta int64, reason, model, expiresAt st
 	return bal, nil
 }
 
-// Records 用户积分流水（倒序）。
-func (s *Store) Records(userID int64, limit int) ([]CreditRecord, error) {
-	if err := s.SweepExpired(userID); err != nil {
-		return nil, err
-	}
-	rows, err := s.db.Query(
-		`SELECT id, user_id, amount, reason, model, created_at, expires_at, remaining FROM credit_records WHERE user_id=? ORDER BY id DESC LIMIT ?`,
-		userID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out = []CreditRecord{}
-	for rows.Next() {
-		var r CreditRecord
-		if err := rows.Scan(&r.ID, &r.UserID, &r.Amount, &r.Reason, &r.Model, &r.CreatedAt, &r.ExpiresAt, &r.Remaining); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 // UsageLog AI 请求记录：桌面端每次问答结束后上报，按模型倍率计积分。
 type UsageLog struct {
 	ID           int64  `json:"id"`
@@ -582,24 +559,60 @@ func (s *Store) ReportUsage(userID int64, model string, input, output int64, sta
 	return credits, balance, nil
 }
 
-// UsageLogs 会员自己的请求记录（倒序）。
-func (s *Store) UsageLogs(userID int64, limit int) ([]UsageLog, error) {
+// UsageLogsPage 会员自己的请求记录（倒序，分页）。返回行与总条数。
+func (s *Store) UsageLogsPage(userID int64, page, size int) ([]UsageLog, int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=?`, userID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	rows, err := s.db.Query(
-		`SELECT id, user_id, model, input_tokens, output_tokens, credits, status, error, created_at FROM usage_logs WHERE user_id=? ORDER BY id DESC LIMIT ?`,
-		userID, limit)
+		`SELECT id, user_id, model, input_tokens, output_tokens, credits, status, error, created_at FROM usage_logs WHERE user_id=? ORDER BY id DESC LIMIT ? OFFSET ?`,
+		userID, size, (page-1)*size)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out = []UsageLog{}
 	for rows.Next() {
 		var l UsageLog
 		if err := rows.Scan(&l.ID, &l.UserID, &l.Model, &l.InputTokens, &l.OutputTokens, &l.Credits, &l.Status, &l.Error, &l.CreatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// CreditRecordsPage 会员积分流水（倒序，分页）；kind=spent 只要消耗、got 只要获取，空=全部。
+func (s *Store) CreditRecordsPage(userID int64, kind string, page, size int) ([]CreditRecord, int64, error) {
+	where := "user_id=?"
+	args := []any{userID}
+	switch kind {
+	case "spent":
+		where += " AND amount<0"
+	case "got":
+		where += " AND amount>0"
+	}
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM credit_records WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, amount, reason, model, created_at, expires_at, remaining FROM credit_records WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+		append(args, size, (page-1)*size)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out = []CreditRecord{}
+	for rows.Next() {
+		var r CreditRecord
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Amount, &r.Reason, &r.Model, &r.CreatedAt, &r.ExpiresAt, &r.Remaining); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
 }
 
 // UsageSummary 会员请求汇总：次数 / token / 已扣积分。
@@ -626,52 +639,61 @@ func (s *Store) balanceOf(userID int64) int64 {
 	return bal
 }
 
-// AllUsageLogs 管理端请求记录（倒序）；phone 非空时按手机号模糊过滤。
-func (s *Store) AllUsageLogs(limit int, phone string) ([]UsageLogRow, error) {
-	q := `SELECT l.id, l.user_id, l.model, l.input_tokens, l.output_tokens, l.credits, l.status, l.error, l.created_at, u.phone
-		FROM usage_logs l JOIN users u ON u.id=l.user_id`
+// AllUsageLogsPage 管理端请求记录（倒序，分页）；phone 非空时按手机号模糊过滤。
+func (s *Store) AllUsageLogsPage(phone string, page, size int) ([]UsageLogRow, int64, error) {
+	where := "1=1"
 	args := []any{}
 	if phone != "" {
-		q += ` WHERE u.phone LIKE ?`
+		where += " AND u.phone LIKE ?"
 		args = append(args, "%"+phone+"%")
 	}
-	q += ` ORDER BY l.id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.db.Query(q, args...)
+	var total int64
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM usage_logs l JOIN users u ON u.id=l.user_id WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(
+		`SELECT l.id, l.user_id, l.model, l.input_tokens, l.output_tokens, l.credits, l.status, l.error, l.created_at, u.phone
+		 FROM usage_logs l JOIN users u ON u.id=l.user_id WHERE `+where+` ORDER BY l.id DESC LIMIT ? OFFSET ?`,
+		append(args, size, (page-1)*size)...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out = []UsageLogRow{}
 	for rows.Next() {
 		var l UsageLogRow
 		if err := rows.Scan(&l.ID, &l.UserID, &l.Model, &l.InputTokens, &l.OutputTokens, &l.Credits, &l.Status, &l.Error, &l.CreatedAt, &l.Phone); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
-// AllCreditRecords 管理端积分流水（倒序，带手机号）。
-func (s *Store) AllCreditRecords(limit int) ([]CreditRecordRow, error) {
+// AllCreditRecordsPage 管理端积分流水（倒序，分页，带手机号）。
+func (s *Store) AllCreditRecordsPage(page, size int) ([]CreditRecordRow, int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM credit_records`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	rows, err := s.db.Query(
 		`SELECT r.id, r.user_id, r.amount, r.reason, r.model, r.created_at, r.expires_at, r.remaining, u.phone
-		 FROM credit_records r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC LIMIT ?`,
-		limit)
+		 FROM credit_records r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC LIMIT ? OFFSET ?`,
+		size, (page-1)*size)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out = []CreditRecordRow{}
 	for rows.Next() {
 		var r CreditRecordRow
 		if err := rows.Scan(&r.ID, &r.UserID, &r.Amount, &r.Reason, &r.Model, &r.CreatedAt, &r.ExpiresAt, &r.Remaining, &r.Phone); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // UsageOverview 管理端总览：会员数 / 累计发放 / 累计消耗 / 今日请求 / 今日消耗积分。
@@ -703,11 +725,17 @@ func (s *Store) UsageOverview() (*UsageOverview, error) {
 	return o, nil
 }
 
-func (s *Store) ListUsers() ([]*User, error) {
+// ListUsersPage 会员列表分页（按 ID 倒序）。返回行与总条数。
+func (s *Store) ListUsersPage(page, size int) ([]*User, int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	rows, err := s.db.Query(
-		`SELECT id, phone, is_admin, balance, agreement, created_at FROM users ORDER BY id`)
+		`SELECT id, phone, is_admin, balance, agreement, created_at FROM users ORDER BY id DESC LIMIT ? OFFSET ?`,
+		size, (page-1)*size)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out = []*User{}
@@ -715,12 +743,12 @@ func (s *Store) ListUsers() ([]*User, error) {
 		var u User
 		var created string
 		if err := rows.Scan(&u.ID, &u.Phone, &u.IsAdmin, &u.Balance, &u.Agreement, &created); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		u.CreatedAt = parseTime(created)
 		out = append(out, &u)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // ---------- Token ----------

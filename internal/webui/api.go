@@ -755,7 +755,13 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
 				recordUsage(config.DefaultDataDir(), ev.Model, ev.Usage)
 			}
-			send(map[string]any{"type": "done", "model": ev.Model, "round": ev.Round})
+			// 用量随 done 事件透传给前端：登录了 omni-server 时上报后台计积分
+			payload := map[string]any{"type": "done", "model": ev.Model, "round": ev.Round}
+			if ev.Usage != nil {
+				payload["input_tokens"] = ev.Usage.InputTokens
+				payload["output_tokens"] = ev.Usage.OutputTokens
+			}
+			send(payload)
 		}
 	})
 	if runErr != nil && !errSent {

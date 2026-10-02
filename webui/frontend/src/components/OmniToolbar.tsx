@@ -44,6 +44,7 @@ export function OmniToolbar({
   onOpenAccount,
   onRefreshUser,
   user,
+  serverOnline,
   onOpenLogin,
 }: {
   zoom: number
@@ -56,6 +57,8 @@ export function OmniToolbar({
   /** 点左下角头像：已登录则重新拉一次资料，积分余额及时更新 */
   onRefreshUser: () => void
   user: ServerUser | null
+  /** 后台可达才有登录入口；不可达时整个 server 相关 UI 不出现（纯本地版） */
+  serverOnline: boolean
   onOpenLogin: () => void
 }) {
   const { t, lang, setLang } = useI18n()
@@ -190,14 +193,16 @@ export function OmniToolbar({
                 </span>
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => { onOpenLogin(); setOpen(false) }}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent cursor-pointer"
-              >
-                <LogInIcon className="size-4" />
-                {t("menu.login")}
-              </button>
+              serverOnline && (
+                <button
+                  type="button"
+                  onClick={() => { onOpenLogin(); setOpen(false) }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent cursor-pointer"
+                >
+                  <LogInIcon className="size-4" />
+                  {t("menu.login")}
+                </button>
+              )
             )}
           </div>
         )}

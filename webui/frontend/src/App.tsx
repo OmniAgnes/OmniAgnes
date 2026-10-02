@@ -13,7 +13,7 @@ import { api, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
 import { useI18n } from "@/lib/i18n"
 import { extractExternalURLs } from "@/lib/sources"
-import { server, serverToken, setServerToken, initServerUrl, type ServerUser } from "@/lib/serverAuth"
+import { server, serverToken, setServerToken, initServerUrl, probeServer, type ServerUser } from "@/lib/serverAuth"
 import type {
   AttachmentInfo,
   ChatEvent,
@@ -113,6 +113,8 @@ export default function App() {
     return v >= 0.5 && v <= 2 ? v : 1
   })
   const [serverUser, setServerUser] = useState<ServerUser | null>(null)
+  // 后台（omni-server）可达性：启动探活一次。不可达时当纯本地版，登录/帐号/内置模型等入口都不渲染
+  const [serverOnline, setServerOnline] = useState(false)
   const [loginOpen, setLoginOpen] = useState(false)
   // 全局 toast（每日积分领取成功等）
   const [toast, setToast] = useState("")
@@ -123,10 +125,13 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(""), 3000)
   }
   // 有 token 时启动恢复登录态；仅 401（会话过期）清 token，
-  // 服务器暂不可达时保留，恢复后可直接续用
+  // 服务器暂不可达时保留，恢复后可直接续用。
+  // 先探活：后台没开时不发任何请求，桌面端按纯本地版运行
   useEffect(() => {
-    // 先拿内核配置里的后台域名，再带 token 恢复会话
-    void initServerUrl().then(() => {
+    // 先拿内核配置里的后台域名，再探活；探活通过才恢复会话
+    void initServerUrl().then(async () => {
+      if (!(await probeServer())) return
+      setServerOnline(true)
       if (!serverToken()) return
       server
         .me()
@@ -221,6 +226,18 @@ export default function App() {
         if (e instanceof Error && (e as { status?: number }).status === 401) {
           setServerToken("")
           setServerUser(null)
+        }
+      })
+  }
+  // 上报一次 AI 用量到 omni-server：按模型倍率扣积分并留请求记录。
+  // 成功即把最新余额写回工具条；402=积分不足时Toast 提醒，其余错误静默（不影响桌面端）
+  const reportServerUsage = (model: string, input: number, output: number, status?: string, error?: string) => {
+    server
+      .reportUsage({ model, input_tokens: input, output_tokens: output, status, error })
+      .then((r) => setServerUser((u) => (u ? { ...u, balance: r.balance } : u)))
+      .catch((e) => {
+        if (e instanceof Error && (e as { status?: number }).status === 402) {
+          showToast(t("toast.noCredit"))
         }
       })
   }
@@ -586,7 +603,11 @@ export default function App() {
 
   // 生成某任务的 SSE 事件处理器：所有更新写进该任务自己的 RunState，
   // 与当前显示哪个任务无关——后台任务照常在各自状态里推进。
-  const makeHandler = (tid: string) => (ev: ChatEvent) => {
+  // model = 本轮发送时选中的模型（携带来源：内置模型带 server: 前缀）。
+  // 用户中途切换模型不改它——上报只认实际发起请求的那一个。
+  const makeHandler = (tid: string, model: string) => (ev: ChatEvent) => {
+    // 仅内置模型上报后台计积分；用户自配模型不记录、不计费
+    const builtin = model.startsWith("server:") ? model.slice(7) : ""
     const r = runsRef.current[tid]
     if (!r) return
     if ("round" in ev) {
@@ -785,9 +806,17 @@ export default function App() {
           const items = [...r.items]
           slotOf(items, r, ev.round).error = ev.error
           r.items = items
+          // 上游失败也上报后台（不计费），管理端能看到失败请求；仅内置模型
+          if (serverToken() && builtin) {
+            reportServerUsage(builtin, 0, 0, "error", ev.error)
+          }
         }
         break
       case "done":
+        // 登录了 omni-server：本次问答的 token 用量上报后台，按模型倍率扣积分并留痕；仅内置模型
+        if (serverToken() && builtin && (ev.input_tokens || ev.output_tokens)) {
+          reportServerUsage(ev.model || builtin, ev.input_tokens ?? 0, ev.output_tokens ?? 0)
+        }
         break
     }
     bump()
@@ -848,7 +877,8 @@ export default function App() {
       bump()
     }
     try {
-      await streamChat(tid, text, r.mode, state?.model ?? "", makeHandler(tid), ac.signal, attachments)
+      const model = state?.model ?? ""
+      await streamChat(tid, text, r.mode, model, makeHandler(tid, model), ac.signal, attachments)
     } catch (e) {
       if (!ac.signal.aborted) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -1210,6 +1240,7 @@ export default function App() {
         onOpenAccount={openAccount}
         onRefreshUser={refreshServerUser}
         user={serverUser}
+        serverOnline={serverOnline}
         onOpenLogin={() => setLoginOpen(true)}
       />
       {toast && (

@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react"
 
-import { api, type Model, type ModelProvider, type Provider, type ProviderModel, type User, type AdminSettings } from "@/lib/api"
+import { api, type AdminUsage, type CreditRecord, type Model, type ModelProvider, type Provider, type ProviderModel, type UsageLog, type User, type AdminSettings } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input, Label, Select, Switch, Textarea } from "@/components/ui/controls"
-import { Badge, Card, Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/layout"
+import { Badge, Card, CardContent, CardHeader, CardTitle, Pager, StatCard, Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/layout"
 import { Dialog } from "@/components/ui/layout"
+import { StatusBadge, reasonLabel } from "@/components/MemberPanel"
 
-export type AdminSection = "members" | "models" | "providers" | "settings"
+export type AdminSection = "members" | "usage" | "models" | "providers" | "settings"
 
 const SECTIONS: { id: AdminSection; label: string }[] = [
   { id: "members", label: "会员" },
+  { id: "usage", label: "使用量" },
   { id: "models", label: "模型" },
   { id: "providers", label: "供应商" },
   { id: "settings", label: "站点设置" },
@@ -36,6 +38,7 @@ export function AdminPanel({ section, onNav }: { section: AdminSection; onNav: (
       </nav>
       <div className="min-w-0 flex-1">
         {section === "members" && <MembersTab />}
+        {section === "usage" && <UsageTab />}
         {section === "providers" && <ProvidersTab />}
         {section === "models" && <ModelsTab />}
         {section === "settings" && <SettingsTab />}
@@ -44,14 +47,176 @@ export function AdminPanel({ section, onNav }: { section: AdminSection; onNav: (
   )
 }
 
+/** 使用量：总览 + 全体 AI 请求记录（可按手机号过滤）+ 全体积分流水，两个列表各自分页。 */
+function UsageTab() {
+  const [overview, setOverview] = useState<AdminUsage["overview"] | null>(null)
+  const [phone, setPhone] = useState("")
+  const [msg, setMsg] = useState("")
+
+  // 请求记录分页状态
+  const [logs, setLogs] = useState<{ items: UsageLog[]; total: number; page: number; pageSize: number }>({
+    items: [], total: 0, page: 1, pageSize: 20,
+  })
+  // 积分流水分页状态
+  const [flows, setFlows] = useState<{ items: (CreditRecord & { phone: string })[]; total: number; page: number; pageSize: number }>({
+    items: [], total: 0, page: 1, pageSize: 20,
+  })
+
+  const loadLogs = (page: number, pageSize: number, p: string) =>
+    api.adminUsage({ list: "ai", page, pageSize, phone: p })
+      .then((r) => {
+        setOverview(r.overview)
+        setLogs({ items: r.items as UsageLog[], total: r.total, page: r.page, pageSize: r.page_size })
+      })
+      .catch((e) => setMsg(e instanceof Error ? e.message : String(e)))
+  const loadFlows = (page: number, pageSize: number) =>
+    api.adminUsage({ list: "credit", page, pageSize })
+      .then((r) => setFlows({ items: r.items as (CreditRecord & { phone: string })[], total: r.total, page: r.page, pageSize: r.page_size }))
+      .catch((e) => setMsg(e instanceof Error ? e.message : String(e)))
+
+  useEffect(() => {
+    // 只在挂载时加载；后续翻页/查询走各自的 onChange
+    void loadLogs(1, logs.pageSize, "")
+    void loadFlows(1, flows.pageSize)
+  }, [])
+
+  const o = overview
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard label="会员总数" value={o?.users ?? 0} />
+        <StatCard label="累计发放" value={o?.granted ?? 0} />
+        <StatCard label="累计消耗" value={o?.spent ?? 0} />
+        <StatCard label="今日请求" value={o?.today_requests ?? 0} />
+        <StatCard label="今日消耗积分" value={o?.today_credits ?? 0} />
+      </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+          <CardTitle>AI 请求记录</CardTitle>
+          <div className="flex items-center gap-2">
+            <Input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && loadLogs(1, logs.pageSize, phone.trim())}
+              placeholder="按手机号筛选"
+              className="h-8 w-40 text-xs"
+            />
+            <Button size="sm" variant="outline" onClick={() => loadLogs(1, logs.pageSize, phone.trim())}>
+              查询
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>时间</Th>
+                <Th>会员</Th>
+                <Th>模型</Th>
+                <Th>Token（入/出）</Th>
+                <Th>积分</Th>
+                <Th>状态</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {logs.items.map((l) => (
+                <Tr key={l.id}>
+                  <Td className="text-muted-foreground text-xs">{new Date(l.created_at).toLocaleString()}</Td>
+                  <Td className="text-xs">{l.phone}</Td>
+                  <Td className="text-xs">{l.model || "—"}</Td>
+                  <Td className="text-muted-foreground text-xs tabular-nums">
+                    {l.input_tokens.toLocaleString()} / {l.output_tokens.toLocaleString()}
+                  </Td>
+                  <Td className="tabular-nums">{l.credits}</Td>
+                  <Td>
+                    <StatusBadge status={l.status} />
+                  </Td>
+                </Tr>
+              ))}
+              {logs.items.length === 0 && (
+                <tr>
+                  <Td colSpan={6} className="text-muted-foreground text-center">
+                    暂无记录
+                  </Td>
+                </tr>
+              )}
+            </Tbody>
+          </Table>
+          <Pager
+            page={logs.page}
+            pageSize={logs.pageSize}
+            total={logs.total}
+            onChange={(p, size) => void loadLogs(p, size, phone.trim())}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>积分流水</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>时间</Th>
+                <Th>会员</Th>
+                <Th>变动</Th>
+                <Th>说明</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {flows.items.map((r) => (
+                <Tr key={r.id}>
+                  <Td className="text-muted-foreground text-xs">{new Date(r.created_at).toLocaleString()}</Td>
+                  <Td className="text-xs">{r.phone}</Td>
+                  <Td className={r.amount >= 0 ? "text-emerald-600" : "text-destructive"}>
+                    {r.amount >= 0 ? "+" : ""}
+                    {r.amount}
+                  </Td>
+                  <Td className="text-xs">
+                    {reasonLabel(r.reason)}
+                    {r.model && <span className="text-muted-foreground ml-1">({r.model})</span>}
+                  </Td>
+                </Tr>
+              ))}
+              {flows.items.length === 0 && (
+                <tr>
+                  <Td colSpan={4} className="text-muted-foreground text-center">
+                    暂无记录
+                  </Td>
+                </tr>
+              )}
+            </Tbody>
+          </Table>
+          <Pager
+            page={flows.page}
+            pageSize={flows.pageSize}
+            total={flows.total}
+            onChange={(p, size) => void loadFlows(p, size)}
+          />
+        </CardContent>
+      </Card>
+      {msg && <p className="text-destructive text-sm">{msg}</p>}
+    </div>
+  )
+}
+
 function MembersTab() {
   const [users, setUsers] = useState<User[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [dialog, setDialog] = useState<User | null>(null)
   const [amount, setAmount] = useState("")
   const [reason, setReason] = useState("")
   const [msg, setMsg] = useState("")
 
-  const reload = () => api.adminUsers().then((r) => setUsers(r.users)).catch((e) => setMsg(String(e)))
+  const reload = (p = page, size = pageSize) =>
+    api.adminUsers(p, size)
+      .then((r) => { setUsers(r.users); setTotal(r.total); setPage(p); setPageSize(size) })
+      .catch((e) => setMsg(String(e)))
   useEffect(() => void reload(), [])
 
   const grant = async () => {
@@ -99,8 +264,18 @@ function MembersTab() {
                 </Td>
               </Tr>
             ))}
+            {users.length === 0 && (
+              <tr>
+                <Td colSpan={5} className="text-muted-foreground text-center">
+                  暂无会员
+                </Td>
+              </tr>
+            )}
           </Tbody>
         </Table>
+        <div className="px-3 pb-3">
+          <Pager page={page} pageSize={pageSize} total={total} onChange={(p, size) => void reload(p, size)} />
+        </div>
       </Card>
       {msg && <p className="text-destructive text-sm">{msg}</p>}
 

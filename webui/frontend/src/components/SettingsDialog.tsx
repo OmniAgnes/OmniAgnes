@@ -230,8 +230,8 @@ export function SettingsDialog({
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
-  // 账号：登录用户打开时拉最新余额与流水（领取后余额会变化，每次打开重取）
-  const [cred, setCred] = useState<{ user: ServerUser; records: ServerCredit[] } | null>(null)
+  // 账号：登录用户打开时拉最新余额（领取后余额会变化，每次打开重取）；积分流水由账号页自分页拉取
+  const [cred, setCred] = useState<ServerUser | null>(null)
   const [credLoading, setCredLoading] = useState(false)
   const [mcpStatus, setMcpStatus] = useState<MCPStatus[]>([])
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({})
@@ -294,7 +294,7 @@ export function SettingsDialog({
       setCredLoading(true)
       server
         .me()
-        .then((r) => setCred({ user: r.user, records: r.records }))
+        .then((r) => setCred(r.user))
         .catch(() => setCred(null))
         .finally(() => setCredLoading(false))
     } else {
@@ -944,29 +944,46 @@ function AccountPanel({
   loading,
   onLogout,
 }: {
-  cred: { user: ServerUser; records: ServerCredit[] } | null
+  cred: ServerUser | null
   loading: boolean
   onLogout?: () => void
 }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<"gain" | "spend">("gain")
+  const [page, setPage] = useState(1)
+  const [rows, setRows] = useState<{ records: ServerCredit[]; total: number; page: number } | null>(null)
+  const kind = tab === "gain" ? "gain" : "spend"
+
+  // 页签/翻页变化重新拉取该页流水（切页签回到第一页）
+  useEffect(() => {
+    let alive = true
+    server
+      .me(kind, page, 20)
+      .then((r) => alive && setRows({ records: r.records, total: r.total, page: r.page }))
+      .catch(() => alive && setRows(null))
+    return () => {
+      alive = false
+    }
+  }, [kind, page])
+
   if (loading) {
     return <div className="text-muted-foreground text-sm">{t("se.saving")}</div>
   }
   if (!cred) {
     return <div className="text-muted-foreground text-sm">{t("se.accountOffline")}</div>
   }
-  const records = cred.records
   const reasonLabel = (r: ServerCredit) =>
     r.reason === "daily_claim" ? t("se.credDaily") : r.reason || t("se.credDaily")
-  const list = tab === "gain" ? records.filter((r) => r.amount > 0) : records.filter((r) => r.amount < 0)
+  const list = rows?.records ?? []
+  const total = rows?.total ?? 0
+  const pages = Math.max(1, Math.ceil(total / 20))
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-lg border p-4">
         <div className="flex items-center gap-2">
           <UserIcon className="size-4 shrink-0" />
-          <span className="font-medium">{cred.user.phone}</span>
-          {cred.user.is_admin && <Badge variant="outline">{t("se.accountAdmin")}</Badge>}
+          <span className="font-medium">{cred.phone}</span>
+          {cred.is_admin && <Badge variant="outline">{t("se.accountAdmin")}</Badge>}
           {onLogout && (
             <Button variant="outline" size="sm" className="ml-auto" onClick={onLogout}>
               <LogOutIcon /> {t("menu.logout")}
@@ -974,7 +991,7 @@ function AccountPanel({
           )}
         </div>
         <div className="text-muted-foreground mt-1 text-xs">
-          {t("se.accountSince", { d: fmtDateTime(cred.user.created_at) })}
+          {t("se.accountSince", { d: fmtDateTime(cred.created_at) })}
         </div>
       </div>
 
@@ -983,7 +1000,7 @@ function AccountPanel({
           <CoinsIcon className="size-5 text-amber-500" />
           <div>
             <div className="text-muted-foreground text-xs">{t("se.creditsBalance")}</div>
-            <div className="text-2xl font-semibold tabular-nums">{cred.user.balance}</div>
+            <div className="text-2xl font-semibold tabular-nums">{cred.balance}</div>
           </div>
         </div>
 
@@ -993,10 +1010,13 @@ function AccountPanel({
             <button
               key={k}
               type="button"
-              onClick={() => setTab(k)}
+              onClick={() => {
+                setTab(k)
+                setPage(1)
+              }}
               className={cn(
                 "-mb-px cursor-pointer border-b-2 px-3 py-1.5 text-sm",
-                tab === k ? "border-primary text-foreground font-medium" : "text-muted-foreground hover:text-foreground border-transparent",
+                k === tab ? "border-primary text-foreground font-medium" : "text-muted-foreground hover:text-foreground border-transparent",
               )}
             >
               {t(k === "gain" ? "se.credGain" : "se.credSpend")}
@@ -1044,6 +1064,20 @@ function AccountPanel({
                 </div>
               )
             })}
+          </div>
+        )}
+        {total > 0 && (
+          <div className="flex items-center justify-end gap-2 text-xs">
+            <span className="text-muted-foreground">共 {total} 条</span>
+            <Button variant="outline" size="sm" className="h-7 px-2" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              上一页
+            </Button>
+            <span className="text-muted-foreground tabular-nums">
+              {page} / {pages}
+            </span>
+            <Button variant="outline" size="sm" className="h-7 px-2" disabled={page >= pages} onClick={() => setPage(page + 1)}>
+              下一页
+            </Button>
           </div>
         )}
       </div>

@@ -18,6 +18,72 @@ export const CardContent = ({ className, ...p }: React.HTMLAttributes<HTMLDivEle
   <div className={cn("p-6 pt-0", className)} {...p} />
 )
 
+/** 统计小卡：使用量页/管理端总览的数字卡片 */
+export function StatCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+  return (
+    <Card className="p-4">
+      <div className="text-muted-foreground text-xs">{label}</div>
+      <div className="mt-1 text-2xl leading-tight font-semibold tabular-nums">{value}</div>
+      {hint && <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div>}
+    </Card>
+  )
+}
+
+const PAGE_SIZES = [20, 50, 100]
+
+/** 分页条：总数 + 每页条数 + 上/下一页。total=0 时不渲染 */
+export function Pager({
+  page,
+  pageSize,
+  total,
+  onChange,
+}: {
+  page: number
+  pageSize: number
+  total: number
+  onChange: (page: number, pageSize: number) => void
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  if (total === 0) return null
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs">
+      <span className="text-muted-foreground">共 {total} 条</span>
+      <select
+        value={pageSize}
+        onChange={(e) => onChange(1, Number(e.target.value))}
+        className="border-input bg-background h-7 rounded-md border px-1 text-xs"
+      >
+        {PAGE_SIZES.map((n) => (
+          <option key={n} value={n}>
+            {n} 条/页
+          </option>
+        ))}
+      </select>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 px-2"
+        disabled={page <= 1}
+        onClick={() => onChange(page - 1, pageSize)}
+      >
+        上一页
+      </Button>
+      <span className="text-muted-foreground tabular-nums">
+        {page} / {pages}
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 px-2"
+        disabled={page >= pages}
+        onClick={() => onChange(page + 1, pageSize)}
+      >
+        下一页
+      </Button>
+    </div>
+  )
+}
+
 export function Badge({
   variant = "default",
   className,

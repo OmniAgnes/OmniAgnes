@@ -36,10 +36,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/me/phone", s.requireAuth(s.handleMePhone))
 	mux.HandleFunc("POST /api/claim", s.requireAuth(s.handleClaim))
 	mux.HandleFunc("GET /api/models", s.requireAuth(s.handleModelList))
+	mux.HandleFunc("GET /api/usage", s.requireAuth(s.handleUsageGet))
+	mux.HandleFunc("POST /api/usage", s.requireAuth(s.handleUsagePost))
 
 	// 管理面
 	mux.HandleFunc("GET /api/admin/users", s.requireAdmin(s.handleAdminUsers))
 	mux.HandleFunc("POST /api/admin/users/{id}/credit", s.requireAdmin(s.handleAdminCredit))
+	mux.HandleFunc("GET /api/admin/usage", s.requireAdmin(s.handleAdminUsage))
 	mux.HandleFunc("GET /api/admin/providers", s.requireAdmin(s.handleProvidersList))
 	mux.HandleFunc("POST /api/admin/providers", s.requireAdmin(s.handleProvidersSave))
 	mux.HandleFunc("PUT /api/admin/providers/{id}", s.requireAdmin(s.handleProvidersSave))
@@ -275,17 +278,33 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleMe 用户信息 + 积分流水。
+// handleMe 用户信息 + 积分流水分页。kind=gain 只要获取、spend 只要消耗，空=全部。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
-	records, err := s.store.Records(u.ID, 50)
+	// 读路径先清扫过期积分，保证展示的余额已剔除失效部分
+	_ = s.store.SweepExpired(u.ID)
+	if fresh, err := s.store.UserByID(u.ID); err == nil {
+		u = fresh
+	}
+	kind := r.URL.Query().Get("kind")
+	switch kind {
+	case "gain":
+		kind = "got"
+	case "spend":
+		kind = "spent"
+	}
+	page, size := pageReq(r)
+	records, total, err := s.store.CreditRecordsPage(u.ID, kind, page, size)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":    u,
-		"records": records,
+		"user":      u,
+		"records":   records,
+		"total":     total,
+		"page":      page,
+		"page_size": size,
 	})
 }
 

@@ -46,6 +46,18 @@ export interface ServerModel {
 export function serverUrl(): string {
   return serverBase
 }
+/** 后台可达性：启动探活一次。不可达时桌面端按纯本地版运行，不渲染任何 server 相关入口 */
+export async function probeServer(): Promise<boolean> {
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 3000)
+    const res = await fetch(serverUrl() + "/api/state", { signal: ctrl.signal })
+    clearTimeout(timer)
+    return res.ok
+  } catch {
+    return false
+  }
+}
 export function serverToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? ""
 }
@@ -55,12 +67,18 @@ export function setServerToken(t: string) {
 }
 
 async function jfetch(base: string, path: string, method: string, body?: unknown): Promise<any> {
-  const res = await fetch(base + path, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${serverToken()}` },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
-  })
+  let res: Response
+  try {
+    res = await fetch(base + path, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${serverToken()}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch {
+    // 连接失败/超时（后台没开或不可达）：中文提示，别把 fetch failed 抛给用户
+    throw new Error("无法连接 omni-server，请确认后台服务已启动")
+  }
   let data: any = {}
   try {
     data = await res.json()
@@ -85,9 +103,18 @@ export const server = {
     return r
   },
   logout: () => jfetch(serverUrl(), "/api/auth/logout", "POST"),
-  me: async () => {
-    const r = await jfetch(serverUrl(), "/api/me", "GET")
-    return { user: r.user as ServerUser, records: (r.records ?? []) as ServerCredit[] }
+  /** 账号信息 + 积分流水分页（kind=gain 只要获取 / spend 只要消耗，空=全部） */
+  me: async (kind = "", page = 1, pageSize = 20) => {
+    const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+    if (kind) q.set("kind", kind)
+    const r = await jfetch(serverUrl(), "/api/me?" + q.toString(), "GET")
+    return {
+      user: r.user as ServerUser,
+      records: (r.records ?? []) as ServerCredit[],
+      total: (r.total ?? 0) as number,
+      page: (r.page ?? page) as number,
+      page_size: (r.page_size ?? pageSize) as number,
+    }
   },
   /** 每日积分领取（幂等：当天已领则 claimed=false） */
   claim: async () => {
@@ -98,5 +125,10 @@ export const server = {
   models: async (): Promise<ServerModel[]> => {
     const r = await jfetch(serverUrl(), "/api/models", "GET")
     return (r.models ?? []) as ServerModel[]
+  },
+  /** 上报一次 AI 请求：按模型倍率扣积分并留痕（积分不足时 402 抛出） */
+  reportUsage: async (u: { model: string; input_tokens: number; output_tokens: number; status?: string; error?: string }) => {
+    const r = await jfetch(serverUrl(), "/api/usage", "POST", u)
+    return { credits: (r.credits ?? 0) as number, balance: (r.balance ?? 0) as number }
   },
 }
