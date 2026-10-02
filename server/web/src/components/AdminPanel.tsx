@@ -1,41 +1,38 @@
 import { useEffect, useState } from "react"
+import {
+  ActivityIcon,
+  CircleDollarSignIcon,
+  CoinsIcon,
+  CpuIcon,
+  GiftIcon,
+  ServerIcon,
+  SettingsIcon,
+  UsersIcon,
+  ZapIcon,
+} from "lucide-react"
 
 import { api, type AdminUsage, type CreditRecord, type Model, type ModelProvider, type Provider, type ProviderModel, type UsageLog, type User, type AdminSettings } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input, Label, Select, Switch, Textarea } from "@/components/ui/controls"
-import { Badge, Card, CardContent, CardHeader, CardTitle, Pager, StatCard, Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/layout"
+import { Badge, Card, CardContent, CardHeader, CardTitle, EmptyRow, Pager, PanelNav, StatCard, Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/layout"
 import { Dialog } from "@/components/ui/layout"
 import { StatusBadge, reasonLabel } from "@/components/MemberPanel"
 
 export type AdminSection = "members" | "usage" | "models" | "providers" | "settings"
 
-const SECTIONS: { id: AdminSection; label: string }[] = [
-  { id: "members", label: "会员" },
-  { id: "usage", label: "使用量" },
-  { id: "models", label: "模型" },
-  { id: "providers", label: "供应商" },
-  { id: "settings", label: "站点设置" },
+const SECTIONS: { id: AdminSection; label: string; icon: React.ReactNode }[] = [
+  { id: "members", label: "会员", icon: <UsersIcon /> },
+  { id: "usage", label: "使用量", icon: <ActivityIcon /> },
+  { id: "models", label: "模型", icon: <CpuIcon /> },
+  { id: "providers", label: "供应商", icon: <ServerIcon /> },
+  { id: "settings", label: "站点设置", icon: <SettingsIcon /> },
 ]
 
 /** 后台面板：左侧菜单（H5 下横排）+ 右侧内容。section 由 URL 路由（#/admin/xxx）驱动。 */
 export function AdminPanel({ section, onNav }: { section: AdminSection; onNav: (s: AdminSection) => void }) {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-      <nav className="flex shrink-0 gap-1 overflow-x-auto md:w-40 md:flex-col">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => onNav(s.id)}
-            className={`shrink-0 cursor-pointer rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
-              section === s.id
-                ? "bg-secondary text-secondary-foreground font-medium"
-                : "text-muted-foreground hover:bg-accent"
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
-      </nav>
+      <PanelNav items={SECTIONS} active={section} onNav={(id) => onNav(id as AdminSection)} />
       <div className="min-w-0 flex-1">
         {section === "members" && <MembersTab />}
         {section === "usage" && <UsageTab />}
@@ -84,11 +81,11 @@ function UsageTab() {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <StatCard label="会员总数" value={o?.users ?? 0} />
-        <StatCard label="累计发放" value={o?.granted ?? 0} />
-        <StatCard label="累计消耗" value={o?.spent ?? 0} />
-        <StatCard label="今日请求" value={o?.today_requests ?? 0} />
-        <StatCard label="今日消耗积分" value={o?.today_credits ?? 0} />
+        <StatCard label="会员总数" value={o?.users ?? 0} icon={<UsersIcon />} />
+        <StatCard label="累计发放" value={o?.granted ?? 0} icon={<GiftIcon />} />
+        <StatCard label="累计消耗" value={o?.spent ?? 0} icon={<CoinsIcon />} />
+        <StatCard label="今日请求" value={o?.today_requests ?? 0} icon={<ZapIcon />} />
+        <StatCard label="今日消耗积分" value={o?.today_credits ?? 0} icon={<CircleDollarSignIcon />} />
       </div>
 
       <Card>
@@ -134,13 +131,7 @@ function UsageTab() {
                   </Td>
                 </Tr>
               ))}
-              {logs.items.length === 0 && (
-                <tr>
-                  <Td colSpan={6} className="text-muted-foreground text-center">
-                    暂无记录
-                  </Td>
-                </tr>
-              )}
+              {logs.items.length === 0 && <EmptyRow colSpan={6} label="暂无请求记录" />}
             </Tbody>
           </Table>
           <Pager
@@ -181,13 +172,7 @@ function UsageTab() {
                   </Td>
                 </Tr>
               ))}
-              {flows.items.length === 0 && (
-                <tr>
-                  <Td colSpan={4} className="text-muted-foreground text-center">
-                    暂无记录
-                  </Td>
-                </tr>
-              )}
+              {flows.items.length === 0 && <EmptyRow colSpan={4} label="暂无流水记录" />}
             </Tbody>
           </Table>
           <Pager
@@ -252,7 +237,7 @@ function MembersTab() {
             {users.map((u) => (
               <Tr key={u.id}>
                 <Td>{u.phone}</Td>
-                <Td className="font-medium">{u.balance}</Td>
+                <Td className="font-medium tabular-nums">{u.balance}</Td>
                 <Td>{u.is_admin ? <Badge>管理员</Badge> : <span className="text-muted-foreground">—</span>}</Td>
                 <Td className="text-muted-foreground text-xs">{new Date(u.created_at).toLocaleDateString()}</Td>
                 <Td className="text-right">
@@ -264,13 +249,7 @@ function MembersTab() {
                 </Td>
               </Tr>
             ))}
-            {users.length === 0 && (
-              <tr>
-                <Td colSpan={5} className="text-muted-foreground text-center">
-                  暂无会员
-                </Td>
-              </tr>
-            )}
+            {users.length === 0 && <EmptyRow colSpan={5} label="暂无会员" />}
           </Tbody>
         </Table>
         <div className="px-3 pb-3">
@@ -694,7 +673,7 @@ function ModelsTab() {
       </p>
       <div className="flex flex-col gap-2">
         {models.map((m) => (
-          <Card key={m.id} className="p-3">
+          <Card key={m.id} className="p-3 transition-shadow hover:shadow-md">
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">

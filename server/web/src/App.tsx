@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react"
-import { ChevronDownIcon } from "lucide-react"
+import { BotIcon, ChevronDownIcon } from "lucide-react"
 
 import { AdminPanel } from "@/components/AdminPanel"
 import { ChangePhoneDialog } from "@/components/ChangePhoneDialog"
+import { Landing } from "@/components/Landing"
 import { LoginPanel } from "@/components/LoginPanel"
 import { MemberPanel, type MemberSection } from "@/components/MemberPanel"
 import { Button } from "@/components/ui/button"
 import { api, getToken, setToken, type Site, type User } from "@/lib/api"
 
-/** hash 路由：#/me、#/me/usage、#/admin、#/admin/members|usage|models|providers|settings。不同界面 URL 不同，可分享、刷新不 404。 */
+/** hash 路由：#/ 推广首页、#/me、#/me/usage、#/admin、#/admin/members|usage|models|providers|settings。不同界面 URL 不同，可分享、刷新不 404。 */
 function useHashRoute(): string {
   const [route, setRoute] = useState(() => location.hash.replace(/^#/, "") || "/")
   useEffect(() => {
@@ -74,24 +75,30 @@ export function App() {
     }
     setToken("")
     setUser(null)
-    nav("/me")
+    nav("/")
   }
 
   const adminSection = sectionOf(route)
   const memberSection = memberSectionOf(route)
+  const isHome = route === "/" || route === ""
 
-  // 路由守卫：非管理员访问后台回我的页；未知路由回我的页
+  // 路由守卫：非管理员访问后台回我的页；未知路由回我的页（首页放行）
   useEffect(() => {
-    if (booting || !user) return
+    if (booting || !user || isHome) return
     if (adminSection && !user.is_admin) nav("/me")
     else if (!adminSection && !memberSection) nav("/me")
-  }, [user, route, adminSection, memberSection, booting])
+  }, [user, route, adminSection, memberSection, booting, isHome])
 
   if (booting) {
     return <div className="text-muted-foreground flex min-h-screen items-center justify-center text-sm">加载中…</div>
   }
 
-  // 未登录：登录页（任何 hash 都显示登录）
+  // 推广首页：未登录展示「登录 / 注册」，已登录展示「进入控制台」
+  if (isHome) {
+    return <Landing site={site} loggedIn={!!user} />
+  }
+
+  // 未登录：登录页（除首页外任何 hash 都显示登录）
   if (!user) {
     return (
       <>
@@ -120,7 +127,6 @@ export function App() {
             section={memberSection ?? "account"}
             user={user}
             onNav={(s) => nav(s === "usage" ? "/me/usage" : "/me")}
-            onLogout={() => void logout()}
           />
         )}
       </main>
@@ -162,13 +168,16 @@ function Header({
   }, [menuOpen])
 
   return (
-    <header className="border-background/80 sticky top-0 z-40 border-b bg-background">
+    <header className="border-border/70 sticky top-0 z-40 border-b bg-card">
       {/* 内容宽度与下方 main 一致（max-w-5xl 居中）；
           注意：这里不能用 backdrop-blur——它会成为 fixed 元素的包含块，
           导致页面内的弹窗（如修改手机号）fixed 定位参照 header 而跑到界面上方 */}
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2 px-3 py-2.5 md:px-6 md:py-3">
-      <button type="button" className="cursor-pointer text-base font-semibold tracking-tight" onClick={() => nav("/me")}>
-        {site.title || "omni server"}
+      <button type="button" className="flex cursor-pointer items-center gap-2" onClick={() => nav("/")}>
+        <span className="bg-primary flex size-7 items-center justify-center rounded-lg text-white [&_svg]:size-4">
+          <BotIcon />
+        </span>
+        <span className="text-base font-semibold tracking-tight">{site.title || "omni server"}</span>
       </button>
       <div className="flex items-center gap-2">
         {user.is_admin && (

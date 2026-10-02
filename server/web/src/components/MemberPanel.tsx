@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react"
+import { ActivityIcon, CircleDollarSignIcon, CoinsIcon, GiftIcon, TrendingDownIcon, UserIcon, ZapIcon } from "lucide-react"
 
 import { api, type CreditRecord, type MemberUsage, type UsageLog, type User } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Badge, Card, CardContent, CardHeader, CardTitle, Pager, StatCard, Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/layout"
+import { Badge, Card, CardContent, CardHeader, CardTitle, EmptyRow, Pager, PanelNav, StatCard, Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/layout"
 
 export type MemberSection = "account" | "usage"
 
-const SECTIONS: { id: MemberSection; label: string }[] = [
-  { id: "account", label: "账号" },
-  { id: "usage", label: "使用量" },
+const SECTIONS: { id: MemberSection; label: string; icon: React.ReactNode }[] = [
+  { id: "account", label: "账号", icon: <UserIcon /> },
+  { id: "usage", label: "使用量", icon: <ActivityIcon /> },
 ]
 
 /** 积分流水原因展示：daily_claim=每日领取，其余原样（如 管理调整/AI 消耗） */
@@ -21,7 +21,7 @@ export function reasonLabel(reason: string): string {
 export function StatusBadge({ status }: { status: string }) {
   if (status === "insufficient") return <Badge variant="destructive">积分不足</Badge>
   if (status === "error") return <Badge variant="outline">失败</Badge>
-  return <Badge variant="secondary">已计费</Badge>
+  return <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-700">已计费</Badge>
 }
 
 /** 会员面板：左侧菜单（账号/使用量）+ 右侧内容。section 由 URL 路由（#/me/xxx）驱动。 */
@@ -29,58 +29,39 @@ export function MemberPanel({
   section,
   user,
   onNav,
-  onLogout,
 }: {
   section: MemberSection
   user: User
   onNav: (s: MemberSection) => void
-  onLogout: () => void
 }) {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-      <nav className="flex shrink-0 gap-1 overflow-x-auto md:w-40 md:flex-col">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => onNav(s.id)}
-            className={`shrink-0 cursor-pointer rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
-              section === s.id
-                ? "bg-secondary text-secondary-foreground font-medium"
-                : "text-muted-foreground hover:bg-accent"
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
-      </nav>
+      <PanelNav items={SECTIONS} active={section} onNav={(id) => onNav(id as MemberSection)} />
       <div className="min-w-0 flex-1">
-        {section === "usage" ? <UsageTab user={user} /> : <AccountTab user={user} onLogout={onLogout} />}
+        {section === "usage" ? <UsageTab user={user} /> : <AccountTab user={user} />}
       </div>
     </div>
   )
 }
 
-/** 账号页：账号信息（积分余额/退出）。 */
-function AccountTab({ user, onLogout }: { user: User; onLogout: () => void }) {
+/** 账号页：账号信息（退出登录在顶栏账号菜单里）。 */
+function AccountTab({ user }: { user: User }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>账号信息</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-1 text-sm">
-        <div className="flex justify-between">
+      <CardContent className="flex flex-col gap-4 text-sm">
+        <div className="flex items-center justify-between">
           <span className="text-muted-foreground">手机号</span>
-          <span>{user.phone}</span>
+          <span className="flex items-center gap-2">
+            <span className="font-medium">{user.phone}</span>
+            {user.is_admin && <span className="text-primary text-xs font-medium">管理员</span>}
+          </span>
         </div>
-        <div className="flex justify-between">
+        <div className="border-primary/15 bg-primary/5 flex items-center justify-between rounded-lg border p-3">
           <span className="text-muted-foreground">剩余积分</span>
-          <span className="font-semibold">{user.balance}</span>
-        </div>
-        <div className="mt-2 flex justify-end gap-2">
-          {user.is_admin && <span className="text-primary self-center text-xs font-medium">管理员</span>}
-          <Button variant="outline" size="sm" onClick={onLogout}>
-            退出登录
-          </Button>
+          <span className="text-primary text-2xl font-semibold tabular-nums">{user.balance}</span>
         </div>
       </CardContent>
     </Card>
@@ -122,21 +103,28 @@ function UsageTab({ user }: { user: User }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <StatCard label="当前积分" value={user.balance} />
-        <StatCard label="累计获取" value={credit?.got ?? 0} />
-        <StatCard label="累计消耗" value={credit?.spent ?? 0} />
-        <StatCard label="AI 请求" value={s?.requests ?? 0} hint={`${fmtNum(s?.input_tokens ?? 0)} / ${fmtNum(s?.output_tokens ?? 0)} token`} />
-        <StatCard label="请求消耗积分" value={s?.credits ?? 0} />
+        <StatCard label="当前积分" value={user.balance} icon={<CoinsIcon />} />
+        <StatCard label="累计获取" value={credit?.got ?? 0} icon={<GiftIcon />} />
+        <StatCard label="累计消耗" value={credit?.spent ?? 0} icon={<TrendingDownIcon />} />
+        <StatCard
+          label="AI 请求"
+          value={s?.requests ?? 0}
+          hint={`${fmtNum(s?.input_tokens ?? 0)} / ${fmtNum(s?.output_tokens ?? 0)} token`}
+          icon={<ZapIcon />}
+        />
+        <StatCard label="请求消耗积分" value={s?.credits ?? 0} icon={<CircleDollarSignIcon />} />
       </div>
 
       {/* 分段切换：AI 请求记录 / 消耗 / 获取 */}
-      <div className="inline-flex w-fit rounded-lg border p-0.5">
+      <div className="bg-muted/60 inline-flex w-fit gap-0.5 rounded-lg border p-0.5">
         {USAGE_TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => switchTab(t.id)}
             className={`cursor-pointer rounded-md px-3 py-1 text-sm transition-colors ${
-              tab === t.id ? "bg-secondary text-secondary-foreground font-medium" : "text-muted-foreground hover:bg-accent"
+              tab === t.id
+                ? "bg-card text-foreground shadow-sm font-medium"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {t.label}
@@ -174,13 +162,7 @@ function UsageTab({ user }: { user: User }) {
                     </Td>
                   </Tr>
                 ))}
-                {items.length === 0 && (
-                  <tr>
-                    <Td colSpan={5} className="text-muted-foreground text-center">
-                      暂无记录
-                    </Td>
-                  </tr>
-                )}
+                {items.length === 0 && <EmptyRow colSpan={5} label="暂无请求记录" />}
               </Tbody>
             </Table>
             <Pager page={data?.page ?? 1} pageSize={data?.page_size ?? pageSize} total={data?.total ?? 0} onChange={onPage} />
@@ -234,13 +216,7 @@ export function CreditTable({ rows }: { rows: CreditRecord[] }) {
             </Tr>
           )
         })}
-        {rows.length === 0 && (
-          <tr>
-            <Td colSpan={4} className="text-muted-foreground text-center">
-              暂无记录
-            </Td>
-          </tr>
-        )}
+        {rows.length === 0 && <EmptyRow colSpan={4} label="暂无记录" />}
       </Tbody>
     </Table>
   )

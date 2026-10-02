@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { BotIcon } from "lucide-react"
 
 import { api, setToken, type Site, type User } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -47,9 +48,12 @@ export function LoginPanel({ site, onLogin }: { site: Site; onLogin: (u: User) =
   const agreementText = site.agreement || DEFAULT_AGREEMENT
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
+    <div className="from-primary/8 via-background to-background flex min-h-screen flex-col items-center justify-center bg-gradient-to-b p-4">
+      <Card className="w-full max-w-sm shadow-md">
+        <CardHeader className="items-center text-center">
+          <span className="bg-primary mx-auto mb-2 flex size-12 items-center justify-center rounded-2xl text-white shadow-md [&_svg]:size-6">
+            <BotIcon />
+          </span>
           <CardTitle>{site.title || "omni server"}</CardTitle>
           <p className="text-muted-foreground text-sm">
             手机号一键登录；未注册的手机号将自动注册。
@@ -71,12 +75,12 @@ export function LoginPanel({ site, onLogin }: { site: Site; onLogin: (u: User) =
             {testHint && <p className="text-muted-foreground mt-1 text-xs">{testHint}</p>}
           </div>
           <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={agreed}
-              onChange={(e) => setAgreed(e.target.checked)}
-            />
+              <input
+                type="checkbox"
+                className="accent-primary mt-0.5 size-4 cursor-pointer"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+              />
             <span>
               我已阅读并同意{" "}
               <button
