@@ -28,16 +28,29 @@ import (
 
 // ---------- 状态与模型 ----------
 
+// handleServerURL 返回配置里固定的 omni-server 后台地址（桌面端登录/积分调用），
+// 缺省本机 9000。前端启动时读一次，不再走 localStorage。
+func (s *server) handleServerURL(w http.ResponseWriter, r *http.Request) {
+	url := s.cfg.ServerURL
+	if url == "" {
+		url = "http://127.0.0.1:9000"
+	}
+	writeJSON(w, map[string]any{"url": url})
+}
+
 func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
-	model := ""
+	// 优先恢复上次保存的模型（含后台内置模型组选中的名称；本地解析不到时聊天会自动回落）
+	model := s.cfg.Provider
 	configured := s.provider != nil
-	if configured {
-		if ms := s.provider.Models(); len(ms) > 0 {
-			model = ms[0]
+	if model == "" {
+		if configured {
+			if ms := s.provider.Models(); len(ms) > 0 {
+				model = ms[0]
+			}
+		} else if _, m, err := llm.ResolveProvider(s.cfg); err == nil {
+			configured = true
+			model = m
 		}
-	} else if _, m, err := llm.ResolveProvider(s.cfg); err == nil {
-		configured = true
-		model = m
 	}
 	writeJSON(w, map[string]any{
 		"model":       model,
@@ -780,17 +793,9 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 	}
 	changed := false
 	if req.Model != "" {
-		found := false
-		for _, p := range s.cfg.Providers {
-			if p.HasModel(req.Model) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeErr(w, "未知模型: "+req.Model, http.StatusBadRequest)
-			return
-		}
+		// 允许任意模型名：后台内置模型组（/api/models）的模型未必归属任何本地供应商，
+		// 这里只负责持久化选择；运行时（handleChat / ResolveProvider）找不到本地供应商时
+		// 自动回落当前 provider，不会因未知模型名而中断。
 		s.cfg.Provider = req.Model
 		changed = true
 	}

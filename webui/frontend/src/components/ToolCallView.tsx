@@ -26,16 +26,17 @@ import {
 } from "@/components/ui/collapsible"
 import { diffLines, diffStat } from "@/lib/diff"
 import { highlightToHtml, langFromPath } from "@/lib/highlight"
+import { useI18n, type Translate } from "@/lib/i18n"
 import type { AttachmentInfo } from "@/types"
 import { todosFromArgs } from "@/lib/todo"
 import { cn } from "@/lib/utils"
 
-/** 工具调用的展示元数据：图标 + 人类可读名称。 */
+/** 工具调用的展示元数据：图标 + i18n 文案 key + 摘要。 */
 interface ToolMeta {
   icon: React.ComponentType<{ className?: string }>
-  label: string
-  /** 从参数里提取一句话摘要 */
-  summary: (args: Record<string, unknown>) => string
+  labelKey: string
+  /** 从参数里提取一句话摘要（t 用于需要翻译的文案，如浏览器操作） */
+  summary: (args: Record<string, unknown>, t: Translate) => string
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v))
@@ -43,59 +44,59 @@ const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" 
 const META: Record<string, ToolMeta> = {
   read: {
     icon: FileTextIcon,
-    label: "读取",
+    labelKey: "tl.read",
     summary: (a) => str(a.path),
   },
   write: {
     icon: FilePenIcon,
-    label: "写入",
+    labelKey: "tl.write",
     summary: (a) => str(a.path),
   },
   edit: {
     icon: PencilLineIcon,
-    label: "编辑",
+    labelKey: "tl.edit",
     summary: (a) => str(a.path),
   },
   bash: {
     icon: TerminalIcon,
-    label: "bash",
+    labelKey: "tl.bash",
     summary: (a) => str(a.command),
   },
   todo: {
     icon: ListTodoIcon,
-    label: "任务清单",
+    labelKey: "tl.todo",
     // 折叠行不显示摘要（进度以输入框上方面板呈现）
     summary: () => "",
   },
   ask: {
     icon: HelpCircleIcon,
-    label: "提问",
+    labelKey: "tl.ask",
     summary: (a) => str(a.question),
   },
   grep: {
     icon: SearchIcon,
-    label: "搜索",
+    labelKey: "tl.grep",
     // 查找类工具不在折叠行显示 pattern 摘要（正则原文对阅读没帮助）
     summary: () => "",
   },
   glob: {
     icon: FolderSearchIcon,
-    label: "查找",
+    labelKey: "tl.glob",
     summary: () => "",
   },
   json: {
     icon: BracesIcon,
-    label: "JSON",
+    labelKey: "tl.json",
     summary: (a) => (a.pointer ? `${str(a.op) || "query"} ${str(a.pointer)}` : str(a.path)),
   },
   browser: {
     icon: GlobeIcon,
-    label: "浏览器",
-    summary: (a) => {
+    labelKey: "tl.browser",
+    summary: (a, t) => {
       const op = str(a.op)
       if (op === "open" || op === "navigate") return str(a.url)
-      if (op === "click") return `点击 (${Math.round(Number(a.x) || 0)}, ${Math.round(Number(a.y) || 0)})`
-      if (op === "type") return `输入 ${str(a.text).slice(0, 24)}`
+      if (op === "click") return t("tl.click", { x: Math.round(Number(a.x) || 0), y: Math.round(Number(a.y) || 0) })
+      if (op === "type") return t("tl.type", { text: str(a.text).slice(0, 24) })
       if (op === "key") return str(a.key)
       if (op === "eval") return str(a.code).slice(0, 40)
       return op
@@ -107,7 +108,7 @@ function metaOf(name: string): ToolMeta {
   return (
     META[name] ?? {
       icon: WrenchIcon,
-      label: name,
+      labelKey: "",
       summary: () => "",
     }
   )
@@ -149,18 +150,21 @@ function parseArgs(raw: string): Record<string, unknown> {
 }
 
 /** 供输入框上方的审批浮条复用：把一次工具调用压成「标签 + 摘要（文件类带完整路径）」。 */
-export function toolApprovalLabel(run: ToolRun): { label: string; summary: string } {
+export function toolApprovalLabel(run: ToolRun, t: Translate): { label: string; summary: string } {
   const meta = metaOf(run.name)
   const args = parseArgs(run.args)
-  return { label: meta.label, summary: meta.summary(args) }
+  const label = meta.labelKey ? t(meta.labelKey) : run.name
+  return { label, summary: meta.summary(args, t) }
 }
 
 /** 工具调用卡片：图标 + 名称 + 摘要，点击展开详情。待确认浮条在输入框上方（见 Chat）。 */
 export function ToolCallView({ run, onOpenQuestion }: { run: ToolRun; onOpenQuestion?: () => void }) {
+  const { t } = useI18n()
   const meta = metaOf(run.name)
   const Icon = meta.icon
   const args = parseArgs(run.args)
-  const summary = meta.summary(args)
+  const label = meta.labelKey ? t(meta.labelKey) : run.name
+  const summary = meta.summary(args, t)
   const stat = useMemo(() => headerDiffStat(run), [run.name, run.args, run.baseOld])
 
   return (
@@ -169,7 +173,7 @@ export function ToolCallView({ run, onOpenQuestion }: { run: ToolRun; onOpenQues
       <CollapsibleTrigger className="group hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg py-1 pr-2 text-left text-xs transition-colors cursor-pointer">
         <Icon className="text-muted-foreground size-3.5 shrink-0" />
         {/* shrink-0：行宽不够时压缩摘要（省略号），操作名不允许被挤到换行 */}
-        <span className="font-medium shrink-0">{meta.label}</span>
+        <span className="font-medium shrink-0">{label}</span>
         {summary && (
           <span className="text-muted-foreground min-w-0 truncate font-mono text-[11px]" title={summary}>
             {summary}
@@ -190,7 +194,7 @@ export function ToolCallView({ run, onOpenQuestion }: { run: ToolRun; onOpenQues
               onOpenQuestion()
             }}
           >
-            去回答
+            {t("tl.goAnswer")}
           </span>
         )}
         {/* 状态图标靠右，展开箭头在最右。待确认由输入框上方浮条提示，这里只显示转圈。
@@ -208,7 +212,7 @@ export function ToolCallView({ run, onOpenQuestion }: { run: ToolRun; onOpenQues
       {/* 已作出选择的留下记录；待确认的按钮在输入框上方浮条中 */}
       {run.approvalId != null && run.approvalChoice != null && (
         <div className="text-muted-foreground pb-1.5 pr-2.5 text-[11px]">
-          {run.approvalChoice ? "你允许了该操作" : "你拒绝了这个操作"}
+          {run.approvalChoice ? t("tl.allowed") : t("tl.denied")}
         </div>
       )}
 
@@ -242,6 +246,7 @@ function ToolDetail({
   /** write 覆盖已有文件时的旧内容（由后端在执行前抓取），有值则渲染差异 */
   baseOld?: string
 }) {
+  const { t } = useI18n()
   const path = str(args.path)
   return (
     // ml-3：展开详情相对折叠行明显左缩进，层级一眼可辨
@@ -250,7 +255,7 @@ function ToolDetail({
 
       {name === "ask" && str(args.question) !== "" && (
         <div className="flex flex-col gap-1.5">
-          <Field label="问题">
+          <Field label={t("tl.question")}>
             <div className="break-words">{str(args.question)}</div>
           </Field>
           {Array.isArray(args.options) && (args.options as unknown[]).length > 0 && (
@@ -263,7 +268,7 @@ function ToolDetail({
             </div>
           )}
           {output && (
-            <Field label="用户回答">
+            <Field label={t("tl.userAnswer")}>
               <div className="break-words">{output}</div>
             </Field>
           )}
@@ -277,14 +282,14 @@ function ToolDetail({
           // 覆盖已有文件：写入前旧内容 vs 新内容 的行级差异
           <DiffLines oldStr={baseOld} newStr={str(args.content)} />
         ) : (
-          <Field label={`内容（${countLines(str(args.content))} 行）`}>
+          <Field label={t("tl.content", { n: countLines(str(args.content)) })}>
             <CodeBlock code={str(args.content)} path={path} />
           </Field>
         )
       )}
 
       {name === "bash" && str(args.command) !== "" && (
-        <Field label="命令">
+        <Field label={t("tl.command")}>
           <CodeBlock code={str(args.command)} tone="command" lang="bash" />
         </Field>
       )}
@@ -297,9 +302,9 @@ function ToolDetail({
       {(name === "grep" || name === "glob") && !output && <SearchArgs args={args} />}
 
       {denied ? (
-        <div className="text-muted-foreground">用户拒绝了该操作，未执行。</div>
+        <div className="text-muted-foreground">{t("tl.deniedMsg")}</div>
       ) : output && name !== "read" ? (
-        <Field label={isError ? "错误" : "输出"}>
+        <Field label={isError ? t("tl.error") : t("tl.output")}>
           <CodeBlock code={output} tone={isError ? "error" : "output"} />
         </Field>
       ) : null}
@@ -313,6 +318,7 @@ function ToolDetail({
 /** 工具产出的多媒体列表：图片点击放大（灯罩遮罩，点击任意处关闭），视频/音频内联播放。
  * 在最终回答里集中展示（不在工具卡片里渲染），本地文件标注保存路径。 */
 export function MediaList({ atts }: { atts: AttachmentInfo[] }) {
+  const { t } = useI18n()
   const [zoom, setZoom] = useState<AttachmentInfo | null>(null)
   return (
     <div className="flex flex-col gap-2">
@@ -322,7 +328,7 @@ export function MediaList({ atts }: { atts: AttachmentInfo[] }) {
             <div key={i} className="flex flex-col gap-1">
               <img
                 src={a.src}
-                alt={a.caption || "工具产出图片"}
+                alt={a.caption || t("tl.imgAlt")}
                 className="max-h-64 w-auto max-w-full cursor-zoom-in self-start rounded-md object-contain"
                 onClick={() => setZoom(a)}
               />
@@ -385,6 +391,7 @@ function AudioPlayer({ src }: { src: string }) {
 }
 
 /** 媒体说明行：说明文字 + 本地保存路径（远程 URL 的不显示路径） */function MediaMeta({ att }: { att: AttachmentInfo }) {
+  const { t } = useI18n()
   const saved = att.path && !/^https?:\/\//.test(att.path)
   if (!att.caption && !saved) return null
   return (
@@ -392,7 +399,7 @@ function AudioPlayer({ src }: { src: string }) {
       {att.caption && <div>{att.caption}</div>}
       {saved && (
         <div className="font-mono [overflow-wrap:anywhere]" title={att.path}>
-          已保存到：{att.path}
+          {t("tl.savedTo")}{att.path}
         </div>
       )}
     </div>

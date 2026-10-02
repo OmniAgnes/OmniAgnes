@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("omniDesktop", {
   pickFolder: () => ipcRenderer.invoke("omni:pick-folder"),
   // 窗口控制：minimize | maximize | close
   win: (action) => ipcRenderer.send("omni:win", action),
+  // 界面缩放（Chromium 原生页面缩放，0.5~2）
+  setZoom: (z) => ipcRenderer.send("omni:zoom", z),
   // 内置浏览器：执行一次操作（返回 {ok, output, error}）
   browserOp: (op, args) => ipcRenderer.invoke("omni:browser-op", { op, args }),
   // 上报浏览器占位区矩形（视口 CSS 像素）

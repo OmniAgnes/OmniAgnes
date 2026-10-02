@@ -3,13 +3,14 @@ import { BarChart3Icon } from "lucide-react"
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 import { api } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import type { UsageRecord } from "@/types"
 
 /** 快捷区间（今天/昨天固定显示在卡片里，不参与筛选） */
 const RANGES = [
-  { id: "30d", label: "最近30天" },
-  { id: "all", label: "总量" },
-  { id: "custom", label: "自定义" },
+  { id: "30d", key: "u.r30" },
+  { id: "all", key: "u.rAll" },
+  { id: "custom", key: "u.rCustom" },
 ] as const
 
 type RangeId = (typeof RANGES)[number]["id"]
@@ -44,6 +45,7 @@ function fmtK(n: number): string {
  * 下方折线图按模型分色显示每日 token 总量。
  */
 export function UsagePanel() {
+  const { t } = useI18n()
   const [records, setRecords] = useState<UsageRecord[] | null>(null)
   const [range, setRange] = useState<RangeId>("30d")
   const [from, setFrom] = useState("")
@@ -121,9 +123,9 @@ export function UsagePanel() {
 
   const byModel = useMemo(() => {
     const m = new Map<string, number>()
-    for (const r of filtered) m.set(r.model || "(未知)", (m.get(r.model || "(未知)") ?? 0) + r.input + r.output)
+    for (const r of filtered) m.set(r.model || t("u.unknown"), (m.get(r.model || t("u.unknown")) ?? 0) + r.input + r.output)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
-  }, [filtered])
+  }, [filtered, t])
 
   const chart = useMemo(() => {
     // Recharts 数据：每行 = 一天，列为各模型 token；模型顺序与图例一致（按总量降序）
@@ -136,25 +138,25 @@ export function UsagePanel() {
     })
     for (const r of filtered) {
       const row = rows[idx.get(r.date)!]
-      const key = r.model || "(未知)"
+      const key = r.model || t("u.unknown")
       row[key] = ((row[key] as number) ?? 0) + r.input + r.output
     }
     return { days, rows, hasData: filtered.some((r) => r.input + r.output > 0) }
-  }, [filtered, byModel])
+  }, [filtered, byModel, t])
 
   const dateText =
     range === "all"
-      ? "全部时间"
+      ? t("u.allTime")
       : range === "custom"
         ? from && to
           ? `${from} ~ ${to}`
-          : "选择起止日期"
+          : t("u.pickRange")
         : lo === hi
           ? lo
           : `${lo} ~ ${hi}`
 
   if (records === null) {
-    return <div className="text-muted-foreground py-6 text-center text-sm">加载用量数据…</div>
+    return <div className="text-muted-foreground py-6 text-center text-sm">{t("u.loading")}</div>
   }
 
   return (
@@ -166,9 +168,9 @@ export function UsagePanel() {
           onChange={(e) => setRange(e.target.value as RangeId)}
           className="bg-background border-input rounded-md border px-2 py-1 text-xs"
         >
-          {RANGES.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label}
+          {RANGES.map((r) => (
+            <option key={r.id} value={r.id}>
+              {t(r.key)}
             </option>
           ))}
         </select>
@@ -181,7 +183,7 @@ export function UsagePanel() {
               onChange={(e) => setFrom(e.target.value)}
               className="bg-background border-input rounded-md border px-2 py-1"
             />
-            <span className="text-muted-foreground">至</span>
+            <span className="text-muted-foreground">{t("u.to")}</span>
             <input
               type="date"
               value={to}
@@ -194,20 +196,20 @@ export function UsagePanel() {
 
       {/* 汇总卡片：今天/昨天固定显示，不随筛选变化 */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <StatCard label="总 token" value={fmtK(totals.all)} sub={`${totals.calls} 次对话`} />
-        <StatCard label="今天" value={fmtK(dayStats.today.all)} sub={`${dayStats.today.calls} 次对话`} />
-        <StatCard label="昨天" value={fmtK(dayStats.yesterday.all)} sub={`${dayStats.yesterday.calls} 次对话`} />
-        <StatCard label="输入" value={fmtK(totals.input)} />
-        <StatCard label="输出" value={fmtK(totals.output)} />
+        <StatCard label={t("u.total")} value={fmtK(totals.all)} sub={t("u.calls", { n: totals.calls })} />
+        <StatCard label={t("u.today")} value={fmtK(dayStats.today.all)} sub={t("u.calls", { n: dayStats.today.calls })} />
+        <StatCard label={t("u.yesterday")} value={fmtK(dayStats.yesterday.all)} sub={t("u.calls", { n: dayStats.yesterday.calls })} />
+        <StatCard label={t("u.input")} value={fmtK(totals.input)} />
+        <StatCard label={t("u.output")} value={fmtK(totals.output)} />
       </div>
 
       {/* 折线图 */}
       <div className="bg-muted/30 rounded-lg border p-3">
         <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs">
-          <BarChart3Icon className="size-3.5" /> 每日 token 用量（按模型）
+          <BarChart3Icon className="size-3.5" /> {t("u.daily")}
         </div>
         {chart.days.length === 0 || !chart.hasData ? (
-          <div className="text-muted-foreground py-8 text-center text-xs">该区间没有用量数据</div>
+          <div className="text-muted-foreground py-8 text-center text-xs">{t("u.noData")}</div>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={chart.rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -284,6 +286,7 @@ function UsageTooltip({
   label?: string | number
   payload?: Array<{ dataKey?: string | number; value?: number | string; color?: string; stroke?: string }>
 }) {
+  const { t } = useI18n()
   if (!active || !payload?.length) return null
   const items = payload.filter((p) => Number(p.value ?? 0) > 0)
   if (items.length === 0) return null
@@ -300,7 +303,7 @@ function UsageTooltip({
       ))}
       {items.length > 1 && (
         <div className="mt-1 flex items-center gap-1.5 border-t pt-1 leading-5">
-          <span className="text-muted-foreground">合计</span>
+          <span className="text-muted-foreground">{t("u.totalSum")}</span>
           <span className="ml-auto font-mono">{total.toLocaleString()}</span>
         </div>
       )}

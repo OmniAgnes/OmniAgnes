@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import type { BrowseResult } from "@/types"
 
 interface AddProjectDialogProps {
@@ -21,6 +22,7 @@ interface AddProjectDialogProps {
 }
 
 export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDialogProps) {
+  const { t } = useI18n()
   const [pathInput, setPathInput] = useState("")
   const [browse, setBrowse] = useState<BrowseResult | null>(null)
   const [err, setErr] = useState("")
@@ -53,8 +55,8 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>添加项目</DialogTitle>
-          <DialogDescription>选择一个本地文件夹，或直接粘贴路径。</DialogDescription>
+          <DialogTitle>{t("p.title")}</DialogTitle>
+          <DialogDescription>{t("p.desc")}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
@@ -68,7 +70,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
               }}
             />
             <Button variant="secondary" onClick={() => void add(pathInput)}>
-              添加
+              {t("p.add")}
             </Button>
           </div>
 
@@ -85,7 +87,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
                   disabled={!browse.parent}
                   onClick={() => goto(browse.parent)}
                 >
-                  <ArrowUpIcon className="size-3.5" /> 上一级
+                  <ArrowUpIcon className="size-3.5" /> {t("p.up")}
                 </Button>
               </div>
               <div className="omni-scroll h-48 overflow-y-auto rounded-md border">
@@ -97,19 +99,19 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
                       className="hover:bg-accent flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer"
                       onDoubleClick={() => void add(e.path)}
                       onClick={() => goto(e.path)}
-                      title={`${e.path}（双击直接添加）`}
+                      title={t("p.dcAdd", { path: e.path })}
                     >
                       <FolderIcon className="text-muted-foreground size-4 shrink-0" />
                       <span className="truncate">{e.name}</span>
                     </button>
                   ))}
                   {browse.entries.length === 0 && (
-                    <div className="text-muted-foreground px-2 py-3 text-xs">没有子文件夹</div>
+                    <div className="text-muted-foreground px-2 py-3 text-xs">{t("p.noSub")}</div>
                   )}
                 </div>
               </div>
               <Button variant="secondary" size="sm" onClick={() => void add(browse.path)}>
-                把当前目录（{browse.path}）添加为项目
+                {t("p.addCurrent", { path: browse.path })}
               </Button>
             </div>
           )}

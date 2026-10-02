@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import type { Project, TaskMeta } from "@/types"
 
@@ -85,6 +86,7 @@ interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const { t } = useI18n()
   const {
     tasks,
     projects,
@@ -152,7 +154,7 @@ export function Sidebar(props: SidebarProps) {
         {!window.omniDesktop && (
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-base font-semibold tracking-tight">OmniAgens</span>
-            <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onClose} title="收起">
+            <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onClose} title={t("s.collapse")}>
               <XIcon />
             </Button>
           </div>
@@ -160,17 +162,17 @@ export function Sidebar(props: SidebarProps) {
 
         {/* 桌面端没有顶栏品牌区，给「新建任务」留出顶部间距，别贴着标题栏 */}
         <div className={cn("px-3 pb-2", window.omniDesktop ? "pt-2.5" : "")}>
-          <Button variant="ghost" className="w-full justify-start" onClick={() => onNewTask()} title="新建任务（Ctrl + N）">
-            <SquarePenIcon /> 新建任务
+          <Button variant="ghost" className="w-full justify-start" onClick={() => onNewTask()} title={t("s.newTaskHint")}>
+            <SquarePenIcon /> {t("s.newTask")}
             <kbd className="text-muted-foreground ml-auto text-[11px]">Ctrl + N</kbd>
           </Button>
           <Button
             variant="ghost"
             className="text-muted-foreground hover:text-foreground mt-1 w-full justify-start"
             onClick={onOpenSchedules}
-            title="计划任务：到点自动执行"
+            title={t("s.schedulesHint")}
           >
-            <CalendarClockIcon /> 计划任务
+            <CalendarClockIcon /> {t("s.schedules")}
           </Button>
         </div>
 
@@ -178,28 +180,28 @@ export function Sidebar(props: SidebarProps) {
         <div className="bg-sidebar-border/50 mx-3 mb-2 flex rounded-md p-0.5">
           {(
             [
-              { id: "projects", label: "项目", count: projects.length, icon: FolderIcon },
-              { id: "tasks", label: "任务", count: tasks.length, icon: MessageSquareIcon },
+              { id: "projects", key: "s.tabProjects", count: projects.length, icon: FolderIcon },
+              { id: "tasks", key: "s.tabTasks", count: tasks.length, icon: MessageSquareIcon },
             ] as const
-          ).map((t) => (
+          ).map((ti) => (
             <button
-              key={t.id}
+              key={ti.id}
               type="button"
               onClick={() => {
-                setTab(t.id)
+                setTab(ti.id)
                 // 点「任务」TAB 时：有任务就跳到最近的一条，没有就直接新建一个
-                if (t.id === "tasks") onFocusTasksTab()
+                if (ti.id === "tasks") onFocusTasksTab()
               }}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1.5 text-sm cursor-pointer transition-colors",
-                tab === t.id
+                tab === ti.id
                   ? "bg-background text-foreground shadow-xs"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <t.icon className="size-3.5" />
-              {t.label}
-              <span className="text-muted-foreground text-[11px]">{t.count}</span>
+              <ti.icon className="size-3.5" />
+              {t(ti.key)}
+              <span className="text-muted-foreground text-[11px]">{ti.count}</span>
             </button>
           ))}
         </div>
@@ -208,30 +210,30 @@ export function Sidebar(props: SidebarProps) {
         <div className="omni-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="flex flex-col gap-1 px-3 pb-6">
             {tab === "tasks" ? (
-              <TaskList
-                tasks={tasks}
-                activeTaskId={activeTaskId}
-                running={running}
-                onOpen={(id) => {
-                  onOpenTask(id)
-                  onClose()
-                }}
-                onDelete={onDeleteTask}
-                emptyText="还没有任务，点上方「新建任务」开始"
-              />
-            ) : (
-              <>
-                <div className="flex items-center justify-between pr-1">
-                  <SectionTitle className="mb-0">本地文件夹</SectionTitle>
-                  <Button variant="ghost" size="icon-sm" onClick={onAddProject} title="添加本地文件夹">
-                    <FolderPlusIcon />
-                  </Button>
-                </div>
-                {projects.length === 0 && (
-                  <div className="text-muted-foreground px-2 py-1.5 text-xs">
-                    添加本地文件夹作为项目，集中管理它的任务
+                <TaskList
+                  tasks={tasks}
+                  activeTaskId={activeTaskId}
+                  running={running}
+                  onOpen={(id) => {
+                    onOpenTask(id)
+                    onClose()
+                  }}
+                  onDelete={onDeleteTask}
+                  emptyText={t("s.emptyTasks")}
+                />
+              ) : (
+                <>
+                  <div className="flex items-center justify-between pr-1">
+                    <SectionTitle className="mb-0">{t("s.localFolders")}</SectionTitle>
+                    <Button variant="ghost" size="icon-sm" onClick={onAddProject} title={t("s.addFolder")}>
+                      <FolderPlusIcon />
+                    </Button>
                   </div>
-                )}
+                  {projects.length === 0 && (
+                    <div className="text-muted-foreground px-2 py-1.5 text-xs">
+                      {t("s.emptyProjects")}
+                    </div>
+                  )}
                 {projects.map((p) => (
                   <ProjectGroup
                     key={p.id}
@@ -261,7 +263,7 @@ export function Sidebar(props: SidebarProps) {
 
         {/* 底部：设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
         <div className="flex items-center justify-end px-3 py-1.5">
-          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title="设置">
+          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title={t("s.settings")}>
             <SettingsIcon />
           </Button>
         </div>
@@ -284,7 +286,7 @@ export function Sidebar(props: SidebarProps) {
             }}
           >
             <FolderOpenIcon className="text-muted-foreground size-4" />
-            打开文件夹
+            {t("s.openFolder")}
           </button>
           <button
             type="button"
@@ -295,7 +297,7 @@ export function Sidebar(props: SidebarProps) {
             }}
           >
             <Trash2Icon className="size-4" />
-            移除文件夹
+            {t("s.removeFolder")}
           </button>
         </div>
       )}
@@ -309,13 +311,13 @@ export function Sidebar(props: SidebarProps) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>移除文件夹？</AlertDialogTitle>
+            <AlertDialogTitle>{t("s.removeTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              将「{confirmProject?.name}」从列表中移除。不会删除磁盘上的文件，其中的任务也会保留。
+              {t("s.removeDesc", { name: confirmProject?.name ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("s.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (confirmProject) {
@@ -326,7 +328,7 @@ export function Sidebar(props: SidebarProps) {
                 setConfirmProject(null)
               }}
             >
-              移除
+              {t("s.remove")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -355,6 +357,7 @@ function ProjectGroup(props: {
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const { project, tasks, activeTaskId, running, onOpenTask, onNewTask, onDeleteTask, onContextMenu } = props
+  const { t } = useI18n()
   // 任务多时先显示 5 条，点「显示更多」每次再加载 5 条
   const [limit, setLimit] = useState(PAGE)
   // 任务列表默认收起；展开状态按项目 id 持久化——切任务、刷新、重启后都保持
@@ -388,32 +391,32 @@ function ProjectGroup(props: {
         </button>
         {/* 悬停只显示「新建任务」添加图标；打开/移除走右键菜单 */}
         <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
-          <Button variant="ghost" size="icon-sm" onClick={onNewTask} title="在这个项目里新建任务">
+          <Button variant="ghost" size="icon-sm" onClick={onNewTask} title={t("s.newTaskInProject")}>
             <PlusIcon />
           </Button>
         </div>
       </div>
       {open && (
       <div className="border-sidebar-border ml-6 flex flex-col gap-0.5 border-l pl-2">
-        {shown.map((t) => (
+        {shown.map((task) => (
           <div
-            key={t.id}
+            key={task.id}
             className={cn(
               // 同 TaskList：13px，比 text-xs 大一号，与文件夹行的 text-sm 拉开层次
               "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-[13px]",
-              activeTaskId === t.id && "bg-sidebar-accent",
+              activeTaskId === task.id && "bg-sidebar-accent",
             )}
           >
             <button
               type="button"
-              onClick={() => onOpenTask(t.id)}
+              onClick={() => onOpenTask(task.id)}
               className="min-w-0 flex-1 truncate text-left cursor-pointer"
-              title={t.title}
+              title={task.title}
             >
-              {t.title}
+              {task.title}
             </button>
             {/* 运行中：常驻转圈动画（切走也在后台跑，让用户知道处理中）；否则悬停显示删除 */}
-            {running[t.id] ? (
+            {running[task.id] ? (
               <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
             ) : (
               <Button
@@ -422,16 +425,16 @@ function ProjectGroup(props: {
                 className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
                 onClick={(e) => {
                   e.stopPropagation()
-                  onDeleteTask(t.id)
+                  onDeleteTask(task.id)
                 }}
-                title="删除任务"
+                title={t("s.deleteTask")}
               >
                 <Trash2Icon />
               </Button>
             )}
           </div>
         ))}
-        {tasks.length === 0 && <div className="text-muted-foreground px-2 py-1 text-xs">暂无任务</div>}
+        {tasks.length === 0 && <div className="text-muted-foreground px-2 py-1 text-xs">{t("s.noTasks")}</div>}
         {rest > 0 && (
           <Button
             variant="ghost"
@@ -439,7 +442,7 @@ function ProjectGroup(props: {
             className="text-muted-foreground hover:text-foreground h-6 justify-start px-2 text-[13px]"
             onClick={() => setLimit((n) => n + PAGE)}
           >
-            显示更多
+            {t("s.showMore")}
           </Button>
         )}
       </div>

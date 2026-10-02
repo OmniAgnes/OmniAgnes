@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowLeftIcon, ArrowRightIcon, Loader2Icon, RotateCwIcon, XIcon } from "lucide-react"
 
 import { BROWSER_OPEN_EVENT } from "@/lib/browser"
+import { useI18n } from "@/lib/i18n"
 
 // 内置浏览器面板（仅桌面端挂载）：
 //   · 长轮询 GET /api/browser/next 领取内核 browser 工具发来的操作，
@@ -47,6 +48,7 @@ async function runOp(op: BrowserOpMsg): Promise<void> {
 }
 
 export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
+  const { t } = useI18n()
   const [url, setUrl] = useState("")
   const [busy, setBusy] = useState(false)
   const holderRef = useRef<HTMLDivElement>(null)
@@ -159,7 +161,7 @@ export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
       <div className="bg-muted/30 flex items-center gap-1 px-2 py-1.5">
         <button
           type="button"
-          title="后退"
+          title={t("b.back")}
           onClick={() => void toolbarOp("back")}
           className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors"
         >
@@ -167,7 +169,7 @@ export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
         </button>
         <button
           type="button"
-          title="前进"
+          title={t("b.forward")}
           onClick={() => void toolbarOp("forward")}
           className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors"
         >
@@ -175,7 +177,7 @@ export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
         </button>
         <button
           type="button"
-          title="刷新"
+          title={t("b.reload")}
           onClick={() => void toolbarOp("reload")}
           className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors"
         >
@@ -187,12 +189,12 @@ export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
           onKeyDown={(e) => {
             if (e.key === "Enter") void go()
           }}
-          placeholder="输入网址，回车打开"
+          placeholder={t("b.urlPh")}
           className="border-input bg-background text-foreground min-w-0 flex-1 rounded-md border px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
         />
         <button
           type="button"
-          title="收起"
+          title={t("b.hide")}
           onClick={() => {
             void window.omniDesktop?.browserOp?.("hide")
             onOpenChange(false)
@@ -206,7 +208,7 @@ export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
       {busy && (
         <div className="bg-primary/5 text-primary flex items-center gap-2 px-3 py-1 text-xs">
           <Loader2Icon className="size-3 animate-spin" />
-          AI 正在操作浏览器…
+          {t("b.busy")}
         </div>
       )}
       {/* 原生 WebContentsView 悬浮占位区：必须 min-h-0 flex-1，矩形变化即上报 */}

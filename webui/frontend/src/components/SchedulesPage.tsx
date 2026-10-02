@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import type { Project, ScheduledTaskInfo } from "@/types"
 import type { ModelGroup } from "@/components/Chat"
@@ -25,8 +26,8 @@ function fmtTime(iso?: string): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function scheduleDesc(s: ScheduledTaskInfo): string {
-  return s.interval_days <= 1 ? `每天 ${s.at}` : `每 ${s.interval_days} 天 ${s.at}`
+function scheduleDesc(s: ScheduledTaskInfo, t: (k: string, v?: Record<string, string | number>) => string): string {
+  return s.interval_days <= 1 ? t("sc.descDaily", { t: s.at }) : t("sc.descEvery", { n: s.interval_days, t: s.at })
 }
 
 /** 表单字段（添加与编辑共用） */
@@ -47,31 +48,32 @@ function ScheduleFields(props: {
   projects: Project[]
 }) {
   const { models, projects } = props
+  const { t } = useI18n()
   return (
     <>
       <Input
         value={props.name}
         onChange={(e) => props.onName(e.target.value)}
-        placeholder="名称（留空自动取执行内容）"
+        placeholder={t("sc.namePh")}
         className="h-8 text-sm"
       />
       <Textarea
         value={props.prompt}
         onChange={(e) => props.onPrompt(e.target.value)}
-        placeholder="要执行的内容，例如：查看今天的待办并整理成简报"
+        placeholder={t("sc.promptPh")}
         className="min-h-16 resize-none"
       />
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1">
-          <Label className="text-muted-foreground text-[11px]">模型</Label>
+          <Label className="text-muted-foreground text-[11px]">{t("sc.model")}</Label>
           <select
             value={props.model}
             onChange={(e) => props.onModel(e.target.value)}
             className="bg-background h-8 rounded-md border px-2 text-xs outline-none"
           >
-            <option value="">默认模型</option>
+            <option value="">{t("sc.defaultModel")}</option>
             {models.map((g) => (
-              <optgroup key={g.provider} label={g.provider}>
+              <optgroup key={g.provider || "o"} label={g.provider || t("a.other")}>
                 {g.models.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -82,13 +84,13 @@ function ScheduleFields(props: {
           </select>
         </div>
         <div className="flex flex-col gap-1">
-          <Label className="text-muted-foreground text-[11px]">工作目录（可选）</Label>
+          <Label className="text-muted-foreground text-[11px]">{t("sc.workDir")}</Label>
           <select
             value={props.projectId}
             onChange={(e) => props.onProject(e.target.value)}
             className="bg-background h-8 rounded-md border px-2 text-xs outline-none"
           >
-            <option value="">不限定（进「任务」列表）</option>
+            <option value="">{t("sc.anyDir")}</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -99,9 +101,9 @@ function ScheduleFields(props: {
       </div>
       <div className="flex items-end gap-2">
         <div className="flex flex-col gap-1">
-          <Label className="text-muted-foreground text-[11px]">执行频率</Label>
+          <Label className="text-muted-foreground text-[11px]">{t("sc.freq")}</Label>
           <div className="flex items-center gap-1">
-            <span className="text-muted-foreground text-xs">每</span>
+            <span className="text-muted-foreground text-xs">{t("sc.every")}</span>
             <Input
               type="number"
               min={1}
@@ -109,11 +111,11 @@ function ScheduleFields(props: {
               onChange={(e) => props.onInterval(Number(e.target.value) || 1)}
               className="h-8 w-16 px-2 text-xs"
             />
-            <span className="text-muted-foreground text-xs">天</span>
+            <span className="text-muted-foreground text-xs">{t("sc.day")}</span>
           </div>
         </div>
         <div className="flex flex-col gap-1">
-          <Label className="text-muted-foreground text-[11px]">执行时间</Label>
+          <Label className="text-muted-foreground text-[11px]">{t("sc.time")}</Label>
           <Input
             type="time"
             value={props.at}
@@ -138,6 +140,7 @@ interface SchedulesPageProps {
 
 /** 计划任务页：占据聊天主区。添加表单在页首，计划列表在下（可滚动）；编辑走弹窗。 */
 export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPageProps) {
+  const { t } = useI18n()
   const [list, setList] = useState<ScheduledTaskInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState("")
@@ -280,21 +283,21 @@ export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPage
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
           {/* 页头 */}
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onBack} title="返回任务">
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onBack} title={t("sc.back")}>
               <ChevronLeftIcon />
             </Button>
             <CalendarClockIcon className="text-muted-foreground size-4" />
             <div className="min-w-0">
-              <div className="text-base font-semibold">计划任务</div>
+              <div className="text-base font-semibold">{t("sc.title")}</div>
               <div className="text-muted-foreground text-xs">
-                到点自动执行一次（软件没开着，24 小时内的错过会在下次打开时补执行）；不选工作目录时，执行的任务出现在「任务」列表。
+                {t("sc.sub")}
               </div>
             </div>
           </div>
 
           {/* 添加表单：页首 */}
           <div className="flex flex-col gap-2.5 rounded-xl border p-3">
-            <div className="text-muted-foreground text-xs font-medium">添加计划</div>
+            <div className="text-muted-foreground text-xs font-medium">{t("sc.addForm")}</div>
             <ScheduleFields
               name={name}
               onName={setName}
@@ -312,7 +315,7 @@ export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPage
               projects={projects}
             />
             <Button size="sm" className="ml-auto h-8 px-3" disabled={!prompt.trim() || saving} onClick={() => void create()}>
-              {saving ? "添加中…" : "添加"}
+              {saving ? t("sc.adding") : t("sc.add")}
             </Button>
           </div>
 
@@ -320,11 +323,11 @@ export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPage
           <div className="flex flex-col gap-1.5">
             {loading && list.length === 0 && (
               <div className="text-muted-foreground flex items-center gap-2 px-1 py-2 text-xs">
-                <Loader2Icon className="size-3.5 animate-spin" /> 加载中…
+                <Loader2Icon className="size-3.5 animate-spin" /> {t("sc.loading")}
               </div>
             )}
             {!loading && list.length === 0 && (
-              <div className="text-muted-foreground px-1 py-2 text-xs">还没有计划任务，在上方添加一个。</div>
+              <div className="text-muted-foreground px-1 py-2 text-xs">{t("sc.empty")}</div>
             )}
             {list.map((s) => (
               <div
@@ -342,54 +345,54 @@ export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPage
                     className="h-6 gap-1 px-1.5 text-[11px]"
                     disabled={runningId === s.id}
                     onClick={() => void runNow(s.id)}
-                    title="立即执行一次（不影响原有周期）"
+                    title={t("sc.runHint")}
                   >
                     {runningId === s.id ? (
                       <Loader2Icon className="size-3 animate-spin" />
                     ) : (
                       <PlayIcon className="size-3" />
                     )}
-                    执行
+                    {t("sc.run")}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-6 gap-1 px-1.5 text-[11px]"
                     onClick={() => startEdit(s)}
-                    title="编辑"
+                    title={t("sc.edit")}
                   >
                     <PencilLineIcon className="size-3" />
-                    编辑
+                    {t("sc.edit")}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-6 px-1.5 text-[11px]"
                     onClick={() => void toggle(s)}
-                    title={s.enabled ? "停用（不再自动执行）" : "启用"}
+                    title={s.enabled ? t("sc.pauseTitle") : t("sc.enable")}
                   >
-                    {s.enabled ? "停用" : "启用"}
+                    {s.enabled ? t("sc.disable") : t("sc.enable")}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     className="text-muted-foreground hover:text-destructive h-6 px-1.5 text-[11px]"
                     onClick={() => void remove(s.id)}
-                    title="删除"
+                    title={t("sc.delete")}
                   >
                     <Trash2Icon className="size-3" />
                   </Button>
                 </div>
                 <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-5 text-[11px]">
-                  <span>{scheduleDesc(s)}</span>
+                  <span>{scheduleDesc(s, t)}</span>
                   <span>·</span>
-                  <span>{s.model || "默认模型"}</span>
+                  <span>{s.model || t("sc.defaultModel")}</span>
                   <span>·</span>
-                  <span>下次 {fmtTime(s.next_run)}</span>
+                  <span>{t("sc.next", { t: fmtTime(s.next_run) })}</span>
                   {s.last_run && (
                     <>
                       <span>·</span>
-                      <span>上次 {fmtTime(s.last_run)}</span>
+                      <span>{t("sc.last", { t: fmtTime(s.last_run) })}</span>
                     </>
                   )}
                 </div>
@@ -405,7 +408,7 @@ export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPage
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>编辑计划：{editing?.name}</DialogTitle>
+            <DialogTitle>{t("sc.editTitle", { name: editing?.name ?? "" })}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
             <ScheduleFields
@@ -426,10 +429,10 @@ export function SchedulesPage({ models, projects, onRan, onBack }: SchedulesPage
             />
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
-                取消
+                {t("sc.cancel")}
               </Button>
               <Button size="sm" disabled={!ePrompt.trim() || eSaving} onClick={() => void saveEdit()}>
-                {eSaving ? "保存中…" : "保存修改"}
+                {eSaving ? t("sc.saving") : t("sc.saveChanges")}
               </Button>
             </div>
           </div>

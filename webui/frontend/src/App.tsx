@@ -7,10 +7,13 @@ import { Chat, type QueuedMsg, type ViewItem } from "@/components/Chat"
 import { Sidebar } from "@/components/Sidebar"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { Titlebar } from "@/components/Titlebar"
-import { Button } from "@/components/ui/button"
+import { OmniToolbar } from "@/components/OmniToolbar"
+import { ServerLoginDialog } from "@/components/ServerLoginDialog"
 import { api, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
+import { useI18n } from "@/lib/i18n"
 import { extractExternalURLs } from "@/lib/sources"
+import { server, serverToken, setServerToken, initServerUrl, type ServerUser } from "@/lib/serverAuth"
 import type {
   AttachmentInfo,
   ChatEvent,
@@ -21,6 +24,7 @@ import type {
   TaskFull,
   TaskMeta,
   Theme,
+  ThemeColor,
 } from "@/types"
 
 /** 持久化的原始附件 → 可展示结构（Path→接口 URL、Data→data URL、URL 原样） */
@@ -81,6 +85,8 @@ export default function App() {
   const activeTaskIdRef = useRef<string | null>(null)
   activeTaskIdRef.current = activeTaskId
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 打开设置时直达的 section（使用统计等）；为空默认「模型」
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   // 右侧主区视图：聊天（默认）或计划任务页
   const [view, setView] = useState<"chat" | "schedules">("chat")
@@ -98,6 +104,137 @@ export default function App() {
   const [defaultMode, setDefaultMode] = useState<"build" | "plan">("build")
   // 队列「编辑」：把文本回填输入框（seq 递增触发）
   const [draftSeed, setDraftSeed] = useState<{ text: string; seq: number }>({ text: "", seq: 0 })
+
+  // ---- 桌面工具条：界面缩放 / 登录(omni-server) ----
+  const { t } = useI18n()
+  // 缩放倍数持久化（0.5~2）；桌面端经 IPC 走 Chromium 原生页面缩放
+  const [zoom, setZoom] = useState(() => {
+    const v = Number(localStorage.getItem("omni.zoom"))
+    return v >= 0.5 && v <= 2 ? v : 1
+  })
+  const [serverUser, setServerUser] = useState<ServerUser | null>(null)
+  const [loginOpen, setLoginOpen] = useState(false)
+  // 全局 toast（每日积分领取成功等）
+  const [toast, setToast] = useState("")
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showToast = (msg: string) => {
+    setToast(msg)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(""), 3000)
+  }
+  // 有 token 时启动恢复登录态；仅 401（会话过期）清 token，
+  // 服务器暂不可达时保留，恢复后可直接续用
+  useEffect(() => {
+    // 先拿内核配置里的后台域名，再带 token 恢复会话
+    void initServerUrl().then(() => {
+      if (!serverToken()) return
+      server
+        .me()
+        .then((r) => setServerUser(r.user))
+        .catch((e) => {
+          if (e instanceof Error && (e as { status?: number }).status === 401) setServerToken("")
+        })
+    })
+  }, [])
+  // 登录态建立后自动领取每日积分（幂等：服务端当天已领则不发）
+  useEffect(() => {
+    if (!serverUser) return
+    server
+      .claim()
+      .then((r) => {
+        if (r.claimed) {
+          setServerUser((u) => (u ? { ...u, balance: r.balance } : u))
+          showToast(t("toast.claimed", { n: r.amount }))
+        }
+      })
+      .catch(() => {
+        /* 后台不可达时静默，不影响桌面端 */
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverUser?.id])
+  // 缩放落库 + 同步到原生页面缩放（网页端没有这个 IPC，浏览器自带缩放，
+  // 页内 CSS zoom 会把 h-screen 撑破、弹窗大小不一致，故桌面端专用）
+  useEffect(() => {
+    localStorage.setItem("omni.zoom", String(zoom))
+    if (isDesktop) window.omniDesktop?.setZoom(zoom)
+  }, [zoom])
+  // Ctrl++ / Ctrl+- / Ctrl+0 缩放（桌面全局快捷键）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault()
+        setZoom((z) => Math.min(2, +(z + 0.1).toFixed(1)))
+      } else if (e.key === "-") {
+        e.preventDefault()
+        setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(1)))
+      } else if (e.key === "0") {
+        e.preventDefault()
+        setZoom(1)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  // 主题快速切换（复用设置保存逻辑）
+  const themePreset = (): string => {
+    const t = state?.theme ?? "light"
+    const c = state?.theme_color ?? "zinc"
+    if (t === "dark") return "dark"
+    return c && c !== "zinc" ? c : "light"
+  }
+  const changeThemePreset = async (id: string) => {
+    if (!state) return
+    try {
+      const r =
+        id === "dark"
+          ? await api.saveSettings({ theme: "dark" as Theme })
+          : await api.saveSettings({ theme: "light" as Theme, theme_color: (id === "light" ? "zinc" : id) as ThemeColor })
+      setState({ ...state, theme: r.theme, theme_color: r.theme_color })
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  const openUsage = () => {
+    setSettingsSection("usage")
+    setSettingsOpen(true)
+  }
+  // 点工具条「积分」行：进设置「账号」页签看余额与流水
+  const openAccount = () => {
+    setSettingsSection("account")
+    setSettingsOpen(true)
+  }
+  const openSettings = () => {
+    setSettingsSection(undefined)
+    setSettingsOpen(true)
+  }
+  // 点左下角头像：已登录就拉一次最新资料，积分余额及时更新
+  const refreshServerUser = () => {
+    if (!serverToken()) return
+    server
+      .me()
+      .then((r) => setServerUser(r.user))
+      .catch((e) => {
+        // 401 = 会话过期：清 token 回未登录；服务器暂不可达则保留，恢复后可直接续用
+        if (e instanceof Error && (e as { status?: number }).status === 401) {
+          setServerToken("")
+          setServerUser(null)
+        }
+      })
+  }
+  const logout = async () => {
+    try {
+      await server.logout()
+    } catch {
+      /* 忽略 */
+    }
+    setServerToken("")
+    setServerUser(null)
+    // 「账号」页签登录后才存在，登出后直接关掉设置窗
+    setSettingsOpen(false)
+  }
 
   const focusInput = useCallback(() => setFocusSignal((n) => n + 1), [])
 
@@ -200,7 +337,8 @@ export default function App() {
       const groups: ModelGroup[] = []
       const byName = new Map<string, ModelGroup>()
       for (const m of r.models) {
-        const provider = m.provider || "其他"
+        // 空供应商名保持空串，渲染侧统一回落到 i18n「其他」
+        const provider = m.provider || ""
         let g = byName.get(provider)
         if (!g) {
           g = { provider, models: [] }
@@ -735,7 +873,7 @@ export default function App() {
         const last = rr.items.at(-1)
         if (!ac.signal.aborted && last?.role === "assistant" && !last.text && !last.error && last.tools.length === 0 && !last.media?.length) {
           const items = [...rr.items]
-          items[items.length - 1] = { ...last, error: "模型没有返回任何内容（上游可能响应为空），请重试或换个模型" }
+          items[items.length - 1] = { ...last, error: t("a.emptyReply") }
           rr.items = items
         }
         // 本轮用掉多少轮就往后推多少，保证下次提问的轮次不与本次重叠
@@ -945,33 +1083,28 @@ export default function App() {
   // 服务端标记（计划任务后台执行）+ 本地实时状态（交互对话、重试进度）合并；
   // 后台执行的任务在任务 TAB 里也能一眼看出状况
   const running: Record<string, string> = {}
-  for (const t of tasks) {
-    if (t.running) running[t.id] = "处理中"
+  for (const t2 of tasks) {
+    if (t2.running) running[t2.id] = t("a.processing")
   }
   for (const [id, r] of Object.entries(runsRef.current)) {
-    if (r.streaming) running[id] = r.retry ? `重试 ${r.retry.attempt}/${r.retry.max}` : "处理中"
+    if (r.streaming) running[id] = r.retry ? t("a.retry", { n: r.retry.attempt, max: r.retry.max }) : t("a.processing")
   }
 
   const run = activeTaskId ? runsRef.current[activeTaskId] : undefined
   // 后台无人值守执行中（计划任务）：本地没有实时流，也让聊天区显示「处理中」指示，
   // 否则执行期间点开任务只会看到一条孤零零的提问
   const backgroundRunning = !!activeMeta?.running && !run?.streaming
-  const chatTitle = run?.title || activeMeta?.title || "新任务"
-  const chatSource = activeProject?.name ?? "任务"
+  const chatTitle = run?.title || activeMeta?.title || t("a.newTask")
+  const chatSource = activeProject?.name ?? t("a.taskSource")
 
   const emptyHint = (
     <div className="text-muted-foreground flex flex-col items-center gap-3 py-24 text-center">
-      <div className="text-lg font-medium">omni 工作台</div>
+      <div className="text-lg font-medium">{t("a.workbench")}</div>
       <div className="max-w-md text-sm">
-        左侧「新建任务」开始对话，或选择一个项目在其中创建任务。
+        {t("a.empty1")}
         <br />
-        输入 / 可触发技能；MCP 与技能可在设置中查看。
+        {t("a.empty2")}
       </div>
-      {!state?.configured && (
-        <Button variant="outline" onClick={() => setSettingsOpen(true)}>
-          先去配置模型
-        </Button>
-      )}
     </div>
   )
 
@@ -992,7 +1125,7 @@ export default function App() {
           onDeleteProject={(id) => void deleteProject(id)}
           onOpenProject={(p) => void openProject(p)}
           onAddProject={() => (isDesktop ? void addProjectNative() : setAddProjectOpen(true))}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => void openSettings()}
           onOpenSchedules={() => setView("schedules")}
           onFocusTasksTab={() => void focusTasksTab()}
           onClose={() => setSidebarOpen(false)}
@@ -1041,6 +1174,7 @@ export default function App() {
           }}
           browserOpen={browserOpen}
           onToggleBrowser={() => setBrowserOpen((v) => !v)}
+          serverUser={serverUser}
         />
         )}
         {/* 内置浏览器面板：仅桌面端（Electron 壳有 WebContentsView 与操作桥） */}
@@ -1048,6 +1182,7 @@ export default function App() {
       </div>
       <SettingsDialog
         open={settingsOpen}
+        initialSection={settingsSection}
         onOpenChange={(o) => {
           setSettingsOpen(o)
           // 关闭时再刷一次模型列表：兜底覆盖"改了配置但没点保存"等路径，
@@ -1057,17 +1192,36 @@ export default function App() {
         state={state}
         onStateChange={setState}
         onProvidersSaved={() => void refreshModels()}
+        serverUser={serverUser}
+        onLogout={() => void logout()}
       />
       <AddProjectDialog
         open={addProjectOpen}
         onOpenChange={setAddProjectOpen}
         onAdded={() => void refreshProjects()}
       />
+      <ServerLoginDialog open={loginOpen} onOpenChange={setLoginOpen} onLoggedIn={setServerUser} />
+      <OmniToolbar
+        zoom={zoom}
+        onZoom={setZoom}
+        currentTheme={themePreset()}
+        onTheme={(id) => void changeThemePreset(id)}
+        onOpenUsage={openUsage}
+        onOpenAccount={openAccount}
+        onRefreshUser={refreshServerUser}
+        user={serverUser}
+        onOpenLogin={() => setLoginOpen(true)}
+      />
+      {toast && (
+        <div className="border-ring/30 bg-card text-foreground fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border px-4 py-2 text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
       {loadErr && (
         <div className="bg-destructive text-destructive-foreground fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md px-4 py-2 text-sm shadow-lg">
           {loadErr}
           <button className="ml-3 underline cursor-pointer" onClick={() => setLoadErr("")}>
-            关闭
+            {t("a.close")}
           </button>
         </div>
       )}

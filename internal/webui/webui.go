@@ -32,6 +32,8 @@ type Options struct {
 	Extras *extras.Extras
 	// StartCwd 是 omni 的启动目录，无项目任务的默认工作目录。
 	StartCwd string
+	// Port 固定监听端口（桌面版传入，保证 localStorage 跨重启不丢）；为空则随机。
+	Port string
 	// Version 版本号（状态展示用）。
 	Version string
 }
@@ -52,7 +54,15 @@ func Start(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	addr := "127.0.0.1:0"
+	if opts.Port != "" {
+		addr = "127.0.0.1:" + opts.Port
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil && opts.Port != "" {
+		// 固定端口被占用（已有实例在跑）时退回随机端口，保证仍能启动
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -93,6 +103,7 @@ func (s *server) routes() http.Handler {
 		mux.Handle("GET /", http.FileServerFS(sub))
 	}
 	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("GET /api/server-url", s.handleServerURL)
 	mux.HandleFunc("GET /api/models", s.handleModels)
 	mux.HandleFunc("GET /api/providers", s.handleProvidersGet)
 	mux.HandleFunc("PUT /api/providers", s.handleProvidersPut)

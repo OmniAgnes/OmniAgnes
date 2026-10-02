@@ -2,6 +2,7 @@ import { useState } from "react"
 import { ChevronDownIcon, Loader2Icon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import type { TaskMeta } from "@/types"
 
@@ -19,41 +20,42 @@ interface TaskListProps {
 }
 
 export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, emptyText }: TaskListProps) {
+  const { t } = useI18n()
   // 当前展示的任务条数，点「显示更多」逐步 +VISIBLE，而不是一次全展开
   const [visible, setVisible] = useState(VISIBLE)
   if (tasks.length === 0) {
-    return <div className="text-muted-foreground px-2 py-1.5 text-xs">{emptyText ?? "暂无任务"}</div>
+    return <div className="text-muted-foreground px-2 py-1.5 text-xs">{emptyText ?? t("s.noTasks")}</div>
   }
   const shown = tasks.slice(0, visible)
   const hidden = tasks.length - visible
 
   return (
     <div className="flex flex-col gap-0.5">
-      {shown.map((t) => (
+      {shown.map((task) => (
         <div
-          key={t.id}
+          key={task.id}
           className={cn(
             // 13px：比默认 text-xs(12) 明显大一号，又不跟文件夹名的 text-sm(14) 抢视觉
             "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-[13px]",
-            activeTaskId === t.id && "bg-sidebar-accent",
+            activeTaskId === task.id && "bg-sidebar-accent",
           )}
         >
           <button
             type="button"
-            onClick={() => onOpen(t.id)}
+            onClick={() => onOpen(task.id)}
             className="min-w-0 flex-1 truncate text-left cursor-pointer"
-            title={t.title}
+            title={task.title}
           >
-            {t.title}
+            {task.title}
           </button>
           {/* 运行中：转圈 + 状态文字（处理中/重试 n/10），切走任务后台也在跑也看得见；否则悬停显示删除 */}
-          {running[t.id] ? (
+          {running[task.id] ? (
             <span
               className="text-muted-foreground flex shrink-0 items-center gap-1 text-[11px]"
-              title={running[t.id]}
+              title={running[task.id]}
             >
               <Loader2Icon className="size-3.5 shrink-0 animate-spin" />
-              <span className="max-w-20 truncate">{running[t.id]}</span>
+              <span className="max-w-20 truncate">{running[task.id]}</span>
             </span>
           ) : (
             <Button
@@ -62,9 +64,9 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
               className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
               onClick={(e) => {
                 e.stopPropagation()
-                onDelete(t.id, t.title)
+                onDelete(task.id, task.title)
               }}
-              title="删除任务"
+              title={t("s.deleteTask")}
             >
               <XIcon />
             </Button>
@@ -79,7 +81,7 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           onClick={() => setVisible((v) => Math.min(v + VISIBLE, tasks.length))}
         >
           <ChevronDownIcon />
-          显示更多
+          {t("s.showMore")}
         </Button>
       )}
     </div>

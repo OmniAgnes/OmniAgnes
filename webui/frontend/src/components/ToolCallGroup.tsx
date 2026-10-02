@@ -12,6 +12,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 interface ToolCallGroupProps {
@@ -26,18 +27,19 @@ interface ToolCallGroupProps {
  * 待确认操作不在这里答复——统一由输入框上方的审批浮条处理（见 Chat）。
  */
 export function ToolCallGroup({ tools, onOpenQuestion }: ToolCallGroupProps) {
+  const { t } = useI18n()
   // 始终默认收起：用户不关心工具调用细节，展开箭头足以表明有点可看。
   const [open, setOpen] = useState(false)
 
-  const running = tools.filter((t) => t.running).length
-  const waiting = tools.filter((t) => t.approvalId != null && t.approvalChoice == null).length
+  const running = tools.filter((t2) => t2.running).length
+  const waiting = tools.filter((t2) => t2.approvalId != null && t2.approvalChoice == null).length
 
   // 失败不在这里标红/计数（用户要求）；完成态也不放对勾图标（用户要求）——
   // 整行状态只靠文字「执行中/等待确认/已完成」表达
   const status: { icon: React.ComponentType<{ className?: string }> | null; cls: string; text: string } = (() => {
-    if (waiting > 0) return { icon: CircleAlertIcon, cls: "text-amber-600 dark:text-amber-400", text: "等待确认" }
-    if (running > 0) return { icon: Loader2Icon, cls: "text-muted-foreground", text: "执行中" }
-    return { icon: null, cls: "text-muted-foreground", text: "已完成" }
+    if (waiting > 0) return { icon: CircleAlertIcon, cls: "text-amber-600 dark:text-amber-400", text: t("tl.waiting") }
+    if (running > 0) return { icon: Loader2Icon, cls: "text-muted-foreground", text: t("tl.running") }
+    return { icon: null, cls: "text-muted-foreground", text: t("tl.done") }
   })()
   const StatusIcon = status.icon
 
@@ -50,7 +52,7 @@ export function ToolCallGroup({ tools, onOpenQuestion }: ToolCallGroupProps) {
             <StatusIcon className={cn("size-3.5 shrink-0", status.cls, running > 0 && "animate-spin")} />
           )}
           <WrenchIcon className="size-3.5 shrink-0" />
-          <span className="shrink-0">工具调用</span>
+          <span className="shrink-0">{t("tl.group")}</span>
           <span className="text-muted-foreground/80 tabular-nums">×{tools.length}</span>
           <span className={cn("min-w-0 truncate text-[11px]", status.cls)}>{status.text}</span>
           <ChevronDownIcon className="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />

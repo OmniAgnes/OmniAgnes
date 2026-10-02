@@ -5,14 +5,17 @@ import {
   ChartNoAxesColumnIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
+  CoinsIcon,
   CpuIcon,
   ChevronRightIcon,
   FolderOpenIcon,
+  LogOutIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SunMoonIcon,
   Trash2Icon,
+  UserIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -35,7 +38,9 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
+import { server, type ServerCredit, type ServerUser } from "@/lib/serverAuth"
 import type {
   MCPStatus,
   MCPServerConfig,
@@ -49,11 +54,12 @@ import type {
 } from "@/types"
 
 const SECTIONS = [
-  { id: "model", label: "模型", icon: CpuIcon },
-  { id: "theme", label: "主题", icon: SunMoonIcon },
-  { id: "memory", label: "记忆", icon: BrainIcon },
-  { id: "plugins", label: "插件", icon: BlocksIcon },
-  { id: "usage", label: "使用量", icon: ChartNoAxesColumnIcon },
+  { id: "account", key: "se.account", icon: UserIcon, loginOnly: true },
+  { id: "model", key: "se.model", icon: CpuIcon },
+  { id: "theme", key: "se.theme", icon: SunMoonIcon },
+  { id: "memory", key: "se.memory", icon: BrainIcon },
+  { id: "plugins", key: "se.plugins", icon: BlocksIcon },
+  { id: "usage", key: "se.usage", icon: ChartNoAxesColumnIcon },
 ] as const
 
 /** 新添加模型时自动填入的默认上下文/输出上限 */
@@ -63,10 +69,10 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 128_000
 type SectionId = (typeof SECTIONS)[number]["id"]
 
 const PROVIDER_TYPES = [
-  { value: "openai", label: "OpenAI 兼容" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "gemini", label: "Gemini" },
-  { value: "ollama", label: "Ollama" },
+  { value: "openai", key: "se.openai" },
+  { value: "anthropic", key: "se.anthropic" },
+  { value: "gemini", key: "se.gemini" },
+  { value: "ollama", key: "se.ollama" },
 ] as const
 
 const THEME_COLORS = [
@@ -81,17 +87,17 @@ const THEME_COLORS = [
 
 /** 统一主题选择：深色 + 浅色系六个配色（彩色主题均为浅色底）。内部映射到 theme/theme_color 两个字段。 */
 const THEME_PRESETS = [
-  { id: "dark", label: "深色" },
-  { id: "light", label: "浅色" },
-  { id: "violet", label: "紫罗兰" },
-  { id: "blue", label: "海洋" },
-  { id: "sky", label: "天空" },
-  { id: "emerald", label: "翡翠" },
-  { id: "amber", label: "琥珀" },
-  { id: "rose", label: "玫瑰" },
+  "dark",
+  "light",
+  "violet",
+  "blue",
+  "sky",
+  "emerald",
+  "amber",
+  "rose",
 ] as const
 
-type ThemePreset = (typeof THEME_PRESETS)[number]["id"]
+type ThemePreset = (typeof THEME_PRESETS)[number]
 
 /** 由存储的 theme/theme_color 推导当前选中的主题项（旧的跟随系统配置归入浅色显示） */
 function deriveThemePreset(t?: Theme, c?: ThemeColor): ThemePreset {
@@ -100,16 +106,16 @@ function deriveThemePreset(t?: Theme, c?: ThemeColor): ThemePreset {
 }
 
 const INPUT_TYPES = [
-  { value: "text", label: "文字" },
-  { value: "image", label: "图片" },
-  { value: "video", label: "视频" },
-  { value: "pdf", label: "PDF" },
+  { value: "text", key: "se.it.text" },
+  { value: "image", key: "se.it.image" },
+  { value: "video", key: "se.it.video" },
+  { value: "pdf", key: "se.it.pdf" },
 ] as const
 
 const REASONING_LEVELS = [
-  { value: "default", label: "默认" },
-  { value: "off", label: "关闭" },
-  { value: "on", label: "开启" },
+  { value: "default", key: "se.rl.default" },
+  { value: "off", key: "se.rl.off" },
+  { value: "on", key: "se.rl.on" },
 ] as const
 
 interface SettingsDialogProps {
@@ -117,8 +123,14 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
   state: StateInfo | null
   onStateChange: (s: StateInfo) => void
+  /** 打开时直达的 section（如使用统计、账号） */
+  initialSection?: string
   /** 供应商配置保存成功后回调——外层据此刷新模型列表 */
   onProvidersSaved?: () => void
+  /** 登录后台用户：有值才显示「账号」页签 */
+  serverUser?: ServerUser | null
+  /** 退出登录（「账号」页签里用） */
+  onLogout?: () => void
 }
 
 // MCP 服务器编辑草稿
@@ -160,13 +172,13 @@ const MCP_ENV_DEFAULTS: Record<string, string> = {
   MIMO_TTS_MODEL: "mimo-v2.5-tts",
 }
 
-// 各环境变量输入框的占位提示
+// 各环境变量输入框的占位提示（i18n key）
 const MCP_ENV_PLACEHOLDERS: Record<string, string> = {
-  AGNES_API_KEY: "填入 API Key（留空则未配置）",
-  AGNES_IMAGE_MODEL: "默认生图模型（可选）：agnes-image-2.5-flash / agnes-image-2.1-flash",
-  AGNES_VIDEO_MODEL: "默认生视频模型（可选）：agnes-video-2.5-flash / agnes-video-2.5",
-  MIMO_API_KEY: "填入 API Key（留空则未配置）",
-  MIMO_TTS_MODEL: "默认 TTS 模型（可选）：mimo-v2.5-tts / -voicedesign / -voiceclone",
+  AGNES_API_KEY: "se.envPhKey",
+  AGNES_IMAGE_MODEL: "se.envPhImage",
+  AGNES_VIDEO_MODEL: "se.envPhVideo",
+  MIMO_API_KEY: "se.envPhKey",
+  MIMO_TTS_MODEL: "se.envPhTts",
 }
 
 // seedEnvRows 生成某服务器的环境变量行：已知插件（agnes/mimo）按固定 KEY 预生成
@@ -185,23 +197,42 @@ function seedEnvRows(name: string, env?: Record<string, string>): { key: string;
   return rows
 }
 
-// 常见插件需要的环境变量（配置里没填时在列表里提示，避免调用时才报错）
+// 常见插件需要的环境变量（配置里没填时在列表里提示，避免调用时才报错；i18n key）
 const MCP_ENV_HINTS: Record<string, string> = {
-  agnes: "AGNES_API_KEY（Agnes AI 生图/生视频，点编辑填写）",
-  mimo: "MIMO_API_KEY（MiMo 语音合成，点编辑填写）",
+  agnes: "se.envHintAgnes",
+  mimo: "se.envHintMimo",
 }
 
-export function SettingsDialog({ open, onOpenChange, state, onStateChange, onProvidersSaved }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  initialSection,
+  state,
+  onStateChange,
+  onProvidersSaved,
+  serverUser,
+  onLogout,
+}: SettingsDialogProps) {
+  const { t } = useI18n()
   const [section, setSection] = useState<SectionId>("model")
   // 每次打开弹窗递增：强制使用量面板重挂载重新拉取（对话期间数据会变化）
   const [usageSeq, setUsageSeq] = useState(0)
   useEffect(() => {
     if (open) setUsageSeq((s) => s + 1)
   }, [open])
+  // 外层指定直达 section（使用统计、账号等）；未登录时「账号」页签不存在，回落到默认页签
+  useEffect(() => {
+    if (!open || !initialSection) return
+    if (initialSection === "account" && !serverUser) return
+    setSection(initialSection as SectionId)
+  }, [open, initialSection, serverUser])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
+  // 账号：登录用户打开时拉最新余额与流水（领取后余额会变化，每次打开重取）
+  const [cred, setCred] = useState<{ user: ServerUser; records: ServerCredit[] } | null>(null)
+  const [credLoading, setCredLoading] = useState(false)
   const [mcpStatus, setMcpStatus] = useState<MCPStatus[]>([])
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({})
   const [skills, setSkills] = useState<SkillInfo[]>([])
@@ -258,6 +289,17 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     void refreshMcp()
     void refreshSkills()
     void loadDirs()
+    // 账号：有登录态才拉；未登录不显示该页签
+    if (serverUser) {
+      setCredLoading(true)
+      server
+        .me()
+        .then((r) => setCred({ user: r.user, records: r.records }))
+        .catch(() => setCred(null))
+        .finally(() => setCredLoading(false))
+    } else {
+      setCred(null)
+    }
     setErr("")
     setToast("")
     setMcpDraft(null)
@@ -335,7 +377,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     if (!mcpDraft) return
     const name = mcpDraft.name.trim()
     if (!name) {
-      setErr("请填写服务器名称")
+      setErr(t("se.mcpNameReq"))
       return
     }
     const next = { ...mcpServers }
@@ -400,7 +442,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     setErr("")
     try {
       await api.openSkillDir(source, name)
-      setToast("已打开目录，放入 SKILL.md 后点「刷新」即可加载")
+      setToast(t("se.openedDir"))
       setTimeout(() => void refreshSkills(), 1500)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -411,7 +453,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     setErr("")
     try {
       const r = await api.openMcpFile()
-      setToast(r.exists ? "已打开配置文件，改完点「刷新」即可重连" : "配置文件还不存在，已打开所在目录")
+      setToast(r.exists ? t("se.openedMcp") : t("se.noMcpFile"))
       setTimeout(() => void refreshMcp(1200), 1500)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -425,13 +467,13 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
         showCloseButton
       >
         <DialogHeader className="border-b px-5 py-4">
-          <DialogTitle>设置</DialogTitle>
+          <DialogTitle>{t("se.title")}</DialogTitle>
         </DialogHeader>
 
         <div className="flex h-full min-h-0 flex-col md:flex-row">
           <nav className="shrink-0 border-b px-2 py-2 md:w-42 md:border-r md:border-b-0 md:px-2 md:py-3">
             <div className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-              {SECTIONS.map((s) => (
+              {SECTIONS.filter((s) => s.id !== "account" || !!serverUser).map((s) => (
                 <button
                   key={s.id}
                   type="button"
@@ -444,7 +486,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                   )}
                 >
                   <s.icon className="size-4 shrink-0" />
-                  <span className="whitespace-nowrap">{s.label}</span>
+                  <span className="whitespace-nowrap">{t(s.key)}</span>
                 </button>
               ))}
             </div>
@@ -455,13 +497,13 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
               {section === "model" && (
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center justify-between">
-                    <Label>供应商（点击展开配置）</Label>
+                    <Label>{t("se.providers")}</Label>
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" onClick={addProvider}>
-                        <PlusIcon /> 添加
+                        <PlusIcon /> {t("se.add")}
                       </Button>
                       <Button size="sm" disabled={saving || !providers} onClick={() => void saveProviders()}>
-                        {saving ? "保存中…" : "保存"}
+                        {saving ? t("se.saving") : t("se.save")}
                       </Button>
                     </div>
                   </div>
@@ -471,7 +513,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                   {providersSaved && (
                     <div className="text-muted-foreground flex items-center gap-1.5 text-sm">
                       <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-                      已保存，模型列表已更新
+                      {t("se.savedModels")}
                     </div>
                   )}
 
@@ -487,13 +529,13 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                           void refreshMcp(1200)
                         }}
                       >
-                        <RefreshCwIcon /> 刷新
+                        <RefreshCwIcon /> {t("se.refresh")}
                       </Button>
                     </div>
                   )}
 
                   {(providers ?? []).length === 0 && (
-                    <div className="text-muted-foreground text-sm">暂无供应商</div>
+                    <div className="text-muted-foreground text-sm">{t("se.noProviders")}</div>
                   )}
 
 
@@ -511,18 +553,18 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
 
               {section === "theme" && (
                 <div className="flex flex-col gap-2">
-                  <Label>主题</Label>
+                  <Label>{t("se.theme")}</Label>
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                    {THEME_PRESETS.map((t) => {
-                      const c = THEME_COLORS.find((x) => x.id === t.id)
+                    {THEME_PRESETS.map((p) => {
+                      const c = THEME_COLORS.find((x) => x.id === p)
                       return (
                         <button
-                          key={t.id}
+                          key={p}
                           type="button"
-                          onClick={() => void saveThemePreset(t.id)}
+                          onClick={() => void saveThemePreset(p)}
                           className={cn(
                             "flex flex-col items-center gap-2 rounded-lg border p-3 text-sm cursor-pointer transition-colors",
-                            preset === t.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
+                            preset === p ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
                           )}
                         >
                           {c ? (
@@ -533,9 +575,9 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               }}
                             />
                           ) : (
-                            <ThemePreview id={t.id as Theme} />
+                            <ThemePreview id={p as Theme} />
                           )}
-                          {t.label}
+                          {t(`theme.${p}`)}
                         </button>
                       )
                     })}
@@ -546,8 +588,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
               {section === "memory" && (
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <Label>全局记忆</Label>
-                    {memorySaved && <span className="text-muted-foreground text-xs">已保存</span>}
+                    <Label>{t("se.globalMemory")}</Label>
+                    {memorySaved && <span className="text-muted-foreground text-xs">{t("se.saved")}</span>}
                   </div>
                   <Textarea
                     value={memory}
@@ -556,7 +598,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                   />
                   <div className="flex justify-end">
                     <Button size="sm" variant="secondary" onClick={() => void saveMemory()}>
-                      保存
+                      {t("se.save")}
                     </Button>
                   </div>
                 </div>
@@ -567,22 +609,22 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                   <div className="bg-muted/50 flex w-fit rounded-md p-0.5">
                     {(
                       [
-                        { id: "skills", label: `技能${skills.length ? ` ${skills.length}` : ""}` },
+                        { id: "skills", label: `${t("se.skills")}${skills.length ? ` ${skills.length}` : ""}` },
                         { id: "mcp", label: `MCP${mcpStatus.length ? ` ${mcpStatus.length}` : ""}` },
                       ] as const
-                    ).map((t) => (
+                    ).map((tt) => (
                       <button
-                        key={t.id}
+                        key={tt.id}
                         type="button"
-                        onClick={() => setPluginTab(t.id)}
+                        onClick={() => setPluginTab(tt.id)}
                         className={cn(
                           "rounded-[5px] px-3 py-1.5 text-sm cursor-pointer transition-colors",
-                          pluginTab === t.id
+                          pluginTab === tt.id
                             ? "bg-background text-foreground shadow-xs"
                             : "text-muted-foreground hover:text-foreground",
                         )}
                       >
-                        {t.label}
+                        {tt.label}
                       </button>
                     ))}
                   </div>
@@ -590,21 +632,21 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                   {pluginTab === "skills" && (
                     <div className="flex flex-col gap-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Label>技能（对话中用 /名称 触发）</Label>
+                        <Label>{t("se.skillsHint")}</Label>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => void openSkillFolder("global")}
-                            title={dirs.global?.path ?? "打开全局技能目录"}
+                            title={dirs.global?.path ?? t("se.openDirHint")}
                           >
-                            <FolderOpenIcon /> 打开目录
+                            <FolderOpenIcon /> {t("se.openDir")}
                           </Button>
                         </div>
                       </div>
 
                       {skills.length === 0 && (
-                        <div className="text-muted-foreground text-sm">未安装技能</div>
+                        <div className="text-muted-foreground text-sm">{t("se.noSkills")}</div>
                       )}
 
                       <div className="flex flex-col gap-1.5">
@@ -630,7 +672,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               className="shrink-0"
                               onClick={() => void toggleSkill(s.name, !s.disabled)}
                             >
-                              {s.disabled ? "禁用" : "启用"}
+                              {s.disabled ? t("se.disable") : t("se.enable")}
                             </Button>
                           </div>
                         ))}
@@ -641,15 +683,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                   {pluginTab === "mcp" && (
                     <div className="flex flex-col gap-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Label>MCP 服务器</Label>
+                        <Label>{t("se.mcpServers")}</Label>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => void openMcpConfig()}
-                            title={dirs.mcp?.path ?? "打开 MCP 配置文件"}
+                            title={dirs.mcp?.path ?? t("se.openMcpConfig")}
                           >
-                            <FolderOpenIcon /> 打开配置
+                            <FolderOpenIcon /> {t("se.openConfig")}
                           </Button>
                           <Button
                             variant="outline"
@@ -659,7 +701,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               setMcpDraft(emptyMcpDraft())
                             }}
                           >
-                            <PlusIcon /> 添加服务器
+                            <PlusIcon /> {t("se.addServer")}
                           </Button>
                         </div>
                       </div>
@@ -669,7 +711,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                         <DialogContent className="max-h-[85dvh] overflow-y-auto p-5 sm:max-w-2xl" showCloseButton>
                           <DialogHeader>
                             <DialogTitle>
-                              {mcpDraft?.isNew ? "添加 MCP 服务器" : `编辑 ${mcpDraft?.name}`}
+                              {mcpDraft?.isNew ? t("se.addMcp") : t("se.editMcp", { name: mcpDraft?.name ?? "" })}
                             </DialogTitle>
                           </DialogHeader>
 
@@ -677,7 +719,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                             <div className="flex flex-col gap-2.5">
                               <div className="grid gap-2 sm:grid-cols-2">
                                 <div className="flex flex-col gap-1.5">
-                                  <Label className="text-muted-foreground text-xs">名称</Label>
+                                  <Label className="text-muted-foreground text-xs">{t("se.mcpName")}</Label>
                                   <Input
                                     value={mcpDraft.name}
                                     disabled={!mcpDraft.isNew}
@@ -690,11 +732,11 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                           : mcpDraft.envRows
                                       setMcpDraft({ ...mcpDraft, name, envRows: rows })
                                     }}
-                                    placeholder="如 filesystem"
+                                    placeholder={t("se.mcpExample")}
                                   />
                                 </div>
                                 <div className="flex flex-col gap-1.5">
-                                  <Label className="text-muted-foreground text-xs">连接方式</Label>
+                                  <Label className="text-muted-foreground text-xs">{t("se.mcpConn")}</Label>
                                   <Select
                                     value={mcpDraft.kind}
                                     onValueChange={(v) =>
@@ -705,8 +747,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="stdio">本地命令（stdio）</SelectItem>
-                                      <SelectItem value="http">远程 URL（HTTP）</SelectItem>
+                                      <SelectItem value="stdio">{t("se.mcpStdio")}</SelectItem>
+                                      <SelectItem value="http">{t("se.mcpHttp")}</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </div>
@@ -715,7 +757,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               {mcpDraft.kind === "stdio" ? (
                                 <>
                                   <div className="flex flex-col gap-1.5">
-                                    <Label className="text-muted-foreground text-xs">启动命令</Label>
+                                    <Label className="text-muted-foreground text-xs">{t("se.mcpCommand")}</Label>
                                     <Input
                                       value={mcpDraft.command}
                                       onChange={(e) => setMcpDraft({ ...mcpDraft, command: e.target.value })}
@@ -723,7 +765,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                     />
                                   </div>
                                   <div className="flex flex-col gap-1.5">
-                                    <Label className="text-muted-foreground text-xs">参数（空格分隔）</Label>
+                                    <Label className="text-muted-foreground text-xs">{t("se.mcpArgs")}</Label>
                                     <Input
                                       value={mcpDraft.argsText}
                                       onChange={(e) => setMcpDraft({ ...mcpDraft, argsText: e.target.value })}
@@ -731,7 +773,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                     />
                                   </div>
                                   <div className="flex flex-col gap-1.5">
-                                    <Label className="text-muted-foreground text-xs">环境变量</Label>
+                                    <Label className="text-muted-foreground text-xs">{t("se.mcpEnv")}</Label>
                                     {mcpDraft.envRows.map((row, i) => (
                                       <div key={i} className="flex items-center gap-2">
                                         <Input
@@ -744,7 +786,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                               ),
                                             })
                                           }
-                                          placeholder="KEY"
+                                          placeholder={t("se.mcpKey")}
                                           className="w-44 shrink-0 font-mono text-xs"
                                         />
                                         <Input
@@ -757,7 +799,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                               ),
                                             })
                                           }
-                                          placeholder={MCP_ENV_PLACEHOLDERS[row.key] ?? "值"}
+                                          placeholder={t(MCP_ENV_PLACEHOLDERS[row.key] ?? "se.mcpValue")}
                                         />
                                         <Button
                                           variant="ghost"
@@ -769,7 +811,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                               envRows: mcpDraft.envRows.filter((_, j) => j !== i),
                                             })
                                           }
-                                          title="删除此变量"
+                                          title={t("se.mcpRemoveVar")}
                                         >
                                           <Trash2Icon />
                                         </Button>
@@ -783,14 +825,14 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                           setMcpDraft({ ...mcpDraft, envRows: [...mcpDraft.envRows, { key: "", value: "" }] })
                                         }
                                       >
-                                        <PlusIcon /> 添加变量
+                                        <PlusIcon /> {t("se.mcpAddVar")}
                                       </Button>
                                     </div>
                                   </div>
                                 </>
                               ) : (
                                 <div className="flex flex-col gap-1.5">
-                                  <Label className="text-muted-foreground text-xs">服务器 URL</Label>
+                                  <Label className="text-muted-foreground text-xs">{t("se.mcpUrl")}</Label>
                                   <Input
                                     value={mcpDraft.url}
                                     onChange={(e) => setMcpDraft({ ...mcpDraft, url: e.target.value })}
@@ -800,23 +842,23 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                               )}
 
                               <div className="flex items-center justify-between">
-                                <Label className="text-muted-foreground text-xs">启用</Label>
+                                <Label className="text-muted-foreground text-xs">{t("se.mcpEnable")}</Label>
                                 <Button
                                   variant={mcpDraft.disabled ? "outline" : "secondary"}
                                   size="sm"
                                   onClick={() => setMcpDraft({ ...mcpDraft, disabled: !mcpDraft.disabled })}
                                 >
-                                  {mcpDraft.disabled ? "禁用" : "启用"}
+                                  {mcpDraft.disabled ? t("se.disable") : t("se.enable")}
                                 </Button>
                               </div>
 
                               {err && <div className="text-destructive text-sm">{err}</div>}
                               <div className="flex justify-end gap-2">
                                 <Button variant="outline" size="sm" onClick={() => setMcpDraft(null)}>
-                                  取消
+                                  {t("s.cancel")}
                                 </Button>
                                 <Button size="sm" disabled={saving} onClick={() => void saveMcp()}>
-                                  保存并连接
+                                  {t("se.mcpSave")}
                                 </Button>
                               </div>
                             </div>
@@ -825,14 +867,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                       </Dialog>
 
                       {Object.keys(mcpServers).length === 0 && !mcpDraft && (
-                        <div className="text-muted-foreground text-sm">未配置 MCP 服务器</div>
+                        <div className="text-muted-foreground text-sm">{t("se.noMcp")}</div>
                       )}
 
                       <div className="flex flex-col gap-1.5">
                         {Object.entries(mcpServers).map(([name, cfg]) => {
                           const st = mcpStatus.find((x) => x.name === name)
-                          const envHint = MCP_ENV_HINTS[name]
-                          const envMissing = envHint && !Object.values(cfg.env ?? {}).some((v) => v.trim() !== "")
+                          const envHintKey = MCP_ENV_HINTS[name]
+                          const envMissing =
+                            envHintKey && !Object.values(cfg.env ?? {}).some((v) => v.trim() !== "")
                           return (
                             <div
                               key={name}
@@ -844,16 +887,16 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                 <CircleAlertIcon className="text-destructive size-4 shrink-0" />
                               )}
                               <span className="font-medium">{name}</span>
-                              {cfg.disabled && <Badge variant="outline">已禁用</Badge>}
+                              {cfg.disabled && <Badge variant="outline">{t("se.disable")}</Badge>}
                               <span className="text-muted-foreground w-full text-xs sm:w-auto sm:flex-1">
-                                {st?.connected ? `${st.tool_count} 个工具` : st?.error ? st.error : ""}
+                                {st?.connected ? t("se.mcpTools", { n: st.tool_count }) : st?.error ? st.error : ""}
                               </span>
                               <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                                 <Button
                                   variant="ghost"
                                   size="icon-sm"
                                   onClick={() => startEditMcp(name)}
-                                  title="编辑服务器"
+                                  title={t("se.mcpEdit")}
                                 >
                                   <PencilIcon />
                                 </Button>
@@ -864,11 +907,11 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
                                 className="shrink-0"
                                 onClick={() => void toggleMcp(name)}
                               >
-                                {cfg.disabled ? "禁用" : "启用"}
+                                {cfg.disabled ? t("se.disable") : t("se.enable")}
                               </Button>
                               {envMissing && (
                                 <div className="text-amber-600 dark:text-amber-400 w-full text-xs">
-                                  还需要环境变量：{envHint}
+                                  {t("se.mcpEnvMissing", { hint: t(envHintKey) })}
                                 </div>
                               )}
                             </div>
@@ -881,6 +924,8 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
               )}
 
               {section === "usage" && <UsagePanel key={usageSeq} />}
+
+              {section === "account" && serverUser && <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />}
             </div>
           </div>
         </div>
@@ -888,6 +933,130 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * 账号页签（登录用户可见）：账号信息（手机号/管理员/注册时间）+ 积分余额 + 流水。
+ * 未登录时入口不显示，因此这里不再渲染「未登录」占位。
+ */
+function AccountPanel({
+  cred,
+  loading,
+  onLogout,
+}: {
+  cred: { user: ServerUser; records: ServerCredit[] } | null
+  loading: boolean
+  onLogout?: () => void
+}) {
+  const { t } = useI18n()
+  const [tab, setTab] = useState<"gain" | "spend">("gain")
+  if (loading) {
+    return <div className="text-muted-foreground text-sm">{t("se.saving")}</div>
+  }
+  if (!cred) {
+    return <div className="text-muted-foreground text-sm">{t("se.accountOffline")}</div>
+  }
+  const records = cred.records
+  const reasonLabel = (r: ServerCredit) =>
+    r.reason === "daily_claim" ? t("se.credDaily") : r.reason || t("se.credDaily")
+  const list = tab === "gain" ? records.filter((r) => r.amount > 0) : records.filter((r) => r.amount < 0)
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-lg border p-4">
+        <div className="flex items-center gap-2">
+          <UserIcon className="size-4 shrink-0" />
+          <span className="font-medium">{cred.user.phone}</span>
+          {cred.user.is_admin && <Badge variant="outline">{t("se.accountAdmin")}</Badge>}
+          {onLogout && (
+            <Button variant="outline" size="sm" className="ml-auto" onClick={onLogout}>
+              <LogOutIcon /> {t("menu.logout")}
+            </Button>
+          )}
+        </div>
+        <div className="text-muted-foreground mt-1 text-xs">
+          {t("se.accountSince", { d: fmtDateTime(cred.user.created_at) })}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <CoinsIcon className="size-5 text-amber-500" />
+          <div>
+            <div className="text-muted-foreground text-xs">{t("se.creditsBalance")}</div>
+            <div className="text-2xl font-semibold tabular-nums">{cred.user.balance}</div>
+          </div>
+        </div>
+
+        {/* 消耗 / 获得 两个页签 */}
+        <div className="flex gap-1 border-b">
+          {(["gain", "spend"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setTab(k)}
+              className={cn(
+                "-mb-px cursor-pointer border-b-2 px-3 py-1.5 text-sm",
+                tab === k ? "border-primary text-foreground font-medium" : "text-muted-foreground hover:text-foreground border-transparent",
+              )}
+            >
+              {t(k === "gain" ? "se.credGain" : "se.credSpend")}
+            </button>
+          ))}
+        </div>
+
+        {list.length === 0 ? (
+          <div className="text-muted-foreground rounded-md border px-3 py-4 text-center text-sm">
+            {t("se.credEmpty")}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {list.map((r) => {
+              // 已到期（到期时间已过）：整行置灰
+              const expired = !!r.expires_at && new Date(r.expires_at).getTime() < Date.now()
+              return (
+                <div
+                  key={r.id}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
+                    expired && "text-muted-foreground/60",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate" title={r.model ? `${reasonLabel(r)} · ${r.model}` : undefined}>
+                    {reasonLabel(r)}
+                    {r.model ? <span className="text-muted-foreground ml-2 font-mono text-xs">{r.model}</span> : null}
+                    {r.expires_at ? (
+                      <span className={cn("ml-2 text-xs", expired ? "" : "text-muted-foreground")}>
+                        {t("se.credExpire")} {fmtDateTime(r.expires_at)}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 font-medium tabular-nums",
+                      !expired && (r.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"),
+                    )}
+                  >
+                    {r.amount >= 0 ? `+${r.amount}` : r.amount}
+                  </span>
+                  <span className="text-muted-foreground w-32 shrink-0 text-right text-xs tabular-nums">
+                    {fmtDateTime(r.created_at)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 积分流水时间：Y-m-d H:i:s（本地时区） */
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 function ProviderCard({
@@ -902,6 +1071,7 @@ function ProviderCard({
   /** 挂载时是否展开（新添加的供应商为 true），展开后自动聚焦名称输入框 */
   defaultOpen?: boolean
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(defaultOpen)
   const [modelInput, setModelInput] = useState("")
   const nameRef = useRef<HTMLInputElement>(null)
@@ -1004,14 +1174,14 @@ function ProviderCard({
               open && "rotate-90",
             )}
           />
-          <span className="truncate text-sm font-medium">{provider.name || "未命名供应商"}</span>
+          <span className="truncate text-sm font-medium">{provider.name || t("se.unnamedProvider")}</span>
         </button>
         <Button
           variant="ghost"
           size="icon-sm"
           className="text-muted-foreground hover:text-destructive"
           onClick={onRemove}
-          title="删除供应商"
+          title={t("se.removeProvider")}
         >
           <Trash2Icon />
         </Button>
@@ -1021,34 +1191,34 @@ function ProviderCard({
         <div className="border-t p-4">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <Label className="text-muted-foreground text-xs">名称</Label>
+              <Label className="text-muted-foreground text-xs">{t("se.name")}</Label>
             </div>
             <Input
               ref={nameRef}
               value={provider.name ?? ""}
               onChange={(e) => onChange({ name: e.target.value })}
-              placeholder="供应商名称"
+              placeholder={t("se.name")}
               className="max-w-56"
             />
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-muted-foreground text-xs">类型</Label>
+                <Label className="text-muted-foreground text-xs">{t("se.type")}</Label>
                 <Select value={provider.type} onValueChange={(v) => onChange({ type: v })}>
                   <SelectTrigger size="sm" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROVIDER_TYPES.map((t) => (
-                      <SelectItem key={t.value} value={t.value}>
-                        {t.label}
+                    {PROVIDER_TYPES.map((pt) => (
+                      <SelectItem key={pt.value} value={pt.value}>
+                        {t(pt.key)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-muted-foreground text-xs">API Key</Label>
+                <Label className="text-muted-foreground text-xs">{t("se.apiKey")}</Label>
                 <Input
                   value={provider.api_key ?? ""}
                   onChange={(e) => onChange({ api_key: e.target.value })}
@@ -1065,7 +1235,7 @@ function ProviderCard({
               </div>
               {/* 添加模型：只负责新增；改名/删除在下方「模型参数」列表里做 */}
               <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <Label className="text-muted-foreground text-xs">添加模型（Enter 添加，可逗号分隔多个）</Label>
+                <Label className="text-muted-foreground text-xs">{t("se.addModels")}</Label>
                 <Input
                   value={modelInput}
                   onChange={(e) => setModelInput(e.target.value)}
@@ -1076,14 +1246,14 @@ function ProviderCard({
                     }
                   }}
                   onBlur={addModels}
-                  placeholder={provider.models?.length ? "" : "如 gpt-4o、claude-sonnet-4-20250514"}
+                  placeholder={provider.models?.length ? "" : t("se.modelPh")}
                 />
               </div>
 
               {/* 各模型独立参数 */}
               <div className="flex flex-col gap-2 sm:col-span-2">
                 {(provider.models ?? []).length === 0 ? (
-                  <div className="text-muted-foreground text-xs">还没有模型，先在上面添加</div>
+                  <div className="text-muted-foreground text-xs">{t("se.noModels")}</div>
                 ) : (
                   (provider.models ?? []).map((m) => (
                     <ModelOptionsRow
@@ -1113,17 +1283,18 @@ function InputTypePicker({
   value?: string[]
   onChange: (v: string[]) => void
 }) {
+  const { t } = useI18n()
   return (
     <div className="flex flex-wrap gap-1.5">
-      {INPUT_TYPES.map((t) => {
-        const active = (value ?? []).includes(t.value)
+      {INPUT_TYPES.map((it) => {
+        const active = (value ?? []).includes(it.value)
         return (
           <button
-            key={t.value}
+            key={it.value}
             type="button"
             onClick={() =>
               onChange(
-                active ? (value ?? []).filter((x) => x !== t.value) : [...(value ?? []), t.value],
+                active ? (value ?? []).filter((x) => x !== it.value) : [...(value ?? []), it.value],
               )
             }
             className={cn(
@@ -1133,7 +1304,7 @@ function InputTypePicker({
                 : "text-muted-foreground hover:bg-accent",
             )}
           >
-            {t.label}
+            {t(it.key)}
           </button>
         )
       })}
@@ -1149,6 +1320,7 @@ function ReasoningPicker({
   value?: string
   onChange: (v: string) => void
 }) {
+  const { t } = useI18n()
   return (
     <Select value={value || "default"} onValueChange={onChange}>
       <SelectTrigger size="sm" className="w-36">
@@ -1157,7 +1329,7 @@ function ReasoningPicker({
       <SelectContent>
         {REASONING_LEVELS.map((r) => (
           <SelectItem key={r.value} value={r.value}>
-            {r.label}
+            {t(r.key)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -1183,16 +1355,17 @@ function ModelOptionsRow({
   onRename: (from: string, to: string) => void
   onRemove: (name: string) => void
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
 
   // 已配置项摘要，让用户不展开也能看到差异
   const summary: string[] = []
-  if (options.context_window) summary.push(`上下文 ${options.context_window}`)
-  if (options.max_output_tokens) summary.push(`输出 ${options.max_output_tokens}`)
+  if (options.context_window) summary.push(t("se.sumContext", { n: options.context_window }))
+  if (options.max_output_tokens) summary.push(t("se.sumOutput", { n: options.max_output_tokens }))
   if (options.input_types?.length) summary.push(options.input_types.join("/"))
-  if (options.reasoning) summary.push(`推理 ${options.reasoning}`)
+  if (options.reasoning) summary.push(t("se.sumReasoning", { level: options.reasoning }))
 
   const commitRename = () => {
     setEditing(false)
@@ -1251,7 +1424,7 @@ function ModelOptionsRow({
                 setDraft(name)
                 setEditing(true)
               }}
-              title="重命名模型"
+              title={t("se.renameModel")}
             >
               <PencilIcon />
             </Button>
@@ -1260,7 +1433,7 @@ function ModelOptionsRow({
               size="icon-sm"
               className="text-muted-foreground hover:text-destructive"
               onClick={() => onRemove(name)}
-              title="删除模型"
+              title={t("se.deleteModel")}
             >
               <Trash2Icon />
             </Button>
@@ -1272,35 +1445,35 @@ function ModelOptionsRow({
         <div className="flex flex-col gap-3 border-t p-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
-              <Label className="text-muted-foreground text-xs">上下文窗口（token）</Label>
+              <Label className="text-muted-foreground text-xs">{t("se.contextWin")}</Label>
               <Input
                 type="number"
                 min={0}
                 value={options.context_window ?? ""}
                 onChange={(e) => onChange({ context_window: Number(e.target.value) || 0 })}
-                placeholder="留空则用默认"
+                placeholder={t("se.emptyDefault")}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-muted-foreground text-xs">最大输出（token）</Label>
+              <Label className="text-muted-foreground text-xs">{t("se.maxOut")}</Label>
               <Input
                 type="number"
                 min={0}
                 value={options.max_output_tokens ?? ""}
                 onChange={(e) => onChange({ max_output_tokens: Number(e.target.value) || 0 })}
-                placeholder="留空则用默认"
+                placeholder={t("se.emptyDefault")}
               />
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label className="text-muted-foreground text-xs">输入类型</Label>
+            <Label className="text-muted-foreground text-xs">{t("se.inTypes")}</Label>
             <InputTypePicker
               value={options.input_types}
               onChange={(v) => onChange({ input_types: v })}
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label className="text-muted-foreground text-xs">推理等级</Label>
+            <Label className="text-muted-foreground text-xs">{t("se.reasoning")}</Label>
             <ReasoningPicker
               value={options.reasoning}
               onChange={(v) => onChange({ reasoning: v })}

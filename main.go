@@ -38,6 +38,7 @@ func main() {
 		flagTimeout = flag.Duration("timeout", 0, "非交互模式整体超时（如 5m）")
 		flagWeb     = flag.Bool("web", false, "不进 TUI，直接启动网页版工作台")
 		flagNoOpen  = flag.Bool("no-open", false, "启动网页版时不自动打开系统浏览器（桌面版/调试用）")
+	flagPort    = flag.String("port", "", "网页版固定监听端口（桌面版传固定值以保留登录态，缺省随机）")
 	)
 	flag.Parse()
 
@@ -146,6 +147,7 @@ func main() {
 		ConfigPath: configPath,
 		Extras:     ext,
 		StartCwd:   absCwd,
+		Port:       *flagPort,
 		Version:    version,
 	}
 

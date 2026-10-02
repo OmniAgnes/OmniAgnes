@@ -1,5 +1,6 @@
 import { FolderIcon, MessageSquareIcon, MinusIcon, SquareIcon, XIcon } from "lucide-react"
 
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 // 自绘标题栏（仅桌面端渲染）：跟随主题。
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils"
 // browserOpen：内置浏览器展开时给右块补一条底边框。浏览器面板左侧有 border-l，
 // 若顶头没有横向分隔，那条竖线会悬空断在标题栏下沿，很不协调；补上后两者交成 T 形接点。
 export function Titlebar({ source, title, browserOpen }: { source: string; title: string; browserOpen?: boolean }) {
+  const { t } = useI18n()
   const drag = { WebkitAppRegion: "drag" } as React.CSSProperties
   const noDrag = { WebkitAppRegion: "no-drag" } as React.CSSProperties
 
@@ -22,7 +24,7 @@ export function Titlebar({ source, title, browserOpen }: { source: string; title
       <div className={cn("bg-background flex min-w-0 flex-1 items-center", browserOpen && "border-b")}>
         <div className="text-muted-foreground flex min-w-0 flex-1 items-center gap-2 px-3 pt-1.5 text-sm">
           <span className="flex shrink-0 items-center gap-1.5" title={source}>
-            {source !== "任务" ? <FolderIcon className="size-4" /> : <MessageSquareIcon className="size-4" />}
+            {source !== t("a.taskSource") ? <FolderIcon className="size-4" /> : <MessageSquareIcon className="size-4" />}
             <span className="max-w-48 truncate">{source}</span>
           </span>
           <span className="text-muted-foreground/60 shrink-0">/</span>
@@ -31,13 +33,13 @@ export function Titlebar({ source, title, browserOpen }: { source: string; title
           </span>
         </div>
         <div className="flex h-full shrink-0" style={noDrag}>
-          <TitlebarButton title="最小化" onClick={() => window.omniDesktop?.win("minimize")}>
+          <TitlebarButton title={t("w.min")} onClick={() => window.omniDesktop?.win("minimize")}>
             <MinusIcon className="size-4" />
           </TitlebarButton>
-          <TitlebarButton title="最大化 / 还原" onClick={() => window.omniDesktop?.win("maximize")}>
+          <TitlebarButton title={t("w.max")} onClick={() => window.omniDesktop?.win("maximize")}>
             <SquareIcon className="size-3" />
           </TitlebarButton>
-          <TitlebarButton title="关闭" onClick={() => window.omniDesktop?.win("close")}>
+          <TitlebarButton title={t("w.close")} onClick={() => window.omniDesktop?.win("close")}>
             <XIcon className="size-4" />
           </TitlebarButton>
         </div>

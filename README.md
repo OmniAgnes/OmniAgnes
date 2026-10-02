@@ -8,9 +8,10 @@
 
 ![omni 桌面版](screenshot/5.png)
 
-# omni — 终端 AI 编码智能体
+# omni — AI 编码智能体
 
-CLI TUI 编码智能体，在终端里与 AI 协作编程，并附带网页版工作台。
+桌面版 / 终端 TUI / 网页工作台，在本地与 AI 协作编程。
+模型与供应商在桌面版「设置」里配置，开箱即用。
 
 ## 特性
 
@@ -18,17 +19,19 @@ CLI TUI 编码智能体，在终端里与 AI 协作编程，并附带网页版�
 - **网页版工作台**：`--web` 或 TUI 内 `/webui` 打开（127.0.0.1，SSE 流式）
   - 左侧「任务 / 项目」：任务即发出去的一条条对话；项目是本地文件夹，各自管理任务
   - 任务列表默认显示 5 条，更多折叠展开
-  - 设置：供应商与模型管理（URL / API Key / 多模型 / 上下文窗口 / 最大输出 / 输入类型 / 推理等级）、全局记忆、主题模式与 6 套主题风格、技能与 MCP 状态
+  - 设置：供应商与模型管理（URL / API Key / 多模型 / 上下文窗口 / 最大输出 / 输入类型 / 推理等级）、全局记忆、8 套主题、技能与 MCP 状态
   - 聊天底部可随时切换模型与 build/plan 模式，选择自动记住
   - 界面基于 [shadcn/ui](https://ui.shadcn.com/)，适配移动端（H5）
   - 任务与会话历史持久化在 `~/.local/share/omni/`
   - 桌面版：Electron 无边框窗口（自绘标题栏、原生文件夹选择），见 `webui/desktop`
+- **计划任务**：到点（每 N 天 HH:MM）自动执行一次，错过的在 24 小时内自动补跑；支持手动执行、编辑、启停
 - **MCP 支持**：`mcp_servers` 配置 stdio / streamable HTTP 服务器，远端工具以 `mcp__服务器__工具` 注入
 - **技能（Skills）**：`SKILL.md` 定义技能，agent 自动调用，也可 `/技能名` 直接触发
 - **全局记忆**：跨会话长期记忆，agent 可通过 `memory` 工具自动沉淀，设置面板可编辑
 - **多 Provider**：OpenAI 兼容 / Anthropic / Gemini / Ollama 等
 - **Agent 模式**：`build`（可写文件、执行命令）与 `plan`（只读）
 - **非交互模式**：`--print "问题"` 供脚本与 CI 使用
+- **omni-server 后台（可选）**：`server/` 目录的独立服务（端口 9000）——手机号验证码登录（测试模式 111111）、会员与积分、模型与供应商管理（倍率 / 限免 / 多供应商），界面基于 shadcn/ui
 
 ## 安装
 
@@ -40,68 +43,24 @@ go build -o omni .
 
 ## 快速开始
 
-配置至少一个 LLM Provider（`~/.config/omni/config.json`），或无配置文件时直接使用环境变量：
+打开桌面版，在「设置 → 模型」里添加供应商（类型 / Base URL / API Key / 模型列表）即可开始；
+聊天输入框底部可随时切换模型，选择自动记住。
 
 ```sh
-export OPENAI_API_KEY=sk-...
-./omni
-```
-
-**无任何配置也能启动**：TUI 会自动打开配置表单（或随时输入 `/config`），
-填写类型 / 模型 / Base URL / API Key 并保存后立即生效，同时写入配置文件供下次启动使用。
-
-本地 Ollama：
-
-```sh
-export OLLAMA_BASE_URL=http://localhost:11434/v1
-export OLLAMA_MODEL=qwen2.5-coder
-./omni
-```
-
-网页版工作台：
-
-```sh
-./omni --web      # 直接启动（或 TUI 内输入 /webui）
+./omni            # 桌面版 + 工作台（TUI 内输入 /webui 也可打开网页版）
+./omni --web      # 只启动网页版工作台
 ```
 
 ## 配置文件
 
-默认读取 `~/.config/omni/config.json`，模板见 `config.example.json`。也可用 `--config` 指定路径。
+配置存放在 `~/.config/omni/config.json`（模板见 `config.example.json`，可用 `--config` 指定路径）。
+供应商与模型、主题等都在桌面版「设置」里维护并自动写回，无需手动编辑；
+`mcp_servers` 的结构见下节。
 
-```json
-{
-  "provider": "agnes-3.0-flash",
-  "providers": [
-    {
-      "name": "agnes",
-      "type": "openai",
-      "models": ["agnes-3.0-flash", "agnes-2.5-flash"],
-      "base_url": "https://api.agnes-ai.cn/v1",
-      "api_key": "sk-…",
-      "context_window": 128000,
-      "max_output_tokens": 8192,
-      "input_types": ["text", "image", "pdf"],
-      "reasoning": "default",
-      "default": true
-    }
-  ],
-  "max_tool_output": 4000,
-  "bash_timeout_seconds": 10,
-  "theme": "dark",
-  "theme_color": "zinc",
-  "mcp_servers": {
-    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
-    "fetch": { "url": "http://127.0.0.1:8931/mcp" }
-  }
-}
-```
+### 主题
 
-- 供应商也可以直接在网页版「设置 → 模型」中维护（名称 / 类型 / Base URL / API Key / 多模型 / 上下文窗口 / 最大输出 / 输入类型 / 推理等级）；`max_output_tokens` 会作为该供应商模型的实际输出上限。
-- 聊天输入框右下角可随时切换模型，选择会写回配置文件。
-
-### 主题风格
-
-`theme_color` 提供 6 套配色：`zinc`（石墨）/ `violet`（紫罗兰）/ `blue`（海洋）/ `emerald`（翡翠）/ `amber`（琥珀）/ `rose`（玫瑰），配合 `theme`（dark/light/system）组合使用。
+「设置 → 主题」提供 8 套：深色 / 浅色 / 紫罗兰 / 海洋 / 天空 / 翡翠 / 琥珀 / 玫瑰。
+彩色主题为浅色底，侧栏与右侧主区带同色系浅色效果。
 
 ### MCP 服务器
 
@@ -215,6 +174,15 @@ npm install
 npm run dist        # 产出 NSIS 安装包（release/omni-Setup-x64.exe）
 ```
 
+后台（server/，独立 Go 模块 + shadcn/ui 前端，默认 http://127.0.0.1:9000）：
+
+```sh
+cd server
+go build -o bin/server.exe ./cmd/server
+cd web && npm install && npm run build   # 产物输出到 server/dist
+cd .. && bin\server.exe                  # 启动；测试模式验证码 111111，内置管理员 10000
+```
+
 ## 目录结构
 
 ```
@@ -234,5 +202,9 @@ npm run dist        # 产出 NSIS 安装包（release/omni-Setup-x64.exe）
 │   ├── webui/           网页版服务 + 内嵌前端 dist
 │   └── ...
 ├── webui/frontend/      前端源码（React + shadcn/ui）
-└── webui/desktop/       桌面版 Electron 壳
+├── webui/desktop/       桌面版 Electron 壳
+└── server/              独立后台（Go + shadcn/ui，端口 9000）
+    ├── cmd/server/      入口
+    ├── internal/        store(SQLite) / auth / api / config / web
+    └── web/             后台前端源码（React + shadcn/ui）
 ```

@@ -38,3 +38,10 @@ NUL
 
 # ÄÚÖÃ MCP ²å¼ş¹¹½¨²úÎï£¨exe ²»Èë¿â£¬CI °´Æ½Ì¨ÏÖ³¡±àÒë£©
 .omni/mcp/
+
+# ç¼–è¯‘äº§ç‰©ä¸æœ¬åœ°æ•°æ®åº“ï¼šexe ä¸ server çš„ SQLite æ–‡ä»¶ä¸å…¥åº“
+*.exe
+*.exe~
+server/server.db
+server/server.db-shm
+server/server.db-wal

@@ -324,7 +324,9 @@ function startOmni() {
     return null
   }
   const cwd = process.env.OMNI_CWD || app.getPath("home")
-  const child = spawn(bin, ["--web", "--no-open", "--cwd", cwd], {
+  // 固定端口：localStorage 按源（协议+主机+端口）隔离，随机端口会导致
+  // 登录态等每次重启丢失；被占用时内核自动退回随机端口
+  const child = spawn(bin, ["--web", "--no-open", "--port", "8791", "--cwd", cwd], {
     stdio: ["ignore", "pipe", "pipe"],
   })
   child.stderr.on("data", (d) => process.stderr.write(`[omni] ${d}`))
@@ -350,6 +352,15 @@ ipcMain.on("omni:win", (_e, action) => {
     if (win.isMaximized()) win.unmaximize()
     else win.maximize()
   } else if (action === "close") win.close()
+})
+
+// ---------- IPC：界面缩放 ----------
+// 用 Chromium 原生页面缩放（setZoomFactor），不用渲染层 CSS zoom：
+// 弹窗、fixed 元素、滚动区都随页面一起缩放，不会出现放大后 h-screen 被撑成
+// 两倍高、底部被裁，以及弹窗（portal 到 body）与界面大小不一致的问题。
+ipcMain.on("omni:zoom", (_e, factor) => {
+  if (!win || typeof factor !== "number") return
+  win.webContents.setZoomFactor(Math.min(2, Math.max(0.5, factor)))
 })
 
 ipcMain.handle("omni:pick-folder", async () => {

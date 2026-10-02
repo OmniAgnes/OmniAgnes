@@ -37,6 +37,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { todosFromJson, type TodoItem } from "@/lib/todo"
 import { openInBrowser } from "@/lib/browser"
 import { sourceName } from "@/lib/sources"
+import { useI18n } from "@/lib/i18n"
+import type { ServerUser } from "@/lib/serverAuth"
 import { cn } from "@/lib/utils"
 import type { AttachmentInfo, SkillInfo } from "@/types"
 import { MediaList } from "./ToolCallView"
@@ -134,6 +136,8 @@ interface ChatProps {
   /** 内置浏览器面板是否展开（仅桌面端有该入口） */
   browserOpen?: boolean
   onToggleBrowser?: () => void
+  /** 登录后台用户：有值时模型选择器顶部显示「内置模型」组 */
+  serverUser?: ServerUser | null
 }
 
 export function Chat({
@@ -166,7 +170,9 @@ export function Chat({
   onOpenSidebar,
   browserOpen,
   onToggleBrowser,
+  serverUser,
 }: ChatProps) {
+  const { t } = useI18n()
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -392,7 +398,7 @@ export function Chat({
                     {/* 来源站点：本轮工具调用触达过的外部 URL，点击进内置浏览器（网页端开新标签页） */}
                     {item.sources && item.sources.length > 0 && (
                       <div className="text-muted-foreground flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs">
-                        <span>来源：</span>
+                        <span>{t("c.sources")}</span>
                         {item.sources.map((u, i) => (
                           <span key={u} className="flex items-center gap-1">
                             {i > 0 && <span className="text-muted-foreground/50">|</span>}
@@ -426,13 +432,13 @@ export function Chat({
       {/* 头部：来源标识（文件夹名 / 任务）+ 任务标题。
           桌面端这行挪进了自绘标题栏（窗口按钮左边），此处仅保留移动端菜单按钮；webui 不变。 */}
       <div className="flex items-center gap-2 px-3 py-3 md:px-6">
-        <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onOpenSidebar} title="菜单">
+        <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onOpenSidebar} title={t("c.menu")}>
           <MenuIcon />
         </Button>
         {!isDesktop && (
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-muted-foreground flex shrink-0 items-center gap-1 text-xs" title={source}>
-              {source !== "任务" ? <FolderIcon className="size-3.5" /> : <MessageSquareIcon className="size-3.5" />}
+              {source !== t("a.taskSource") ? <FolderIcon className="size-3.5" /> : <MessageSquareIcon className="size-3.5" />}
               <span className="max-w-40 truncate">{source}</span>
             </span>
             <span className="text-muted-foreground/60 shrink-0">/</span>
@@ -458,7 +464,7 @@ export function Chat({
             variant="ghost"
             size="icon"
             onClick={jumpToBottom}
-            title="回到底部"
+            title={t("c.backToBottom")}
             className="bg-card text-muted-foreground hover:text-foreground absolute left-1/2 -translate-x-1/2 bottom-3 z-20 rounded-full border shadow-md"
           >
             <ChevronDownIcon />
@@ -523,7 +529,7 @@ export function Chat({
                     <SlashIcon className="text-muted-foreground size-3.5" />
                     <span className="font-medium">{s.name}</span>
                     <span className="text-muted-foreground text-[10px]">
-                      {s.source === "project" ? "项目" : "全局"}
+                      {s.source === "project" ? t("c.skillProject") : t("c.skillGlobal")}
                     </span>
                   </span>
                   {s.description && (
@@ -547,7 +553,7 @@ export function Chat({
                     type="button"
                     className="text-muted-foreground hover:text-foreground cursor-pointer"
                     onClick={() => setPendingFiles((fs) => fs.filter((_, j) => j !== i))}
-                    title="移除"
+                    title={t("c.remove")}
                   >
                     <XIcon className="size-3" />
                   </button>
@@ -559,7 +565,7 @@ export function Chat({
             ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="输入任务…（输入 / 触发技能）"
+            placeholder={t("c.inputPh")}
             className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-0"
             onKeyDown={(e) => {
               if (slashOpen && slashMatch.length > 0) {
@@ -599,7 +605,7 @@ export function Chat({
                 size="icon-sm"
                 className="text-muted-foreground hover:text-foreground shrink-0"
                 onClick={() => fileRef.current?.click()}
-                title="添加图片或文件"
+                title={t("c.attach")}
               >
                 <PaperclipIcon />
               </Button>
@@ -610,7 +616,7 @@ export function Chat({
                   variant="ghost"
                   size="icon-sm"
                   onClick={onToggleBrowser}
-                  title={browserOpen ? "收起内置浏览器" : "打开内置浏览器"}
+                  title={browserOpen ? t("c.browserHide") : t("c.browserOpen")}
                   className={cn("shrink-0", browserOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
                 >
                   <GlobeIcon />
@@ -620,16 +626,16 @@ export function Chat({
 
             {/* 右：模型选择（供应商 → 模型 二级）+ 发送/中断 */}
             <div className="flex shrink-0 items-center gap-1.5">
-              {models.length > 0 && (
-                <ModelPicker groups={models} model={model} onChange={onModelChange} />
+              {(models.length > 0 || !!serverUser) && (
+                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} />
               )}
               {streaming ? (
-                <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title="中断生成">
+                <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title={t("c.stop")}>
                   {/* 实心方块：更像"停止"语义（lucide 默认是描边空心） */}
                   <SquareIcon fill="currentColor" />
                 </Button>
               ) : (
-                <Button size="icon" className="rounded-full" onClick={submit} title="发送">
+                <Button size="icon" className="rounded-full" onClick={submit} title={t("c.send")}>
                   <SendHorizontalIcon />
                 </Button>
               )}
@@ -643,14 +649,14 @@ export function Chat({
 }
 
 /** 格式化工作耗时：<1 分钟只显示秒，>=1 分钟按「分+秒」，>=1 小时按「小时+分+秒」。 */
-function fmtElapsed(ms: number): string {
+function fmtElapsed(ms: number, t: (k: string, v?: Record<string, string | number>) => string): string {
   const s = Math.max(1, Math.round(ms / 1000))
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
   const sec = s % 60
-  if (h > 0) return `${h}小时${m}分钟${sec}秒`
-  if (m > 0) return `${m}分钟${sec}秒`
-  return `${sec}秒`
+  if (h > 0) return t("d.hms", { h, m, s: sec })
+  if (m > 0) return t("d.ms", { m, s: sec })
+  return t("d.s", { s: sec })
 }
 
 /** 回复上方的耗时标签：live 时为生成中的动态「工作中 N 秒」（每秒跳变），否则显示定格的「已工作 N 秒」。 */
@@ -665,11 +671,12 @@ function ElapsedLabel({
   now: number
   elapsedMs?: number
 }) {
+  const { t } = useI18n()
   if (live && liveSince != null) {
     return (
       <div className="text-muted-foreground flex items-center gap-1 pt-1 text-xs">
         <ClockIcon className="size-3.5 shrink-0" />
-        <span>工作中 {fmtElapsed(Math.max(0, now - liveSince))}</span>
+        <span>{t("c.working", { d: fmtElapsed(Math.max(0, now - liveSince), t) })}</span>
       </div>
     )
   }
@@ -677,7 +684,7 @@ function ElapsedLabel({
     return (
       <div className="text-muted-foreground flex items-center gap-1 pt-1 text-xs">
         <ClockIcon className="size-3.5 shrink-0" />
-        <span>已工作 {fmtElapsed(elapsedMs)}</span>
+        <span>{t("c.worked", { d: fmtElapsed(elapsedMs, t) })}</span>
       </div>
     )
   }
@@ -687,10 +694,11 @@ function ElapsedLabel({
 /** 处理中动画：固定在消息流最末尾，跟着工具调用组下方。
  * 上游自动重试中显示「重试 n/10」（重试结束、模型恢复输出后自动回到「处理中…」）。 */
 function ProcessingIndicator({ retry }: { retry?: { attempt: number; max: number } }) {
+  const { t } = useI18n()
   return (
     <div className="text-muted-foreground flex items-center gap-2 py-1 pr-2 text-sm">
       <Loader2Icon className="size-3.5 shrink-0 animate-spin" />
-      <span>{retry ? `重试 ${retry.attempt}/${retry.max}` : "处理中…"}</span>
+      <span>{retry ? t("a.retry", { n: retry.attempt, max: retry.max }) : t("c.processing")}</span>
     </div>
   )
 }
@@ -698,12 +706,13 @@ function ProcessingIndicator({ retry }: { retry?: { attempt: number; max: number
 /** 思考折叠行：模型推理内容收在这里（同工具调用组，默认收起）。
  * 推理进行中显示「思考中…」，结束后固定为「思考」。 */
 function ThinkingBlock({ text, active }: { text?: string; active?: boolean }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="w-full">
       <CollapsibleTrigger className="group text-muted-foreground hover:bg-muted/50 flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-xs transition-colors cursor-pointer">
         <BrainIcon className="size-3.5 shrink-0" />
-        <span className={cn(active && "opacity-80")}>{active ? "思考中…" : "思考"}</span>
+        <span className={cn(active && "opacity-80")}>{active ? t("c.thinking") : t("c.thought")}</span>
         <ChevronRightIcon className="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
       </CollapsibleTrigger>
       <CollapsibleContent>
@@ -723,6 +732,7 @@ const COLLAPSE_LINES = 8
 
 /** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；悬停浮动显示 编辑/复制 按钮，不占布局空间；附件以标签展示。 */
 function UserBubble({ text, attachments, onEdit }: { text: string; attachments?: string[]; onEdit: (text: string) => void }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const long = text.length > COLLAPSE_CHARS || text.split("\n").length > COLLAPSE_LINES
@@ -767,7 +777,7 @@ function UserBubble({ text, attachments, onEdit }: { text: string; attachments?:
         size="icon-sm"
         className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto relative shadow-sm"
         onClick={() => onEdit(text)}
-        title="编辑后重发（原样发送也可以）"
+        title={t("c.editResend")}
       >
         <PencilLineIcon />
       </Button>
@@ -776,7 +786,7 @@ function UserBubble({ text, attachments, onEdit }: { text: string; attachments?:
         size="icon-sm"
         className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto relative shadow-sm"
         onClick={copy}
-        title="复制"
+        title={t("c.copy")}
       >
         {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
       </Button>
@@ -815,7 +825,7 @@ function UserBubble({ text, attachments, onEdit }: { text: string; attachments?:
               onClick={toggle}
               className="text-muted-foreground hover:text-foreground flex items-center gap-0.5 text-[11px] cursor-pointer"
             >
-              {open ? "收起" : "展开"}
+              {open ? t("c.collapse") : t("c.expand")}
               {open ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
             </button>
             {copyBtn}
@@ -839,10 +849,11 @@ function QueuePanel({
   onEdit: (id: number) => void
   onRemove: (id: number) => void
 }) {
+  const { t } = useI18n()
   return (
     <div className="mx-auto mb-2 flex max-w-3xl flex-col gap-1">
       <div className="text-muted-foreground px-1 text-[11px]">
-        发送队列（{queue.length}）· 当前轮结束后自动依次发送
+        {t("c.queue", { n: queue.length })}
       </div>
       {queue.map((q) => (
         <div
@@ -857,7 +868,7 @@ function QueuePanel({
             {q.text || (
               <span className="flex items-center gap-1">
                 <PaperclipIcon className="size-3" />
-                {q.files?.length ?? 0} 个附件
+                {t("c.attachments", { n: q.files?.length ?? 0 })}
               </span>
             )}
           </span>
@@ -868,30 +879,30 @@ function QueuePanel({
               variant="ghost"
               className="h-6 gap-1 px-1.5 text-[11px]"
               onClick={() => onDispatch(q.id)}
-              title="中断当前执行，立即发送这条"
+              title={t("c.sendNow")}
             >
               <SendHorizontalIcon className="size-3" />
-              发送
+              {t("c.send")}
             </Button>
             <Button
               size="sm"
               variant="ghost"
               className="h-6 gap-1 px-1.5 text-[11px]"
               onClick={() => onEdit(q.id)}
-              title="移回输入框编辑"
+              title={t("c.editHint")}
             >
               <PencilLineIcon className="size-3" />
-              编辑
+              {t("c.edit")}
             </Button>
             <Button
               size="sm"
               variant="ghost"
               className="text-muted-foreground hover:text-destructive h-6 gap-1 px-1.5 text-[11px]"
               onClick={() => onRemove(q.id)}
-              title="删除"
+              title={t("c.delete")}
             >
               <Trash2Icon className="size-3" />
-              删除
+              {t("c.delete")}
             </Button>
           </div>
         </div>
@@ -902,8 +913,8 @@ function QueuePanel({
 
 /** 访问模式下拉：与模型选择同款交互（向上弹出、点外/Esc 关闭）。完全访问排下面。 */
 const MODES = [
-  { id: "plan", label: "主动询问", desc: "写文件、执行命令前会先询问你" },
-  { id: "build", label: "完全访问", desc: "可直接修改文件、执行命令" },
+  { id: "plan", key: "c.modePlan", descKey: "c.modePlanDesc" },
+  { id: "build", key: "c.modeBuild", descKey: "c.modeBuildDesc" },
 ] as const
 
 function ModePicker({
@@ -915,6 +926,7 @@ function ModePicker({
   disabled: boolean
   onChange: (m: "build" | "plan") => void
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -938,12 +950,12 @@ function ModePicker({
     <div ref={wrapRef} className="relative shrink-0">
       <button
         type="button"
-        title="切换访问模式"
+        title={t("c.switchMode")}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         className="bg-muted/60 hover:bg-muted flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors disabled:opacity-50"
       >
-        <span className="font-medium">{cur.label}</span>
+        <span className="font-medium">{t(cur.key)}</span>
         <ChevronUpIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
       {open && (
@@ -963,8 +975,8 @@ function ModePicker({
             >
               <CheckIcon className={cn("mt-0.5 size-3.5 shrink-0", m.id === mode ? "opacity-100" : "opacity-0")} />
               <span className="flex min-w-0 flex-col">
-                <span className={cn("text-xs", m.id === mode ? "font-medium" : "")}>{m.label}</span>
-                <span className="text-muted-foreground text-[11px]">{m.desc}</span>
+                <span className={cn("text-xs", m.id === mode ? "font-medium" : "")}>{t(m.key)}</span>
+                <span className="text-muted-foreground text-[11px]">{t(m.descKey)}</span>
               </span>
             </button>
           ))}
@@ -981,17 +993,18 @@ function ApprovalBanner({  run,
   run: ToolRun
   onApprove: (id: string, allow: boolean) => void
 }) {
-  const { label, summary } = toolApprovalLabel(run)
+  const { t } = useI18n()
+  const { label, summary } = toolApprovalLabel(run, t)
   return (
     <div className="border-amber-500/50 bg-amber-500/10 mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3.5 py-2.5">
       <CircleAlertIcon className="text-amber-600 dark:text-amber-400 size-4 shrink-0" />
       <div className="min-w-0 flex-1 text-sm">
-        <span className="text-amber-700 dark:text-amber-400 font-medium">需要你的确认：</span>
+        <span className="text-amber-700 dark:text-amber-400 font-medium">{t("c.confirmNeed")}</span>
         <span className="font-medium">{label}</span>
         {summary && (
           <span className="text-muted-foreground ml-1.5 font-mono text-xs break-all">{summary}</span>
         )}
-        <div className="text-muted-foreground mt-0.5 text-xs">普通访问模式下，该操作在你允许前不会执行。</div>
+        <div className="text-muted-foreground mt-0.5 text-xs">{t("c.confirmHint")}</div>
       </div>
       <div className="flex shrink-0 gap-2">
         <Button
@@ -1000,10 +1013,10 @@ function ApprovalBanner({  run,
           className="h-7 px-3 text-xs"
           onClick={() => onApprove(run.approvalId!, false)}
         >
-          拒绝
+          {t("c.deny")}
         </Button>
         <Button size="sm" className="h-7 px-3 text-xs" onClick={() => onApprove(run.approvalId!, true)}>
-          允许
+          {t("c.allow")}
         </Button>
       </div>
     </div>
@@ -1026,10 +1039,11 @@ function QuestionBanner({
   streaming: boolean
   onStop: () => void
 }) {
+  const { t } = useI18n()
   const [free, setFree] = useState("")
   const send = (text: string) => {
-    const t = text.trim()
-    if (t) onAnswer(run.questionId!, t)
+    const v = text.trim()
+    if (v) onAnswer(run.questionId!, v)
   }
   return (
     <div className="bg-card relative mx-auto mb-2 max-w-3xl rounded-2xl border p-2 shadow-xs">
@@ -1038,12 +1052,12 @@ function QuestionBanner({
         size="icon-sm"
         className="text-muted-foreground hover:text-foreground absolute top-1 right-1"
         onClick={onClose}
-        title="先收起，点消息流里的「提问」卡片可再打开回答"
+        title={t("c.questionHint")}
       >
         <XIcon className="size-4" />
       </Button>
       <div className="px-1 pt-0.5 text-sm">
-        <span className="font-medium">AI 想问你：</span>
+        <span className="font-medium">{t("c.aiAsk")}</span>
         <span className="whitespace-pre-wrap break-words">{run.question}</span>
       </div>
       {run.questionOptions && run.questionOptions.length > 0 && (
@@ -1070,7 +1084,7 @@ function QuestionBanner({
               send(free)
             }
           }}
-          placeholder={run.questionOptions?.length ? "或输入其他答案…" : "输入你的回答…"}
+          placeholder={run.questionOptions?.length ? t("c.answerPh2") : t("c.answerPh")}
           className="text-muted-foreground min-w-0 flex-1 rounded-md bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70"
           autoFocus
         />
@@ -1080,13 +1094,13 @@ function QuestionBanner({
             size="icon"
             className="shrink-0 rounded-full"
             onClick={onStop}
-            title="中断生成"
+            title={t("c.stop")}
           >
             <SquareIcon fill="currentColor" />
           </Button>
         )}
         <Button size="sm" className="h-8 shrink-0 px-3 text-xs" onClick={() => send(free)} disabled={!free.trim()}>
-          回答
+          {t("c.answer")}
         </Button>
       </div>
     </div>
@@ -1097,8 +1111,9 @@ function QuestionBanner({
  * 新出现的清单默认收起，避免遮挡消息流；active = 当前轮还在运行；
  * 出错/中断后 in_progress 条目不再转圈，下轮开始才恢复。 */
 function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
-  const done = items.filter((t) => t.status === "completed").length
+  const done = items.filter((tt) => tt.status === "completed").length
   return (
     <div className="bg-card mx-auto mb-2 max-w-3xl rounded-xl border px-3 py-2 shadow-xs">
       <button
@@ -1107,7 +1122,7 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
         className="flex w-full items-center gap-2 text-left text-xs cursor-pointer"
       >
         <ListTodoIcon className="text-muted-foreground size-3.5 shrink-0" />
-        <span className="font-medium">任务清单</span>
+        <span className="font-medium">{t("c.todo")}</span>
         <span className="text-muted-foreground tabular-nums">
           {done}/{items.length}
         </span>

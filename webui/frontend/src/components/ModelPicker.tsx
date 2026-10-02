@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CoinsIcon, PackageIcon } from "lucide-react"
 
 import type { ModelGroup } from "@/components/Chat"
+import { useI18n } from "@/lib/i18n"
+import { server, type ServerModel, type ServerUser } from "@/lib/serverAuth"
 import { cn } from "@/lib/utils"
 
 interface ModelPickerProps {
@@ -9,6 +11,8 @@ interface ModelPickerProps {
   /** 当前选中的模型名 */
   model: string
   onChange: (model: string) => void
+  /** 登录后台用户：有值时在列表最上方展示后台「内置模型」组 */
+  serverUser?: ServerUser | null
 }
 
 /** 一级（供应商）面板宽度，供二级定位用 */
@@ -16,6 +20,22 @@ const PANEL_W = 160 // w-40
 const PANEL_GAP = 6
 /** 一级面板最大高度 max-h-72，用于翻向判断 */
 const PANEL_H = 288
+/** 内置模型组的特殊一级 key（不与任何供应商名冲突） */
+const BUILTIN = "__builtin__"
+
+/** 倍率展示：限免（现倍率 0）且原倍率不同 → 原倍率中划线 + 现倍率；否则只显示现倍率 */
+function rateLabel(m: ServerModel) {
+  const cur = m.free ? 0 : m.multiplier
+  const differs = m.free && m.multiplier !== 0
+  return differs ? (
+    <span className="tabular-nums">
+      <s className="text-muted-foreground">{m.multiplier}x</s>
+      <span className="ml-1 text-emerald-600 dark:text-emerald-400">{cur}x</span>
+    </span>
+  ) : (
+    <span className="tabular-nums">{cur}x</span>
+  )
+}
 
 /**
  * 二级模型选择（点击展开）：
@@ -30,12 +50,34 @@ const PANEL_H = 288
  * 自实现弹层而不引 Radix Popover：项目没装对应依赖，需求简单（受控开合 +
  * 点外部/Esc 关闭 + 边界避让）。
  */
-export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
+export function ModelPicker({ groups, model, onChange, serverUser }: ModelPickerProps) {
+  const { t } = useI18n()
   // 当前模型所属供应商；模型不在列表里时回落到第一个有模型的供应商
   const currentProvider = useMemo(() => {
     for (const g of groups) if (g.models.includes(model)) return g.provider
     return groups.find((g) => g.models.length > 0)?.provider ?? ""
   }, [groups, model])
+
+  // 登录后台用户：拉取后台启用模型，在一级列表最上方显示「内置模型」组
+  const [builtin, setBuiltin] = useState<ServerModel[]>([])
+  useEffect(() => {
+    if (!serverUser) {
+      setBuiltin([])
+      return
+    }
+    let alive = true
+    server
+      .models()
+      .then((ms) => {
+        if (alive) setBuiltin(ms)
+      })
+      .catch(() => {
+        if (alive) setBuiltin([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [serverUser])
 
   const [open, setOpen] = useState(false)
   // 已点击展开的供应商——空串 = 二级未展开。悬停不改变它（只在已展开时允许悬停切换）
@@ -86,21 +128,52 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
 
   const active = groups.find((g) => g.provider === hoverProvider)
   const models = active?.models ?? []
+  // 内置组选中的行：二级显示后台模型（带倍率）
+  const showBuiltin = hoverProvider === BUILTIN
 
   const pick = (m: string) => {
     onChange(m)
     close()
   }
 
+  // 一级行渲染（内置组在前，供应商在后）
+  const renderRow = (key: string, label: React.ReactNode, withIcon: boolean) => (
+    <button
+      key={key}
+      type="button"
+      ref={(el) => {
+        if (el) rowRefs.current.set(key, el)
+        else rowRefs.current.delete(key)
+      }}
+      // 点击才展开二级；已展开时悬停可在供应商间快速切换
+      onMouseEnter={() => {
+        if (hoverProvider) setHoverProvider(key)
+      }}
+      onClick={() => setHoverProvider((p) => (p === key ? "" : key))}
+      className={cn(
+        "flex w-full cursor-pointer items-center gap-1.5 rounded-[5px] px-2 py-1.5 text-left text-xs transition-colors",
+        key === hoverProvider
+          ? "bg-accent text-accent-foreground font-medium"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+      )}
+    >
+      {withIcon && <PackageIcon className="size-3.5 shrink-0" />}
+      <span className="truncate" title={typeof label === "string" ? label : undefined}>
+        {label}
+      </span>
+      <ChevronRightIcon className="text-muted-foreground ml-auto size-3 shrink-0 -scale-x-100" />
+    </button>
+  )
+
   return (
     <div ref={wrapRef} className="relative shrink-0">
       <button
         type="button"
-        title="切换模型"
+        title={t("mp.title")}
         onClick={() => (open ? close() : setOpen(true))}
         className="bg-muted/60 hover:bg-muted flex max-w-30 cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors sm:max-w-52"
       >
-        <span className="truncate font-medium">{model || "选择模型"}</span>
+        <span className="truncate font-medium">{model || t("mp.ph")}</span>
         <ChevronDownIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -116,35 +189,30 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
           {/* 一级面板：在文档流里，位置由 right:0锚定，不受二级影响 */}
           <div ref={panelRef} className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
             <div ref={scrollRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
-              {groups.length === 0 ? (
-                <div className="text-muted-foreground px-2 py-1.5 text-xs">没有可用供应商</div>
+              {builtin.length === 0 && groups.length === 0 && !serverUser ? (
+                <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noProvider")}</div>
               ) : (
-                groups.map((g) => (
-                  <button
-                    key={g.provider}
-                    type="button"
-                    ref={(el) => {
-                      if (el) rowRefs.current.set(g.provider, el)
-                      else rowRefs.current.delete(g.provider)
-                    }}
-                    // 点击才展开二级；已展开时悬停可在供应商间快速切换
-                    onMouseEnter={() => {
-                      if (hoverProvider) setHoverProvider(g.provider)
-                    }}
-                    onClick={() => setHoverProvider((p) => (p === g.provider ? "" : g.provider))}
-                    className={cn(
-                      "flex w-full cursor-pointer items-center gap-1.5 rounded-[5px] px-2 py-1.5 text-left text-xs transition-colors",
-                      g.provider === hoverProvider
-                        ? "bg-accent text-accent-foreground font-medium"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                    )}
-                  >
-                    <span className="truncate" title={g.provider}>
-                      {g.provider}
-                    </span>
-                    <ChevronRightIcon className="text-muted-foreground ml-auto size-3 shrink-0 -scale-x-100" />
-                  </button>
-                ))
+                <>
+                  {/* 积分行：登录用户才显示；余额为 0 时不显示数字 */}
+                  {serverUser && (
+                    <div
+                      className="text-muted-foreground flex items-center gap-1.5 px-2 py-1.5 text-xs"
+                      title={t("me.credits")}
+                    >
+                      <CoinsIcon className="size-3.5 shrink-0" />
+                      <span className="flex-1">{t("me.credits")}</span>
+                      <span className="shrink-0 tabular-nums">{serverUser.balance > 0 ? serverUser.balance : null}</span>
+                    </div>
+                  )}
+                  {builtin.length === 0 && groups.length === 0 ? null : (
+                    <>
+                      {builtin.length > 0 && renderRow(BUILTIN, t("mp.builtin"), true)}
+                      {groups.map((g) =>
+                        renderRow(g.provider || t("a.other"), g.provider || t("a.other"), false),
+                      )}
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -152,10 +220,11 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
           {/* 二级：absolute 钉在一级左侧，垂直方向锚定到一级当前选中行的中心 */}
           {hoverProvider && (
             <Flyout
-              models={models}
+              models={showBuiltin ? builtin.map((b) => b.key) : models}
               model={model}
               pick={pick}
               anchor={rowRefs.current.get(hoverProvider)}
+              builtin={showBuiltin ? builtin : undefined}
             />
           )}
         </div>
@@ -164,23 +233,28 @@ export function ModelPicker({ groups, model, onChange }: ModelPickerProps) {
   )
 }
 
-/** 二级：模型飞层，绝对定位在一级面板左侧，垂直方向锚定到一级当前选中行。 */
+/** 二级：模型飞层，绝对定位在一级面板左侧，垂直方向锚定到一级当前选中行。
+ * builtin 非空时行尾显示倍率：限免且原倍率不同 → 原倍率中划线 + 现倍率。 */
 function Flyout({
   models,
   model,
   pick,
   anchor,
+  builtin,
 }: {
   models: string[]
   model: string
   pick: (m: string) => void
   /** 一级选中行按钮：二级 top 相对它（offsetTop 天然以一级面板为基准，无需再减 scrollTop） */
   anchor?: HTMLButtonElement | null
+  builtin?: ServerModel[]
 }) {
+  const { t } = useI18n()
   const listRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
   // 默认顶对齐；有锚点时中心对齐
   const [top, setTop] = useState(0)
+  const byKey = useMemo(() => new Map((builtin ?? []).map((b) => [b.key, b])), [builtin])
 
   // 当前模型滚到可视区（provider 下模型多时默认定位到选中项）
   useEffect(() => {
@@ -223,7 +297,7 @@ function Flyout({
     >
       <div ref={listRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
         {models.length === 0 ? (
-          <div className="text-muted-foreground px-2 py-1.5 text-xs">该供应商下没有模型</div>
+          <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noModel")}</div>
         ) : (
           models.map((m) => (
             <button
@@ -239,9 +313,12 @@ function Flyout({
               )}
             >
               <CheckIcon className={cn("size-3 shrink-0", m === model ? "opacity-100" : "opacity-0")} />
-              <span className="truncate" title={m}>
+              <span className="min-w-0 truncate" title={m}>
                 {m}
               </span>
+              {byKey.has(m) && (
+                <span className="ml-auto shrink-0 text-[10px]">{rateLabel(byKey.get(m)!)}</span>
+              )}
             </button>
           ))
         )}

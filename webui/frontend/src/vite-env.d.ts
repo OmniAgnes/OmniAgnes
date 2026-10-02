@@ -7,6 +7,7 @@ declare global {
       platform: string
       pickFolder(): Promise<string | null>
       win(action: "minimize" | "maximize" | "close"): void
+      setZoom(z: number): void
       browserOp(
         op: string,
         args?: Record<string, unknown>,
