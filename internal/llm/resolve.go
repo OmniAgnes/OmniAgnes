@@ -17,15 +17,22 @@ func ResolveProvider(cfg *config.Config) (Provider, string, error) {
 		if target == "" {
 			target = cfg.Model
 		}
-	var pick *config.ProviderConfig
-	if target != "" {
-		for i := range cfg.Providers {
-			if cfg.Providers[i].Model == target || cfg.Providers[i].HasModel(target) {
-				pick = &cfg.Providers[i]
-				break
+		// 内置模型（server: 前缀）不属于任何本地供应商：跳过按名反查，回落默认/首个
+		// provider，模型名取去掉前缀后的真名——否则会被用户自配的同名模型劫持
+		builtinName := ""
+		if strings.HasPrefix(target, config.BuiltinModelPrefix) {
+			builtinName = strings.TrimPrefix(target, config.BuiltinModelPrefix)
+			target = ""
+		}
+		var pick *config.ProviderConfig
+		if target != "" {
+			for i := range cfg.Providers {
+				if cfg.Providers[i].Model == target || cfg.Providers[i].HasModel(target) {
+					pick = &cfg.Providers[i]
+					break
+				}
 			}
 		}
-	}
 	// 目标指向的供应商若无可用 key（远程 API），跳过——避免 resolve 落到失效条目上
 	if pick != nil && pick.ResolveAPIKey() == "" && pick.Type != "ollama" && !strings.Contains(pick.BaseURL, "localhost") {
 		pick = nil
@@ -58,7 +65,11 @@ func ResolveProvider(cfg *config.Config) (Provider, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		return prov, p.Model, nil
+		model := p.Model
+		if builtinName != "" {
+			model = builtinName
+		}
+		return prov, model, nil
 	}
 
 	typ, model, base, ok := config.DetectFromEnv()

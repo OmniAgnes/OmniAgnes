@@ -22,6 +22,8 @@ const PANEL_GAP = 6
 const PANEL_H = 288
 /** 内置模型组的特殊一级 key（不与任何供应商名冲突） */
 const BUILTIN = "__builtin__"
+/** 内置模型选中 key 的前缀：与用户自配的同名模型区分「选的是哪一个」 */
+const BUILTIN_PREFIX = "server:"
 
 /** 倍率展示：限免（现倍率 0）且原倍率不同 → 原倍率中划线 + 现倍率；否则只显示现倍率 */
 function rateLabel(m: ServerModel) {
@@ -52,11 +54,10 @@ function rateLabel(m: ServerModel) {
  */
 export function ModelPicker({ groups, model, onChange, serverUser }: ModelPickerProps) {
   const { t } = useI18n()
-  // 当前模型所属供应商；模型不在列表里时回落到第一个有模型的供应商
-  const currentProvider = useMemo(() => {
-    for (const g of groups) if (g.models.includes(model)) return g.provider
-    return groups.find((g) => g.models.length > 0)?.provider ?? ""
-  }, [groups, model])
+  // 内置模型选中 key 带前缀（server:xxx）：与用户自配的同名模型区分「选的是哪一个」。
+  // plainModel 是去掉前缀的真名，供界面显示和内置组高亮用。
+  const builtinSelected = model.startsWith(BUILTIN_PREFIX)
+  const plainModel = builtinSelected ? model.slice(BUILTIN_PREFIX.length) : model
 
   // 登录后台用户：拉取后台启用模型，在一级列表最上方显示「内置模型」组
   const [builtin, setBuiltin] = useState<ServerModel[]>([])
@@ -95,10 +96,11 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
     setHoverProvider("")
   }
 
-  // 外部切换模型（如设置页改了当前模型）时收起二级，避免残留别的供应商
+  // 外部切换模型（如设置页改了当前模型）时收起二级，避免残留别的供应商。
+  // 依赖 model 而非 currentProvider：内置与本地同名模型互相切换时后者不变。
   useEffect(() => {
     setHoverProvider("")
-  }, [currentProvider])
+  }, [model])
 
   // 打开时按可用空间决定翻向
   useLayoutEffect(() => {
@@ -132,7 +134,8 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
   const showBuiltin = hoverProvider === BUILTIN
 
   const pick = (m: string) => {
-    onChange(m)
+    // 内置组的选择带上前缀保存：后端据此区分来源，不与本地同名模型混串
+    onChange(showBuiltin ? BUILTIN_PREFIX + m : m)
     close()
   }
 
@@ -173,7 +176,7 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
         onClick={() => (open ? close() : setOpen(true))}
         className="bg-muted/60 hover:bg-muted flex max-w-30 cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors sm:max-w-52"
       >
-        <span className="truncate font-medium">{model || t("mp.ph")}</span>
+        <span className="truncate font-medium">{plainModel || t("mp.ph")}</span>
         <ChevronDownIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -221,7 +224,9 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
           {hoverProvider && (
             <Flyout
               models={showBuiltin ? builtin.map((b) => b.key) : models}
-              model={model}
+              // 选中态按来源比：内置组比去前缀真名，本地组比原 key，
+              // 同名模型各自只高亮用户真正选的那一个
+              model={showBuiltin ? plainModel : model}
               pick={pick}
               anchor={rowRefs.current.get(hoverProvider)}
               builtin={showBuiltin ? builtin : undefined}

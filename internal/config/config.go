@@ -15,6 +15,12 @@ const (
 	defaultBashTimeoutSec = 10
 )
 
+// BuiltinModelPrefix 选中模型 key 的来源前缀：标识该模型来自 omni-server 后台的
+// 「内置模型」组，不属于任何本地供应商。用户自配的模型名可能和内置模型同名，
+// 没有这个前缀时（cfg.Provider / req.Model 只存模型名）反查本地供应商会把
+// 内置的选择劫持到同名本地模型上。真实模型名 = 去掉前缀。
+const BuiltinModelPrefix = "server:"
+
 // ModelOptions 描述单个模型的个性化参数。同一供应商下不同模型能力差异很大
 // （上下文窗口、最大输出、支持的输入模态、是否开推理），因此这些参数按模型
 // 粒度配置；未设置的字段回落到供应商级同名字段。
@@ -79,8 +85,10 @@ func (p *ProviderConfig) OptionsFor(model string) ModelOptions {
 }
 
 // ProviderForModel 返回提供指定模型的供应商配置；找不到返回 nil。
+// 内置模型（带 BuiltinModelPrefix 前缀）不归属任何本地供应商，直接返回 nil，
+// 避免用户自配的同名模型把它反查过去。
 func (c *Config) ProviderForModel(model string) *ProviderConfig {
-	if model == "" {
+	if model == "" || strings.HasPrefix(model, BuiltinModelPrefix) {
 		return nil
 	}
 	for i := range c.Providers {

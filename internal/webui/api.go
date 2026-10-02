@@ -620,13 +620,18 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		t.Mode = req.Mode
 	}
 	// 每轮使用界面记住的模型（设置里已持久化）；
-	// 模型可能属于另一个 provider，须连 provider 一起切，否则模型名发错家被 400
+	// 模型可能属于另一个 provider，须连 provider 一起切，否则模型名发错家被 400。
+	// 内置模型（server: 前缀）不反查本地供应商：用户自配同名模型时按名字反查会把
+	// 内置的选择劫持到本地 provider 上，这里只把去前缀的真名交给 agent，provider 保持回落。
 	if req.Model != "" {
 		if p := s.cfg.ProviderForModel(req.Model); p != nil {
 			if prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey()}); err == nil {
 				a.SetProvider(prov, req.Model)
 				t.Model = req.Model
 			}
+		} else {
+			a.SetModel(strings.TrimPrefix(req.Model, config.BuiltinModelPrefix))
+			t.Model = req.Model
 		}
 	}
 	// 标题来源：优先正文；只发附件时用首个附件的文件名，避免生成「未命名任务」
@@ -794,8 +799,9 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 	changed := false
 	if req.Model != "" {
 		// 允许任意模型名：后台内置模型组（/api/models）的模型未必归属任何本地供应商，
-		// 这里只负责持久化选择；运行时（handleChat / ResolveProvider）找不到本地供应商时
-		// 自动回落当前 provider，不会因未知模型名而中断。
+		// 这里只负责持久化选择；内置模型带 server: 前缀（与本地同名模型区分），
+		// 运行时（handleChat / ResolveProvider）按前缀判断不反查本地供应商，
+		// 找不到时自动回落当前 provider，不会因未知模型名而中断。
 		s.cfg.Provider = req.Model
 		changed = true
 	}
@@ -1343,7 +1349,8 @@ func (s *server) agentForOpts(t *store.Task, withBrowser bool) (*agent.Agent, er
 		mode = agent.ModePlan
 	}
 	if modelName == "" {
-		modelName = t.Model
+		// 任务记录的模型可能带内置前缀（server:），交给 agent 前剥掉
+		modelName = strings.TrimPrefix(t.Model, config.BuiltinModelPrefix)
 	}
 	// 最大输出 token 取该模型的有效配置（模型级优先，回落供应商级），缺省 8192
 	maxTokens := 8192
