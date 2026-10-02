@@ -70,13 +70,34 @@ const PROVIDER_TYPES = [
 ] as const
 
 const THEME_COLORS = [
-  { id: "zinc", label: "石墨", light: "#18181b", dark: "#3f3f46" },
-  { id: "violet", label: "紫罗兰", light: "#7c5cff", dark: "#a78bfa" },
-  { id: "blue", label: "海洋", light: "#2f7cd6", dark: "#60a5fa" },
-  { id: "emerald", label: "翡翠", light: "#0e9f6e", dark: "#34d399" },
-  { id: "amber", label: "琥珀", light: "#d97706", dark: "#fbbf24" },
-  { id: "rose", label: "玫瑰", light: "#e11d48", dark: "#fb7185" },
-] as const satisfies ReadonlyArray<{ id: ThemeColor; label: string; light: string; dark: string }>
+  { id: "zinc", label: "石墨", light: "#18181b", dark: "#3f3f46", tint: "#ececee", tintSoft: "#f7f7f8" },
+  { id: "violet", label: "紫罗兰", light: "#7c5cff", dark: "#a78bfa", tint: "#e7e1f5", tintSoft: "#f6f4fb" },
+  { id: "blue", label: "海洋", light: "#2f7cd6", dark: "#60a5fa", tint: "#dee9f4", tintSoft: "#f4f8fb" },
+  { id: "sky", label: "天空", light: "#2ba3e0", dark: "#66c2f5", tint: "#e1f3ff", tintSoft: "#f7fcff" },
+  { id: "emerald", label: "翡翠", light: "#0e9f6e", dark: "#34d399", tint: "#e3ece4", tintSoft: "#f6f8f5" },
+  { id: "amber", label: "琥珀", light: "#d97706", dark: "#fbbf24", tint: "#f2ebdd", tintSoft: "#faf8f1" },
+  { id: "rose", label: "玫瑰", light: "#e11d48", dark: "#fb7185", tint: "#f6e3e8", tintSoft: "#fbf3f5" },
+] as const satisfies ReadonlyArray<{ id: ThemeColor; label: string; light: string; dark: string; tint: string; tintSoft: string }>
+
+/** 统一主题选择：深色 + 浅色系六个配色（彩色主题均为浅色底）。内部映射到 theme/theme_color 两个字段。 */
+const THEME_PRESETS = [
+  { id: "dark", label: "深色" },
+  { id: "light", label: "浅色" },
+  { id: "violet", label: "紫罗兰" },
+  { id: "blue", label: "海洋" },
+  { id: "sky", label: "天空" },
+  { id: "emerald", label: "翡翠" },
+  { id: "amber", label: "琥珀" },
+  { id: "rose", label: "玫瑰" },
+] as const
+
+type ThemePreset = (typeof THEME_PRESETS)[number]["id"]
+
+/** 由存储的 theme/theme_color 推导当前选中的主题项（旧的跟随系统配置归入浅色显示） */
+function deriveThemePreset(t?: Theme, c?: ThemeColor): ThemePreset {
+  if (t === "dark") return "dark"
+  return c && c !== "zinc" ? c : "light"
+}
 
 const INPUT_TYPES = [
   { value: "text", label: "文字" },
@@ -178,8 +199,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     if (open) setUsageSeq((s) => s + 1)
   }, [open])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
-  const [theme, setTheme] = useState<Theme>(state?.theme ?? "dark")
-  const [themeColor, setThemeColor] = useState<ThemeColor>(state?.theme_color ?? "zinc")
+  const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
   const [mcpStatus, setMcpStatus] = useState<MCPStatus[]>([])
@@ -232,8 +252,7 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     if (!open) return
     api.providers().then((r) => setProviders(r.providers)).catch(() => setProviders([]))
     api.settings().then((r) => {
-      setTheme(r.theme)
-      if (r.theme_color) setThemeColor(r.theme_color)
+      setPreset(deriveThemePreset(r.theme, r.theme_color))
     }).catch(() => {})
     api.memory().then((r) => setMemory(r.content)).catch(() => {})
     void refreshMcp()
@@ -264,16 +283,15 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
     }
   }
 
-  const saveTheme = async (t: Theme) => {
-    setTheme(t)
-    const r = await api.saveSettings({ theme: t })
-    if (state) onStateChange({ ...state, theme: r.theme })
-  }
-
-  const saveThemeColor = async (c: ThemeColor) => {
-    setThemeColor(c)
-    const r = await api.saveSettings({ theme_color: c })
-    if (state) onStateChange({ ...state, theme_color: r.theme_color })
+  // 统一主题：深色只切外观（保留原配色供日后切回彩色）；
+  // 其余都是浅色系配色，浅色=石墨基调，彩色五项连主区背景一起着色
+  const saveThemePreset = async (id: ThemePreset) => {
+    setPreset(id)
+    const r =
+      id === "dark"
+        ? await api.saveSettings({ theme: "dark" })
+        : await api.saveSettings({ theme: "light", theme_color: id === "light" ? "zinc" : (id as ThemeColor) })
+    if (state) onStateChange({ ...state, theme: r.theme, theme_color: r.theme_color })
   }
 
   const saveMemory = async () => {
@@ -492,54 +510,35 @@ export function SettingsDialog({ open, onOpenChange, state, onStateChange, onPro
               )}
 
               {section === "theme" && (
-                <div className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-2">
-                    <Label>外观模式</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(
-                        [
-                          { id: "dark", label: "深色" },
-                          { id: "light", label: "浅色" },
-                          { id: "system", label: "跟随系统" },
-                        ] as const
-                      ).map((t) => (
+                <div className="flex flex-col gap-2">
+                  <Label>主题</Label>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {THEME_PRESETS.map((t) => {
+                      const c = THEME_COLORS.find((x) => x.id === t.id)
+                      return (
                         <button
                           key={t.id}
                           type="button"
-                          onClick={() => void saveTheme(t.id)}
+                          onClick={() => void saveThemePreset(t.id)}
                           className={cn(
                             "flex flex-col items-center gap-2 rounded-lg border p-3 text-sm cursor-pointer transition-colors",
-                            theme === t.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
+                            preset === t.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
                           )}
                         >
-                          <ThemePreview id={t.id} />
+                          {c ? (
+                            <span
+                              className="size-8 rounded-full border border-black/10 shadow-sm"
+                              style={{
+                                background: `linear-gradient(135deg, ${c.tint} 55%, ${c.tintSoft} 55%)`,
+                              }}
+                            />
+                          ) : (
+                            <ThemePreview id={t.id as Theme} />
+                          )}
                           {t.label}
                         </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <Label>主题风格</Label>
-                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                      {THEME_COLORS.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => void saveThemeColor(c.id)}
-                          className={cn(
-                            "flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-xs cursor-pointer transition-colors",
-                            themeColor === c.id ? "border-ring ring-ring/30 ring-2" : "hover:bg-accent",
-                          )}
-                        >
-                          <span
-                            className="size-6 rounded-full border border-black/10 shadow-sm"
-                            style={{ background: `linear-gradient(135deg, ${c.light} 55%, ${c.dark} 55%)` }}
-                          />
-                          {c.label}
-                        </button>
-                      ))}
-                    </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}

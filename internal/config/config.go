@@ -303,7 +303,7 @@ func Load(path string) (*Config, error) {
 		cfg.Theme = "light"
 	}
 	switch cfg.ThemeColor {
-	case "violet", "blue", "emerald", "amber", "rose":
+	case "violet", "blue", "sky", "emerald", "amber", "rose":
 	default:
 		cfg.ThemeColor = "zinc"
 	}

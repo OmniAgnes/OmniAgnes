@@ -141,7 +141,7 @@ export interface BrowseResult {
 
 export type Theme = "dark" | "light" | "system"
 
-export type ThemeColor = "zinc" | "violet" | "blue" | "emerald" | "amber" | "rose"
+export type ThemeColor = "zinc" | "violet" | "blue" | "sky" | "emerald" | "amber" | "rose"
 
 /** 单个模型的个性化参数；未设置项回落到供应商级同名字段 */
 export interface ModelOptions {

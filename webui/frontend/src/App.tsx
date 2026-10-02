@@ -187,7 +187,7 @@ export default function App() {
   useEffect(() => {
     const color = state?.theme_color ?? "zinc"
     const root = document.documentElement
-    for (const c of ["zinc", "violet", "blue", "emerald", "amber", "rose"]) {
+    for (const c of ["zinc", "violet", "blue", "sky", "emerald", "amber", "rose"]) {
       root.classList.toggle(`theme-${c}`, c === color)
     }
   }, [state?.theme_color])

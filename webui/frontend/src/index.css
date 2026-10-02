@@ -159,15 +159,25 @@ body {
 /* ---- 主题配色：主色 + 侧栏底色 / 悬停面 / 选中态全面着色 ---- */
 .theme-violet { --t-h: 293; --t-c: 0.22; }
 .theme-blue { --t-h: 255; --t-c: 0.2; }
+.theme-sky { --t-h: 235; --t-c: 0.17; }
 .theme-emerald { --t-h: 162; --t-c: 0.14; }
 .theme-amber { --t-h: 75; --t-c: 0.16; }
 .theme-rose { --t-h: 17; --t-c: 0.2; }
 
 .theme-violet,
 .theme-blue,
+.theme-sky,
 .theme-emerald,
 .theme-amber,
 .theme-rose {
+  /* 彩色主题 = 浅色底：侧栏明显着色（如翡翠 #E3ECE4），主区近白微着色（如 #F6F8F5），
+     卡片/弹层近白靠对比显层次，边框/次级面同色系 */
+  --background: oklch(0.977 calc(var(--t-c) * 0.05) var(--t-h));
+  --card: oklch(0.995 0 0);
+  --popover: oklch(0.995 0 0);
+  --muted: oklch(0.955 calc(var(--t-c) * 0.1) var(--t-h));
+  --border: oklch(0.93 calc(var(--t-c) * 0.09) var(--t-h));
+  --input: oklch(0.93 calc(var(--t-c) * 0.09) var(--t-h));
   --primary: oklch(0.52 var(--t-c) var(--t-h));
   --primary-foreground: oklch(0.985 0 0);
   --ring: oklch(0.6 calc(var(--t-c) * 0.85) var(--t-h));
@@ -175,19 +185,27 @@ body {
   --accent-foreground: oklch(0.35 calc(var(--t-c) * 0.6) var(--t-h));
   --secondary: oklch(0.95 calc(var(--t-c) * 0.14) var(--t-h));
   --secondary-foreground: oklch(0.35 calc(var(--t-c) * 0.6) var(--t-h));
-  --sidebar: oklch(0.975 calc(var(--t-c) * 0.07) var(--t-h));
-  --sidebar-accent: oklch(0.94 calc(var(--t-c) * 0.16) var(--t-h));
+  --sidebar: oklch(0.93 calc(var(--t-c) * 0.25) var(--t-h));
+  --sidebar-accent: oklch(0.895 calc(var(--t-c) * 0.3) var(--t-h));
   --sidebar-accent-foreground: oklch(0.35 calc(var(--t-c) * 0.6) var(--t-h));
-  --sidebar-border: oklch(0.92 calc(var(--t-c) * 0.1) var(--t-h));
+  --sidebar-border: oklch(0.88 calc(var(--t-c) * 0.14) var(--t-h));
   --sidebar-primary: oklch(0.52 var(--t-c) var(--t-h));
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-ring: oklch(0.6 calc(var(--t-c) * 0.85) var(--t-h));
 }
 .dark.theme-violet,
 .dark.theme-blue,
+.dark.theme-sky,
 .dark.theme-emerald,
 .dark.theme-amber,
 .dark.theme-rose {
+  /* 深色下同样把浅色主题块覆盖过的变量按深色系补回（仅带一点色相） */
+  --background: oklch(0.15 calc(var(--t-c) * 0.1) var(--t-h));
+  --card: oklch(0.205 calc(var(--t-c) * 0.12) var(--t-h));
+  --popover: oklch(0.205 calc(var(--t-c) * 0.12) var(--t-h));
+  --muted: oklch(0.269 calc(var(--t-c) * 0.14) var(--t-h));
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
   --primary: oklch(0.72 calc(var(--t-c) * 0.8) var(--t-h));
   --primary-foreground: oklch(0.16 0.02 var(--t-h));
   --ring: oklch(0.62 calc(var(--t-c) * 0.7) var(--t-h));
