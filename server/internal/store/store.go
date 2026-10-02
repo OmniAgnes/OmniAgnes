@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -19,6 +20,9 @@ var ErrNotFound = errors.New("记录不存在")
 
 // ReasonDailyClaim 每日积分领取在流水里的原因标记。
 const ReasonDailyClaim = "daily_claim"
+
+// ReasonAIUsage AI 请求消耗在流水里的原因标记。
+const ReasonAIUsage = "AI 消耗"
 
 type User struct {
 	ID        int64     `json:"id"`
@@ -165,6 +169,17 @@ func (s *Store) migrate() error {
 			user_id INTEGER NOT NULL,
 			claim_date TEXT NOT NULL,
 			PRIMARY KEY (user_id, claim_date)
+		)`,
+		`CREATE TABLE IF NOT EXISTS usage_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			model TEXT NOT NULL DEFAULT '',
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			credits INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'ok',
+			error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
 		)`,
 	}
 	for _, q := range stmts {
@@ -490,6 +505,202 @@ func (s *Store) Records(userID int64, limit int) ([]CreditRecord, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// UsageLog AI 请求记录：桌面端每次问答结束后上报，按模型倍率计积分。
+type UsageLog struct {
+	ID           int64  `json:"id"`
+	UserID       int64  `json:"user_id"`
+	Model        string `json:"model"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	Credits      int64  `json:"credits"`
+	Status       string `json:"status"` // ok=已计费 / insufficient=积分不足未扣 / error=请求失败
+	Error        string `json:"error,omitempty"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// UsageLogRow 管理端视角的请求记录（带会员手机号）。
+type UsageLogRow struct {
+	UsageLog
+	Phone string `json:"phone"`
+}
+
+// CreditRecordRow 管理端视角的积分流水（带会员手机号）。
+type CreditRecordRow struct {
+	CreditRecord
+	Phone string `json:"phone"`
+}
+
+// ErrInsufficient 余额不足以支付本次请求。
+var ErrInsufficient = errors.New("积分不足")
+
+// 计费口径：每 1000 token × 模型倍率 = 积分，向上取整；限免模型与后台未配置的模型不计费。
+func (s *Store) costOf(model string, input, output int64) int64 {
+	m, err := s.ModelByKey(model)
+	if err != nil || m == nil || m.Free {
+		return 0
+	}
+	return int64(math.Ceil(float64(input+output) / 1000 * m.Multiplier))
+}
+
+// ReportUsage 记录一次 AI 请求并按模型倍率扣积分（先扣减后留痕）。
+// status="error"（上游失败）不计费；余额不足时记 status=insufficient 并返回 ErrInsufficient。
+func (s *Store) ReportUsage(userID int64, model string, input, output int64, status, errMsg string) (credits, balance int64, err error) {
+	if status == "error" {
+		if _, err := s.db.Exec(
+			`INSERT INTO usage_logs(user_id, model, input_tokens, output_tokens, credits, status, error, created_at) VALUES(?,?,?,?,0,?,?,?)`,
+			userID, model, input, output, status, errMsg, nowStr()); err != nil {
+			return 0, 0, err
+		}
+		return 0, s.balanceOf(userID), nil
+	}
+	credits = s.costOf(model, input, output)
+	if credits <= 0 {
+		if _, err := s.db.Exec(
+			`INSERT INTO usage_logs(user_id, model, input_tokens, output_tokens, credits, status, error, created_at) VALUES(?,?,?,?,0,'ok','',?)`,
+			userID, model, input, output, nowStr()); err != nil {
+			return 0, 0, err
+		}
+		return 0, s.balanceOf(userID), nil
+	}
+	balance, err = s.AddCredit(userID, -credits, ReasonAIUsage, model, "")
+	if err != nil {
+		// 积分不足：请求已发生，留痕但不扣减，让会员/管理端能看到欠账
+		if _, derr := s.db.Exec(
+			`INSERT INTO usage_logs(user_id, model, input_tokens, output_tokens, credits, status, error, created_at) VALUES(?,?,?,?,?,'insufficient','',?)`,
+			userID, model, input, output, credits, nowStr()); derr != nil {
+			return 0, 0, derr
+		}
+		return credits, s.balanceOf(userID), ErrInsufficient
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO usage_logs(user_id, model, input_tokens, output_tokens, credits, status, error, created_at) VALUES(?,?,?,?,?,'ok','',?)`,
+		userID, model, input, output, credits, nowStr()); err != nil {
+		return 0, 0, err
+	}
+	return credits, balance, nil
+}
+
+// UsageLogs 会员自己的请求记录（倒序）。
+func (s *Store) UsageLogs(userID int64, limit int) ([]UsageLog, error) {
+	rows, err := s.db.Query(
+		`SELECT id, user_id, model, input_tokens, output_tokens, credits, status, error, created_at FROM usage_logs WHERE user_id=? ORDER BY id DESC LIMIT ?`,
+		userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = []UsageLog{}
+	for rows.Next() {
+		var l UsageLog
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Model, &l.InputTokens, &l.OutputTokens, &l.Credits, &l.Status, &l.Error, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// UsageSummary 会员请求汇总：次数 / token / 已扣积分。
+func (s *Store) UsageSummary(userID int64) (requests, input, output, credits int64, err error) {
+	err = s.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		 COALESCE(SUM(CASE WHEN status='ok' THEN credits ELSE 0 END),0) FROM usage_logs WHERE user_id=?`,
+		userID).Scan(&requests, &input, &output, &credits)
+	return
+}
+
+// CreditSums 会员积分累计获得/消耗（正负分流）。
+func (s *Store) CreditSums(userID int64) (got, spent int64, err error) {
+	err = s.db.QueryRow(
+		`SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0),
+		 COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) FROM credit_records WHERE user_id=?`,
+		userID).Scan(&got, &spent)
+	return
+}
+
+func (s *Store) balanceOf(userID int64) int64 {
+	var bal int64
+	_ = s.db.QueryRow(`SELECT balance FROM users WHERE id=?`, userID).Scan(&bal)
+	return bal
+}
+
+// AllUsageLogs 管理端请求记录（倒序）；phone 非空时按手机号模糊过滤。
+func (s *Store) AllUsageLogs(limit int, phone string) ([]UsageLogRow, error) {
+	q := `SELECT l.id, l.user_id, l.model, l.input_tokens, l.output_tokens, l.credits, l.status, l.error, l.created_at, u.phone
+		FROM usage_logs l JOIN users u ON u.id=l.user_id`
+	args := []any{}
+	if phone != "" {
+		q += ` WHERE u.phone LIKE ?`
+		args = append(args, "%"+phone+"%")
+	}
+	q += ` ORDER BY l.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = []UsageLogRow{}
+	for rows.Next() {
+		var l UsageLogRow
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Model, &l.InputTokens, &l.OutputTokens, &l.Credits, &l.Status, &l.Error, &l.CreatedAt, &l.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// AllCreditRecords 管理端积分流水（倒序，带手机号）。
+func (s *Store) AllCreditRecords(limit int) ([]CreditRecordRow, error) {
+	rows, err := s.db.Query(
+		`SELECT r.id, r.user_id, r.amount, r.reason, r.model, r.created_at, r.expires_at, r.remaining, u.phone
+		 FROM credit_records r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC LIMIT ?`,
+		limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = []CreditRecordRow{}
+	for rows.Next() {
+		var r CreditRecordRow
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Amount, &r.Reason, &r.Model, &r.CreatedAt, &r.ExpiresAt, &r.Remaining, &r.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UsageOverview 管理端总览：会员数 / 累计发放 / 累计消耗 / 今日请求 / 今日消耗积分。
+type UsageOverview struct {
+	Users        int64 `json:"users"`
+	Granted      int64 `json:"granted"`
+	Spent        int64 `json:"spent"`
+	TodayReq     int64 `json:"today_requests"`
+	TodayCredits int64 `json:"today_credits"`
+}
+
+func (s *Store) UsageOverview() (*UsageOverview, error) {
+	o := &UsageOverview{}
+	today := time.Now().Format("2006-01-02")
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&o.Users); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0),
+		 COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) FROM credit_records`,
+	).Scan(&o.Granted, &o.Spent); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(credits),0) FROM usage_logs WHERE created_at LIKE ?`,
+		today+"%").Scan(&o.TodayReq, &o.TodayCredits); err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 func (s *Store) ListUsers() ([]*User, error) {
