@@ -8,6 +8,8 @@ export interface TaskMeta {
   mode?: string
   created_at: string
   updated_at: string
+  /** 后台无人值守执行中（计划任务轮次），任务 TAB 显示「处理中」 */
+  running?: boolean
 }
 
 export interface ToolCallMsg {

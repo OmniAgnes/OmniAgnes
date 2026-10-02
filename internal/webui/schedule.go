@@ -63,6 +63,9 @@ func (s *server) runScheduledTask(st *store.ScheduledTask) {
 		log.Printf("[schedule] 创建任务失败: %v", err)
 		return
 	}
+	// 标记运行中：任务列表据此显示「处理中」（前端实时状态追不到后台执行）
+	s.runningTasks.Store(t.ID, struct{}{})
+	defer s.runningTasks.Delete(t.ID)
 	// 新任务已建好（可能还在跑）：通知前端刷新列表，侧栏立即能看到
 	s.hub.broadcast()
 	a, err := s.agentForOpts(t, false)
@@ -81,6 +84,10 @@ func (s *server) runScheduledTask(st *store.ScheduledTask) {
 	}
 	rollback := a.Prepare(st.Prompt)
 	_ = rollback
+	// 立即落盘用户 prompt：后台执行的首个检查点要等第一轮工具结束，
+	// 不先写的话执行期间点开任务会是空视图（显示成「新建任务」占位）
+	t.Messages = a.History()
+	_ = s.store.SaveTask(t)
 	var lastCk time.Time
 	_ = a.Execute(context.Background(), func(ev agent.Event) {
 		switch ev.Type {

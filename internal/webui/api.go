@@ -295,7 +295,17 @@ func (s *server) handleTasksList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"tasks": tasks})
+	// 附带后台运行标记（计划任务等无人值守执行中）：前端任务 TAB 显示「处理中」
+	type taskMeta struct {
+		*store.Task
+		Running bool `json:"running,omitempty"`
+	}
+	out := make([]taskMeta, 0, len(tasks))
+	for _, t := range tasks {
+		_, running := s.runningTasks.Load(t.ID)
+		out = append(out, taskMeta{Task: t.Meta(), Running: running})
+	}
+	writeJSON(w, map[string]any{"tasks": out})
 }
 
 func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {

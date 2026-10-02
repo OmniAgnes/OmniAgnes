@@ -78,6 +78,8 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<TaskMeta[]>([])
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  const activeTaskIdRef = useRef<string | null>(null)
+  activeTaskIdRef.current = activeTaskId
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   // 右侧主区视图：聊天（默认）或计划任务页
@@ -141,13 +143,27 @@ export default function App() {
     const es = new EventSource("/api/events")
     es.onmessage = (e) => {
       try {
-        if (JSON.parse(e.data)?.type === "tasks_changed") void refreshTasks()
+        if (JSON.parse(e.data)?.type !== "tasks_changed") return
+        void refreshTasks()
+        // 当前打开的任务若还是空内容（后台执行刚开始、prompt 刚落盘），补拉一次完整内容，
+        // 否则点开正在执行的计划任务会一直停在「新建任务」占位上
+        const id = activeTaskIdRef.current
+        const r = id ? runsRef.current[id] : null
+        if (!id || (r && r.items.length > 0)) return
+        void api
+          .task(id)
+          .then((resp) => {
+            if ((resp.task.messages ?? []).length === 0 || activeTaskIdRef.current !== id) return
+            runsRef.current[id] = buildRun(resp.task)
+            bump()
+          })
+          .catch(() => {})
       } catch {
         /* 忽略坏帧 */
       }
     }
     return () => es.close()
-  }, [refreshTasks])
+  }, [refreshTasks, bump])
 
   // 主题跟随设置（外观模式）
   useEffect(() => {
@@ -926,13 +942,20 @@ export default function App() {
   const standaloneTasks = listedTasks.filter((t) => !t.project_id)
 
   // 侧栏运行指示：任务 → 状态文字（处理中/重试 n/10）。
-  // 后台执行（计划任务、切走的任务）在任务 TAB 里也能一眼看出状况
+  // 服务端标记（计划任务后台执行）+ 本地实时状态（交互对话、重试进度）合并；
+  // 后台执行的任务在任务 TAB 里也能一眼看出状况
   const running: Record<string, string> = {}
+  for (const t of tasks) {
+    if (t.running) running[t.id] = "处理中"
+  }
   for (const [id, r] of Object.entries(runsRef.current)) {
     if (r.streaming) running[id] = r.retry ? `重试 ${r.retry.attempt}/${r.retry.max}` : "处理中"
   }
 
   const run = activeTaskId ? runsRef.current[activeTaskId] : undefined
+  // 后台无人值守执行中（计划任务）：本地没有实时流，也让聊天区显示「处理中」指示，
+  // 否则执行期间点开任务只会看到一条孤零零的提问
+  const backgroundRunning = !!activeMeta?.running && !run?.streaming
   const chatTitle = run?.title || activeMeta?.title || "新任务"
   const chatSource = activeProject?.name ?? "任务"
 
@@ -990,7 +1013,7 @@ export default function App() {
           source={chatSource}
           mode={run?.mode ?? defaultMode}
           items={run?.items ?? []}
-          streaming={run?.streaming ?? false}
+          streaming={(run?.streaming ?? false) || backgroundRunning}
           thinking={run?.thinking ?? false}
           retry={run?.retry}
           workSince={run?.workSince}

@@ -156,6 +156,8 @@ type server struct {
 	browser *BrowserBridge
 	// hub 是任务变更广播（计划任务后台建/改任务时通知前端刷新列表）。
 	hub *eventHub
+	// runningTasks 是后台无人值守执行中的任务 ID（计划任务轮次），供任务列表标注运行状态。
+	runningTasks sync.Map
 	// approvalSeq 生成审批请求 ID。
 	approvalSeq atomic.Int64
 	// provider 非空时优先使用（测试注入口），否则按 cfg 解析。
