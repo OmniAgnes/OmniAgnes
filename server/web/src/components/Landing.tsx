@@ -190,18 +190,12 @@ export function Landing({ site, loggedIn }: { site: Site; loggedIn: boolean }) {
         </section>
       </main>
 
-      {/* 页脚 */}
-      <footer className="border-border/60 border-t">
-        <div className="text-muted-foreground mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 py-6 text-sm md:flex-row">
-          <div className="flex items-center gap-2">
-            <span className="bg-primary flex size-5 items-center justify-center rounded text-white [&_svg]:size-3">
-              <BotIcon />
-            </span>
-            {title}
-          </div>
-          {site.footer && <span>{site.footer}</span>}
-        </div>
-      </footer>
+      {/* 页脚：文案由后台「站点设置」配置，留空不显示 */}
+      {site.footer && (
+        <footer className="border-border/60 border-t">
+          <div className="text-muted-foreground mx-auto max-w-6xl px-4 py-6 text-center text-sm">{site.footer}</div>
+        </footer>
+      )}
     </div>
   )
 }
