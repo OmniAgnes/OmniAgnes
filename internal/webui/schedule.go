@@ -97,6 +97,8 @@ func (s *server) runScheduledTask(st *store.ScheduledTask) {
 				lastCk = time.Now()
 				t.Messages = a.History()
 				_ = s.store.SaveTask(t)
+				// 广播变更：已打开该任务的前端按服务端快照补齐进度（工具卡逐个出现）
+				s.hub.broadcast()
 			}
 		case agent.EventDone:
 			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
@@ -252,6 +254,7 @@ func (s *server) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleScheduleRun 手动触发一次计划任务（立即执行，不影响原有周期）。
+// 手动执行不限制次数/并发：每次点击都会新建一个独立任务执行。
 func (s *server) handleScheduleRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sts, err := s.store.ListSchedules()
@@ -270,13 +273,6 @@ func (s *server) handleScheduleRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "计划任务不存在", http.StatusNotFound)
 		return
 	}
-	if _, loaded := schedRunning.LoadOrStore(id, struct{}{}); loaded {
-		writeErr(w, "该计划正在执行中，请稍后再试", http.StatusConflict)
-		return
-	}
-	go func() {
-		defer schedRunning.Delete(id)
-		s.runScheduledTask(st)
-	}()
+	go s.runScheduledTask(st)
 	writeJSON(w, map[string]any{"ok": true})
 }

@@ -145,11 +145,11 @@ export default function App() {
       try {
         if (JSON.parse(e.data)?.type !== "tasks_changed") return
         void refreshTasks()
-        // 当前打开的任务若还是空内容（后台执行刚开始、prompt 刚落盘），补拉一次完整内容，
-        // 否则点开正在执行的计划任务会一直停在「新建任务」占位上
+        // 当前打开的任务只要本地没有实时流（后台执行中的计划任务），就用服务端快照重建——
+        // 后台每 3 秒落一次检查点并广播，工具卡/回复会逐段补进来；本地正在流式的任务绝不覆盖
         const id = activeTaskIdRef.current
         const r = id ? runsRef.current[id] : null
-        if (!id || (r && r.items.length > 0)) return
+        if (!id || r?.streaming) return
         void api
           .task(id)
           .then((resp) => {
