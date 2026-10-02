@@ -11,8 +11,8 @@ const VISIBLE = 5
 interface TaskListProps {
   tasks: TaskMeta[]
   activeTaskId: string | null
-  /** 正在执行的任务 ID 集合：行右侧显示加载动画（后台跑也可见） */
-  running: Record<string, boolean>
+  /** 正在执行的任务 ID → 状态文字（处理中/重试 n/10）：行右侧显示动画与状态 */
+  running: Record<string, string>
   onOpen: (id: string) => void
   onDelete: (id: string, title: string) => void
   emptyText?: string
@@ -46,9 +46,15 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           >
             {t.title}
           </button>
-          {/* 运行中：常驻转圈动画（切走任务后台也在跑）；否则悬停显示删除 */}
+          {/* 运行中：转圈 + 状态文字（处理中/重试 n/10），切走任务后台也在跑也看得见；否则悬停显示删除 */}
           {running[t.id] ? (
-            <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
+            <span
+              className="text-muted-foreground flex shrink-0 items-center gap-1 text-[11px]"
+              title={running[t.id]}
+            >
+              <Loader2Icon className="size-3.5 shrink-0 animate-spin" />
+              <span className="max-w-20 truncate">{running[t.id]}</span>
+            </span>
           ) : (
             <Button
               variant="ghost"

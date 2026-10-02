@@ -5,6 +5,7 @@ import type {
   MCPServerConfig,
   Project,
   ProviderConfig,
+  ScheduledTaskInfo,
   SkillDetail,
   SkillDirs,
   SkillInfo,
@@ -82,6 +83,31 @@ export const api = {
   task: (id: string) => fetch(`/api/tasks/${id}`).then((r) => json<{ task: TaskFull }>(r)),
 
   deleteTask: (id: string) => fetch(`/api/tasks/${id}`, { method: "DELETE" }),
+
+  schedules: () =>
+    fetch("/api/schedules").then((r) => json<{ schedules: ScheduledTaskInfo[] }>(r)),
+
+  createSchedule: (p: { name?: string; prompt: string; model?: string; interval_days: number; at: string; project_id?: string }) =>
+    fetch("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }).then((r) => json<{ schedule: ScheduledTaskInfo }>(r)),
+
+  updateSchedule: (id: string, p: { name?: string; enabled?: boolean; prompt?: string; model?: string; interval_days?: number; at?: string; project_id?: string }) =>
+    fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }).then((r) => json<{ schedule: ScheduledTaskInfo }>(r)),
+
+  deleteSchedule: (id: string) => fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** 手动触发一次计划任务（立即执行，不影响原有周期） */
+  runSchedule: (id: string) =>
+    fetch(`/api/schedules/${encodeURIComponent(id)}/run`, { method: "POST" }).then((r) =>
+      json<{ ok: boolean }>(r),
+    ),
 
   settings: () =>
     fetch("/api/settings").then((r) => json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r)),

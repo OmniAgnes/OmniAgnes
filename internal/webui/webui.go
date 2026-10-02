@@ -65,9 +65,11 @@ func Start(opts Options) (string, error) {
 		approvals: map[string]*approvalReq{},
 		questions: map[string]*questionReq{},
 		browser: newBrowserBridge(),
+		hub:     newEventHub(),
 	}
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
+	s.startScheduler()
 	srvURL = "http://" + ln.Addr().String()
 	return srvURL, nil
 }
@@ -103,9 +105,15 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/tasks", s.handleTaskCreate)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleTaskGet)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleTaskDelete)
+	mux.HandleFunc("GET /api/schedules", s.handleSchedulesList)
+	mux.HandleFunc("POST /api/schedules", s.handleScheduleCreate)
+	mux.HandleFunc("PUT /api/schedules/{id}", s.handleScheduleUpdate)
+	mux.HandleFunc("DELETE /api/schedules/{id}", s.handleScheduleDelete)
+	mux.HandleFunc("POST /api/schedules/{id}/run", s.handleScheduleRun)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("GET /api/attachment", s.handleAttachment)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("POST /api/approvals/{id}", s.handleApproval)
 	mux.HandleFunc("POST /api/questions/{id}", s.handleQuestionAnswer)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
@@ -146,6 +154,8 @@ type server struct {
 	questions map[string]*questionReq
 	// browser 是内置浏览器桥（desktop 壳经 /api/browser/* 长轮询驱动）。
 	browser *BrowserBridge
+	// hub 是任务变更广播（计划任务后台建/改任务时通知前端刷新列表）。
+	hub *eventHub
 	// approvalSeq 生成审批请求 ID。
 	approvalSeq atomic.Int64
 	// provider 非空时优先使用（测试注入口），否则按 cfg 解析。

@@ -54,6 +54,21 @@ export interface Project {
   created_at: string
 }
 
+/** 计划任务：到点（每 N 天的 HH:MM）后端自动以指定模型执行一次 prompt */
+export interface ScheduledTaskInfo {
+  id: string
+  name: string
+  prompt: string
+  model?: string
+  interval_days: number
+  at: string
+  project_id?: string
+  enabled: boolean
+  last_run?: string
+  created_at: string
+  next_run?: string
+}
+
 export interface MCPStatus {
   name: string
   kind: string

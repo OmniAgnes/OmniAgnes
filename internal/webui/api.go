@@ -1297,6 +1297,12 @@ func (s *server) cwdFor(t *store.Task) string {
 
 // agentFor 取任务对应的 Agent，没有则创建（恢复历史、注册扩展工具）。
 func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
+	return s.agentForOpts(t, true)
+}
+
+// agentForOpts 同 agentFor；withBrowser=false 用于计划任务等无人值守场景：
+// 不注册内置浏览器工具——用户没在看任务窗口，AI 不该把浏览器面板拉起来。
+func (s *server) agentForOpts(t *store.Task, withBrowser bool) (*agent.Agent, error) {
 	s.mu.Lock()
 	if a, ok := s.agents[t.ID]; ok {
 		s.mu.Unlock()
@@ -1331,7 +1337,7 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 			maxTokens = n
 		}
 	}
-	reg := s.newRegistry(cwd)
+	reg := s.newRegistry(cwd, withBrowser)
 	a := agent.New(prov, reg, agent.Options{
 		Model:             modelName,
 		Mode:              mode,
@@ -1361,8 +1367,8 @@ func (s *server) agentFor(t *store.Task) (*agent.Agent, error) {
 	return a, nil
 }
 
-// newRegistry 为任务创建带扩展工具的工具注册表。
-func (s *server) newRegistry(cwd string) *tools.Registry {
+// newRegistry 为任务创建带扩展工具的工具注册表；withBrowser=false 时不带内置浏览器。
+func (s *server) newRegistry(cwd string, withBrowser bool) *tools.Registry {
 	env := &tools.Env{
 		Cwd:       cwd,
 		MaxOutput: s.cfg.MaxToolOutput,
@@ -1370,7 +1376,9 @@ func (s *server) newRegistry(cwd string) *tools.Registry {
 	}
 	reg := tools.NewRegistry(env)
 	s.opts.Extras.RegisterTools(reg, cwd)
-	reg.Register(s.browserTool())
+	if withBrowser {
+		reg.Register(s.browserTool())
+	}
 	return reg
 }
 

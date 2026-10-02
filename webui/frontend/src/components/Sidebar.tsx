@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
+import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { TaskList } from "@/components/TaskList"
 import {
@@ -67,8 +67,8 @@ interface SidebarProps {
   projects: Project[]
   tasksByProject: Record<string, TaskMeta[]>
   activeTaskId: string | null
-  /** 正在执行（后台或前台）的任务 ID 集合，用于任务行右侧加载动画 */
-  running: Record<string, boolean>
+  /** 正在执行的任务 ID → 状态文字（处理中/重试 n/10），行右侧显示动画与状态 */
+  running: Record<string, string>
   open: boolean
   onOpenTask: (id: string) => void
   onDeleteTask: (id: string) => void
@@ -77,6 +77,8 @@ interface SidebarProps {
   onOpenProject: (p: Project) => void
   onAddProject: () => void
   onOpenSettings: () => void
+  /** 打开计划任务管理对话框 */
+  onOpenSchedules: () => void
   /** 点「任务」TAB：有任务选中最近一条，没任务则新建 */
   onFocusTasksTab: () => void
   onClose: () => void
@@ -97,6 +99,7 @@ export function Sidebar(props: SidebarProps) {
     onOpenProject,
     onAddProject,
     onOpenSettings,
+    onOpenSchedules,
     onFocusTasksTab,
     onClose,
   } = props
@@ -157,9 +160,17 @@ export function Sidebar(props: SidebarProps) {
 
         {/* 桌面端没有顶栏品牌区，给「新建任务」留出顶部间距，别贴着标题栏 */}
         <div className={cn("px-3 pb-2", window.omniDesktop ? "pt-2.5" : "")}>
-          <Button variant="secondary" className="w-full justify-start" onClick={() => onNewTask()} title="新建任务（Ctrl + N）">
+          <Button variant="ghost" className="w-full justify-start" onClick={() => onNewTask()} title="新建任务（Ctrl + N）">
             <SquarePenIcon /> 新建任务
             <kbd className="text-muted-foreground ml-auto text-[11px]">Ctrl + N</kbd>
+          </Button>
+          <Button
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground mt-1 w-full justify-start"
+            onClick={onOpenSchedules}
+            title="计划任务：到点自动执行"
+          >
+            <CalendarClockIcon /> 计划任务
           </Button>
         </div>
 
@@ -337,7 +348,7 @@ function ProjectGroup(props: {
   project: Project
   tasks: TaskMeta[]
   activeTaskId: string | null
-  running: Record<string, boolean>
+  running: Record<string, string>
   onOpenTask: (id: string) => void
   onNewTask: () => void
   onDeleteTask: (id: string) => void

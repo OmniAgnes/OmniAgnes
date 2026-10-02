@@ -165,7 +165,7 @@ func TestProjectsAndBrowse(t *testing.T) {
 		t.Fatalf("浏览失败: %d %s", code, body)
 	}
 
-	// 建项目任务 → 删除项目 → 任务归属清空
+	// 建项目任务 → 删除项目（软删除）→ 任务归属保留、项目清单不再列出
 	code, body = do(t, s, "POST", "/api/tasks", `{"project_id":"`+added.Project.ID+`"}`)
 	var created struct {
 		Task *store.Task `json:"task"`
@@ -179,8 +179,12 @@ func TestProjectsAndBrowse(t *testing.T) {
 		t.Fatalf("删除项目失败: %d", code)
 	}
 	got, err := s.store.GetTask(created.Task.ID)
-	if err != nil || got.ProjectID != "" {
-		t.Fatalf("删除项目后任务归属应为空: %v %+v", err, got)
+	if err != nil || got.ProjectID != added.Project.ID {
+		t.Fatalf("删除项目后任务归属应保留: %v %+v", err, got)
+	}
+	projects, err := s.store.ListProjects()
+	if err != nil || len(projects) != 0 {
+		t.Fatalf("项目清单应不含已删除项目: %v %d", err, len(projects))
 	}
 }
 

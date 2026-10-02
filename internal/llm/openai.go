@@ -295,13 +295,56 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, p.httpError(resp)
+		err := p.httpError(resp)
+		resp.Body.Close()
+		return nil, err
 	}
 
-	return readOpenAIStream(ctx, resp.Body, onEvent)
+	// 空响应重试：上游 200 却什么都没回（文本/思考/工具全空）也视为瞬时故障——
+	// 免费档/中转网关偶发这种「假完成」，不重试的话用户只会看到一句空兜底。
+	// 沿用同一组重试参数；重试期间照常发 retry 事件，界面显示「重试 n/10」。
+	emitted := false
+	track := func(ev StreamEvent) error {
+		if ev.Type == EventText || ev.Type == EventReasoning || ev.Type == EventToolCall {
+			emitted = true
+		}
+		if onEvent == nil {
+			return nil
+		}
+		return onEvent(ev)
+	}
+	for attempt := 0; ; attempt++ {
+		out, serr := readOpenAIStream(ctx, resp.Body, track)
+		if serr != nil {
+			resp.Body.Close()
+			return nil, serr
+		}
+		if out.Content != "" || len(out.ToolCalls) > 0 || emitted {
+			resp.Body.Close()
+			return out, nil
+		}
+		resp.Body.Close()
+		if attempt >= maxRetries {
+			// 一直空：原样返回，交给上层「模型没有返回任何内容」兜底
+			return out, nil
+		}
+		notifyRetry(onEvent, attempt+1, maxRetries)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryDelay):
+		}
+		resp, err = p.doOnce(ctx, body)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			err := p.httpError(resp)
+			resp.Body.Close()
+			return nil, err
+		}
+	}
 }
 
 // retryableStatus 可重试的 HTTP 状态码：网关/限流类瞬时错误。
@@ -342,14 +385,7 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent f
 			}
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-
-		resp, err := p.httpClient().Do(httpReq)
+		resp, err := p.doOnce(ctx, body)
 		if err != nil {
 			// 网络层错误（EOF/超时）也重试；最后一次才抛
 			lastErr = fmt.Errorf("请求 %s 失败: %w", p.baseURL, err)
@@ -374,6 +410,17 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent f
 	}
 
 	return nil, lastErr
+}
+
+// doOnce 发起一次请求（无重试逻辑；重试由 doWithRetry 与 Chat 的空响应重试负责）。
+func (p *OpenAIProvider) doOnce(ctx context.Context, body []byte) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	return p.httpClient().Do(httpReq)
 }
 
 // notifyRetry 在重试前给前端一条独立的重试事件（不混进模型思考流），

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { AddProjectDialog } from "@/components/AddProjectDialog"
+import { SchedulesPage } from "@/components/SchedulesPage"
 import { BrowserPane } from "@/components/BrowserPane"
 import { Chat, type QueuedMsg, type ViewItem } from "@/components/Chat"
 import { Sidebar } from "@/components/Sidebar"
@@ -79,6 +80,8 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
+  // 右侧主区视图：聊天（默认）或计划任务页
+  const [view, setView] = useState<"chat" | "schedules">("chat")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // 内置浏览器面板显隐（入口在输入框底部「完全访问」后的地球图标）
   const [browserOpen, setBrowserOpen] = useState(false)
@@ -131,6 +134,20 @@ export default function App() {
     void refreshTasks()
     void refreshProjects()
   }, [refreshTasks, refreshProjects])
+
+  // 服务端事件推送：计划任务在后台新建/更新任务时实时刷新侧栏，无需轮询；
+  // EventSource 断线会自动重连
+  useEffect(() => {
+    const es = new EventSource("/api/events")
+    es.onmessage = (e) => {
+      try {
+        if (JSON.parse(e.data)?.type === "tasks_changed") void refreshTasks()
+      } catch {
+        /* 忽略坏帧 */
+      }
+    }
+    return () => es.close()
+  }, [refreshTasks])
 
   // 主题跟随设置（外观模式）
   useEffect(() => {
@@ -299,6 +316,7 @@ export default function App() {
 
   const openTask = async (id: string) => {
     setActiveTaskId(id)
+    setView("chat")
     focusInput()
     // 点开任务即归底：含重开当前任务（标题不变时 [title] 效果不会触发）
     setTaskOpenSignal((n) => n + 1)
@@ -322,6 +340,7 @@ export default function App() {
       await refreshTasks()
       runsRef.current[r.task.id] = newRun(r.task.title, defaultMode)
       setActiveTaskId(r.task.id)
+      setView("chat")
       focusInput()
       bump()
     } catch (e) {
@@ -906,10 +925,11 @@ export default function App() {
   }
   const standaloneTasks = listedTasks.filter((t) => !t.project_id)
 
-  // 侧栏运行指示：哪些任务正在后台/前台执行
-  const running: Record<string, boolean> = {}
+  // 侧栏运行指示：任务 → 状态文字（处理中/重试 n/10）。
+  // 后台执行（计划任务、切走的任务）在任务 TAB 里也能一眼看出状况
+  const running: Record<string, string> = {}
   for (const [id, r] of Object.entries(runsRef.current)) {
-    if (r.streaming) running[id] = true
+    if (r.streaming) running[id] = r.retry ? `重试 ${r.retry.attempt}/${r.retry.max}` : "处理中"
   }
 
   const run = activeTaskId ? runsRef.current[activeTaskId] : undefined
@@ -950,9 +970,21 @@ export default function App() {
           onOpenProject={(p) => void openProject(p)}
           onAddProject={() => (isDesktop ? void addProjectNative() : setAddProjectOpen(true))}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSchedules={() => setView("schedules")}
           onFocusTasksTab={() => void focusTasksTab()}
           onClose={() => setSidebarOpen(false)}
         />
+        {view === "schedules" ? (
+          <SchedulesPage
+            models={modelGroups}
+            projects={projects}
+            onRan={() => {
+              void refreshTasks()
+              setTimeout(() => void refreshTasks(), 2000)
+            }}
+            onBack={() => setView("chat")}
+          />
+        ) : (
         <Chat
           title={chatTitle}
           source={chatSource}
@@ -987,6 +1019,7 @@ export default function App() {
           browserOpen={browserOpen}
           onToggleBrowser={() => setBrowserOpen((v) => !v)}
         />
+        )}
         {/* 内置浏览器面板：仅桌面端（Electron 壳有 WebContentsView 与操作桥） */}
         {isDesktop && <BrowserPane open={browserOpen} onOpenChange={setBrowserOpen} />}
       </div>
