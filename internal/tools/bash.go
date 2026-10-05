@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // resolveShell 返回执行命令所用的解释器。Windows 优先用 bash（Git Bash），无则回退 cmd。
@@ -60,6 +64,42 @@ func rewriteNullRedirect(command string) (string, bool) {
 	return strings.TrimRight(out, " \t"), true
 }
 
+// hasEnvKey 判断环境变量是否已存在（跨平台：Windows 大小写不敏感）。
+func hasEnvKey(env []string, key string) bool {
+	for _, kv := range env {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// toUTF8 把子进程输出转成合法 UTF-8。
+//
+// 已经是合法 UTF-8 就原样返回（绝大多数情况，Git Bash 的工具都输出 UTF-8）。
+// 否则按 GB18030 解码：它是 GBK/GB2312 的超集，正好覆盖中文 Windows 上
+// PowerShell、cmd 及大量 exe 按系统 ANSI 码页(936)吐出的字节。
+// 两条都失败才退化成替换字符，此时至少不会再把半个汉字写坏。
+func toUTF8(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	dec := simplifiedchinese.GBK.NewDecoder()
+	if dec != nil {
+		if s, err := dec.Bytes(b); err == nil && utf8.Valid(s) {
+			return string(s)
+		}
+	}
+	return strings.ToValidUTF8(string(b), "�")
+}
+
 func execBash(ctx context.Context, args map[string]any, env *Env) (string, error) {
 	command, err := argString(args, "command")
 	if err != nil {
@@ -86,12 +126,28 @@ func execBash(ctx context.Context, args map[string]any, env *Env) (string, error
 	}
 	cmd := exec.CommandContext(cmdCtx, shell, shellArgs...)
 	cmd.Dir = env.Cwd
+	// 让子进程优先输出 UTF-8，能少走一次 GBK 转码（转码只是兜底，不是唯一保障）。
+	// 不覆盖已有值：用户可能特意设了 locale。
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	if !hasEnvKey(cmd.Env, "LANG") {
+		cmd.Env = append(cmd.Env, "LANG=C.UTF-8")
+	}
+	if !hasEnvKey(cmd.Env, "PYTHONIOENCODING") {
+		cmd.Env = append(cmd.Env, "PYTHONIOENCODING=utf-8")
+	}
 
-	var stdout, stderr strings.Builder
+	// 输出先按字节捕获，不要直接塞进 string：
+	// Windows 上子进程（PowerShell、cmd、以及用户自己跑的 exe）常按系统 ANSI 码页
+	// 输出 GBK 字节，若原样进 string 再被 json.Marshal，非法 UTF-8 字节会被永久替换成
+	// U+FFFD 写进会话文件，模型和所有客户端（桌面 / 手机）之后读到的都是乱码。
+	// 正确做法是捕获后统一转码，见 toUTF8。
+	var stdout, stderr bytes.Buffer
 	var mu sync.Mutex
 	cap := env.MaxOutput*2 + 4096
 
-	pipe := func(rc io.ReadCloser, dst *strings.Builder) {
+	pipe := func(rc io.ReadCloser, dst *bytes.Buffer) {
 		defer rc.Close()
 		buf := make([]byte, 4096)
 		for {
@@ -137,8 +193,8 @@ func execBash(ctx context.Context, args map[string]any, env *Env) (string, error
 	}
 
 	mu.Lock()
-	out := stdout.String()
-	errOut := stderr.String()
+	out := toUTF8(stdout.Bytes())
+	errOut := toUTF8(stderr.Bytes())
 	mu.Unlock()
 
 	var sb strings.Builder
