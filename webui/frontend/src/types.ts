@@ -208,3 +208,10 @@ export type ChatEvent =
   /** 上游瞬时故障，provider 自动重试中（重试次数/总次数） */
   | { type: "retry"; attempt: number; max: number; round: number }
   | { type: "done"; model?: string; round: number; input_tokens?: number; output_tokens?: number }
+
+/** 移动端远程访问状态：urls 为每张网卡的扫码 URL（自带设备 token）。 */
+export type MobileInfo = {
+  enabled: boolean
+  port: number
+  urls: string[]
+}

@@ -5,9 +5,11 @@ package webui
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -66,6 +68,11 @@ func Start(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	mob, err := newMobile()
+	if err != nil {
+		_ = ln.Close()
+		return "", err
+	}
 	s := &server{
 		opts:   opts,
 		cfg:    cfg,
@@ -76,10 +83,18 @@ func Start(opts Options) (string, error) {
 		questions: map[string]*questionReq{},
 		browser: newBrowserBridge(),
 		hub:     newEventHub(),
+		mobile:  mob,
 	}
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
 	s.startScheduler()
+	// 移动端访问开关是记住的：上次是开的就自动把局域网监听拉起来，
+	// 省得每次重启都要重新点一次开关（二维码里的 token 不变，扫码照旧）。
+	if mob.persistEnabled {
+		if _, err := s.mobileStart(); err != nil {
+			fmt.Fprintf(os.Stderr, "omni: 恢复移动端访问失败: %v\n", err)
+		}
+	}
 	srvURL = "http://" + ln.Addr().String()
 	return srvURL, nil
 }
@@ -147,6 +162,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillDelete)
 	mux.HandleFunc("GET /api/browser/next", s.handleBrowserNext)
 	mux.HandleFunc("POST /api/browser/result", s.handleBrowserResult)
+	// 移动端远程访问：开关与扫码信息（仅桌面端 127.0.0.1 服务可调用）
+	mux.HandleFunc("GET /api/mobile", s.handleMobileInfo)
+	mux.HandleFunc("POST /api/mobile", s.handleMobileToggle)
 	return mux
 }
 
@@ -167,6 +185,10 @@ type server struct {
 	browser *BrowserBridge
 	// hub 是任务变更广播（计划任务后台建/改任务时通知前端刷新列表）。
 	hub *eventHub
+	// mobile 是局域网监听器状态（设备唯一 token + 开关）。
+	mobile *mobile
+	// mobileOnce 保证 mobile 懒初始化只跑一次（测试直接构造 &server{} 时也安全）。
+	mobileOnce sync.Once
 	// runningTasks 是后台无人值守执行中的任务 ID（计划任务轮次），供任务列表标注运行状态。
 	runningTasks sync.Map
 	// approvalSeq 生成审批请求 ID。

@@ -3,6 +3,7 @@ import type {
   ChatEvent,
   MCPStatus,
   MCPServerConfig,
+  MobileInfo,
   Project,
   ProviderConfig,
   ScheduledTaskInfo,
@@ -234,6 +235,17 @@ export const api = {
 
   /** token 用量统计（按天×模型聚合，日期升序） */
   usage: () => fetch("/api/usage").then((r) => json<{ records: UsageRecord[] }>(r)),
+
+  /** 移动端远程访问状态（含每张网卡的扫码 URL） */
+  mobile: () => fetch("/api/mobile").then((r) => json<MobileInfo>(r)),
+
+  /** 开关移动端远程访问 */
+  mobileToggle: (enabled: boolean) =>
+    fetch("/api/mobile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }).then((r) => json<MobileInfo>(r)),
 }
 
 // streamChat 发起 SSE 聊天；onEvent 收到每条事件，返回时流已结束。abort 信号可中断。
