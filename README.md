@@ -24,6 +24,9 @@
   - 界面基于 [shadcn/ui](https://ui.shadcn.com/)，适配移动端（H5）
   - 任务与会话历史持久化在 `~/.local/share/omni/`
   - 桌面版：Electron 无边框窗口（自绘标题栏、原生文件夹选择），见 `webui/desktop`
+- **移动端远程访问**：桌面端左下角手机图标开启后，手机扫码直接进同一份工作台（同一份任务与会话），免登录；默认关闭、每个请求校验设备 token、一键关停。开关与 token 落盘，重启后自动恢复
+  - 二维码可一键换发，旧二维码、旧链接与已连着的手机立刻失效
+  - `~/.local/share/omni/mobile.json` 的 `public_url` 填成 `https://<域名>` 后，扫码链接自动用域名而不是内网 IP，部署到公网不必改代码
 - **计划任务**：到点（每 N 天 HH:MM）自动执行一次，错过的在 24 小时内自动补跑；支持手动执行、编辑、启停
 - **MCP 支持**：`mcp_servers` 配置 stdio / streamable HTTP 服务器，远端工具以 `mcp__服务器__工具` 注入
 - **技能（Skills）**：`SKILL.md` 定义技能，agent 自动调用，也可 `/技能名` 直接触发
@@ -199,10 +202,12 @@ cd .. && bin\server.exe                  # 启动；测试模式验证码 111111
 │   ├── extras/          技能/记忆/MCP 聚合装配
 │   ├── store/           任务与项目持久化
 │   ├── tui/             Bubble Tea 界面
-│   ├── webui/           网页版服务 + 内嵌前端 dist
+│   ├── webui/           网页版服务 + 内嵌前端 dist（含移动端 LAN 监听器）
 │   └── ...
 ├── webui/frontend/      前端源码（React + shadcn/ui）
 ├── webui/desktop/       桌面版 Electron 壳
+├── dev/                 自研 MCP 服务器源码（agnes / mimo / docx / pptx / xlsx / pdf）
+├── cmd/                 辅助命令（shot_test 等）
 └── server/              独立后台（Go + shadcn/ui，端口 9000）
     ├── cmd/server/      入口
     ├── internal/        store(SQLite) / auth / api / config / web
