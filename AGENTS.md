@@ -42,6 +42,52 @@ copy omni.exe webui\desktop\bin\      # 3. 覆盖桌面端内核副本
 - 上游 500/429/502/503/504 走统一重试；进度用独立事件，不进思考流
 - 空回复优先排查上下文长度（滑动窗口只保留最近 20 个用户轮）
 
+## 移动端远程访问
+
+桌面端左下角手机图标（设置图标左边）→ 悬停出二维码 → 开关「允许移动端连接此设备」。
+实现全部在 `internal/webui/mobile.go`，前端 `components/MobilePanel.tsx`。
+
+- **不用登录**：手机扫码直接是完整工作台。前端登录只管账号/积分，后台不可达时
+  就是「纯本地版」（`probeServer()` 失败 → `serverOnline=false`），不构成门禁。
+- **TUI 用不上**：`internal/tui` 是 bubbletea 终端程序，无 HTTP 监听，手机渲染不了。
+  移动端复用桌面端同一个 `webui` handler（同一份任务/会话数据），另开 LAN 监听器。
+- **门禁 = 设备 token**，落盘 `~/.local/share/omni/mobile.json`（256 位随机，
+  base64url）。二维码 URL 形如 `http://<内网IP>:8792/device/<token>`；
+  首次访问校验后换 HttpOnly Cookie 并 302 到 `/`，token 不留在地址栏。
+  走 Cookie 而非 Authorization 头，因为 `/api/events` 是 EventSource，
+  浏览器不允许给 SSE 带自定义头。
+- **开关状态持久化**：重启后自动恢复监听，token 不变、二维码继续有效。
+  副作用是重启不会自动收回端口——要断开就手动关开关。
+- 端口 8792（与桌面端 8791 分开，避免动 localStorage 的 origin）；
+  未开启时 guard 直接 404，不暴露端口存在。
+- **多端实时同步**：交互式聊天过程中必须 `hub.broadcast()`（原先只有计划任务广播，
+  导致另一端全程收不到任何信号）。做法是在 `handleChat` 里把「检查点落盘 + 广播」
+  绑成节流的 `checkpoint()`（3s，EventText 与 EventToolEnd 都触发——纯文本长回复不经过
+  工具调用，否则要等整轮结束才可见），整轮结束再广播一次。
+  另一端收到信号后走既有逻辑：`GET /api/tasks` 刷「处理中」+ `GET /api/tasks/{id}`
+  按快照重建视图；发起方自己因 `streaming` 标记跳过重建，不会闪烁。
+- **同任务并发护栏**：`handleChat` 抢在**任何响应写入与 `a.Prepare`/`a.SetApprove` 之前**
+  用 `runningTasks.LoadOrStore` 占位，否则第二个请求会先改坏共享 Agent 状态。
+  放在 `send()` 之后无效——响应体一旦写出状态码就锁死 200，再 `WriteHeader(409)` 是 no-op。
+
+## 子进程输出的编码（Windows 乱码）
+
+`internal/tools/bash.go` 捕获子进程输出**必须按字节**接 `bytes.Buffer`，
+再用 `toUTF8` 转码后再进 `json.Marshal`：
+
+- 已是合法 UTF-8 → 原样返回（Git Bash 的工具基本都是）
+- 否则按 GB18030 解码（GBK/GB2312 超集），覆盖中文 Windows 上 PowerShell/cmd
+  及大量 exe 按 ANSI 码页(936)吐出的字节
+- 都失败才退化成 `�`
+
+**为什么必须转码**：坏字节进 `json.Marshal` 会被替换成 U+FFFD **永久写进会话文件**，
+之后所有客户端（桌面/手机）从 store 读到的都是 `�`，模型也读不懂——
+排查这类「乱码」先去 `~/.local/share/omni/sessions/*.json` 里搜 U+FFFD，
+看它落在 `tool_result.content` 还是用户消息里，两者根因完全不同。
+（用 node 读文件查，别用 PowerShell，Windows 控制台自身就是 GBK，会误导判断。）
+
+顺带给子进程注入 `LANG=C.UTF-8` / `PYTHONIOENCODING=utf-8`，少走转码路径。
+
 ## 常用命令
 
 ```powershell
