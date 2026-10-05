@@ -3,6 +3,7 @@ import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, Folde
 
 import { TaskList } from "@/components/TaskList"
 import { MobilePanel } from "@/components/MobilePanel"
+import { isDesktop } from "@/lib/platform"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -262,9 +263,9 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* 底部：移动端入口 + 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
+        {/* 底部：移动端入口（仅桌面端）+ 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
         <div className="flex items-center justify-end gap-0.5 px-3 py-1.5">
-          <MobilePanel />
+          {isDesktop && <MobilePanel />}
           <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title={t("s.settings")}>
             <SettingsIcon />
           </Button>

@@ -89,6 +89,8 @@ export function OmniToolbar({
   ]
 
   return (
+    // 是否渲染由 App 决定：桌面端侧边栏常驻（可显示），H5 仅在抽屉展开时显示，
+    // 收起时悬浮球会压住输入框左下角的附件按钮，所以不渲染。
     <div ref={wrapRef} className="fixed bottom-3 left-3 z-50">
       <div className="relative">
         <button

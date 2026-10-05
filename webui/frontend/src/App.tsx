@@ -11,6 +11,7 @@ import { OmniToolbar } from "@/components/OmniToolbar"
 import { ServerLoginDialog } from "@/components/ServerLoginDialog"
 import { api, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
+import { isDesktop } from "@/lib/platform"
 import { useI18n } from "@/lib/i18n"
 import { extractExternalURLs } from "@/lib/sources"
 import { server, serverToken, setServerToken, initServerUrl, probeServer, type ServerUser } from "@/lib/serverAuth"
@@ -36,8 +37,6 @@ function attachmentToInfo(a: RawAttachment): AttachmentInfo {
       : (a.url ?? "")
   return { kind: a.kind, media_type: a.media_type, caption: a.caption, src, path: a.path }
 }
-
-const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
 /** 模型按供应商分组：一级 = 供应商名，二级 = 模型名 */
 interface ModelGroup {
@@ -91,6 +90,22 @@ export default function App() {
   // 右侧主区视图：聊天（默认）或计划任务页
   const [view, setView] = useState<"chat" | "schedules">("chat")
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // 侧边栏是否真的可见。不能只看 sidebarOpen：Sidebar 的 CSS 是 md 以上常驻
+  // （md:static md:translate-x-0），窄屏才看 sidebarOpen 决定抽屉开合。
+  // 悬浮球的显示条件必须镜像这条规则，否则宽屏浏览器里侧边栏明明在、球却没了。
+  // 断点用 48rem 而非 768px：Tailwind v4 产出的是 @media (width>=48rem)，
+  // 这里跟着用 rem 基准，根字号变了也不会和 CSS 分叉。
+  const WIDE = "(width >= 48rem)"
+  const [wide, setWide] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(WIDE).matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(WIDE)
+    const on = (e: MediaQueryListEvent) => setWide(e.matches)
+    mq.addEventListener("change", on)
+    return () => mq.removeEventListener("change", on)
+  }, [])
+  const sidebarVisible = isDesktop || wide || sidebarOpen
   // 内置浏览器面板显隐（入口在输入框底部「完全访问」后的地球图标）
   const [browserOpen, setBrowserOpen] = useState(false)
   const [loadErr, setLoadErr] = useState("")
@@ -1139,7 +1154,7 @@ export default function App() {
   )
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden pr-[env(safe-area-inset-right)]">
       {isDesktop && <Titlebar source={chatSource} title={chatTitle} browserOpen={browserOpen} />}
       <div className="flex min-h-0 flex-1">
         <Sidebar
@@ -1231,18 +1246,22 @@ export default function App() {
         onAdded={() => void refreshProjects()}
       />
       <ServerLoginDialog open={loginOpen} onOpenChange={setLoginOpen} onLoggedIn={setServerUser} />
-      <OmniToolbar
-        zoom={zoom}
-        onZoom={setZoom}
-        currentTheme={themePreset()}
-        onTheme={(id) => void changeThemePreset(id)}
-        onOpenUsage={openUsage}
-        onOpenAccount={openAccount}
-        onRefreshUser={refreshServerUser}
-        user={serverUser}
-        serverOnline={serverOnline}
-        onOpenLogin={() => setLoginOpen(true)}
-      />
+      {/* 快捷工具悬浮球：侧边栏可见时显示（桌面端与宽屏浏览器常驻，H5 仅抽屉展开时）；
+          侧边栏收起时它正好压住输入框左下角的附件按钮，所以不渲染。 */}
+      {sidebarVisible && (
+        <OmniToolbar
+          zoom={zoom}
+          onZoom={setZoom}
+          currentTheme={themePreset()}
+          onTheme={(id) => void changeThemePreset(id)}
+          onOpenUsage={openUsage}
+          onOpenAccount={openAccount}
+          onRefreshUser={refreshServerUser}
+          user={serverUser}
+          serverOnline={serverOnline}
+          onOpenLogin={() => setLoginOpen(true)}
+        />
+      )}
       {toast && (
         <div className="border-ring/30 bg-card text-foreground fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border px-4 py-2 text-sm shadow-lg">
           {toast}

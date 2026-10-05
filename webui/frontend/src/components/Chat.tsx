@@ -40,10 +40,9 @@ import { sourceName } from "@/lib/sources"
 import { useI18n } from "@/lib/i18n"
 import type { ServerUser } from "@/lib/serverAuth"
 import { cn } from "@/lib/utils"
+import { isDesktop } from "@/lib/platform"
 import type { AttachmentInfo, SkillInfo } from "@/types"
 import { MediaList } from "./ToolCallView"
-
-const isDesktop = typeof window !== "undefined" && Boolean(window.omniDesktop)
 
 export type { ToolRun } from "@/components/ToolCallView"
 
@@ -597,9 +596,10 @@ export function Chat({
               }
             }}
           />
-          <div className="flex items-center justify-between gap-2 px-1 pt-1">
-            {/* 左：添加附件 + 访问模式（下拉，样式对齐模型选择） */}
-            <div className="flex min-w-0 items-center gap-1">
+          {/* 工具行：附件/模式/模型放进可横向滚动区，窄屏（H5）滑动查看而不是把模型名挤成省略号；
+              发送/中断按钮固定在右侧，不随滚动跑掉，随时可点。 */}
+          <div className="flex items-center gap-2 px-1 pt-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -609,7 +609,9 @@ export function Chat({
               >
                 <PaperclipIcon />
               </Button>
-              <ModePicker mode={mode} disabled={streaming} onChange={onModeChange} />
+              <div className="shrink-0">
+                <ModePicker mode={mode} disabled={streaming} onChange={onModeChange} />
+              </div>
               {/* 内置浏览器：地球图标紧跟访问模式，展开态高亮（仅桌面端） */}
               {isDesktop && onToggleBrowser && (
                 <Button
@@ -622,13 +624,14 @@ export function Chat({
                   <GlobeIcon />
                 </Button>
               )}
+              {(models.length > 0 || !!serverUser) && (
+                <div className="shrink-0">
+                  <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} />
+                </div>
+              )}
             </div>
 
-            {/* 右：模型选择（供应商 → 模型 二级）+ 发送/中断 */}
             <div className="flex shrink-0 items-center gap-1.5">
-              {(models.length > 0 || !!serverUser) && (
-                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} />
-              )}
               {streaming ? (
                 <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title={t("c.stop")}>
                   {/* 实心方块：更像"停止"语义（lucide 默认是描边空心） */}
