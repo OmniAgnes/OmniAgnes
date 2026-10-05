@@ -18,6 +18,17 @@ import type {
   ThemeColor,
 } from "@/types"
 
+/** 带 HTTP 状态码的错误。移动端换发 token 后旧 Cookie 会整体失效，
+ *  这类情况要整屏提示「重新扫码」，不能和普通错误一样只弹一条红条。 */
+export class HttpError extends Error {
+  readonly status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = "HttpError"
+    this.status = status
+  }
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
@@ -27,7 +38,7 @@ async function json<T>(res: Response): Promise<T> {
     } catch {
       /* 忽略解析失败 */
     }
-    throw new Error(msg)
+    throw new HttpError(res.status, msg)
   }
   return res.json() as Promise<T>
 }

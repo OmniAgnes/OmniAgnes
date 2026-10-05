@@ -32,12 +32,15 @@ dev/bin/
 # 调试日志（约定写到 .omni/log/）
 .omni/log/
 
+# 自研 MCP 服务器的运行时状态
+.omni/mcp/
+
+# H5 窄屏预览用的临时 iframe 宿主页（本地起静态服务器用，不入库）
+.omni/h5/
+
 # Windows 误建的垃圾文件：cmd 风格 `> nul` 在 bash 下会真的创建
 /nul
 NUL
-
-# ���� MCP ����������exe ����⣬CI ��ƽ̨�ֳ����룩
-.omni/mcp/
 
 # 编译产物与本地数据库：exe 与 server 的 SQLite 文件不入库
 *.exe

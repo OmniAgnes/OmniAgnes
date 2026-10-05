@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { ShieldOffIcon } from "lucide-react"
 
 import { AddProjectDialog } from "@/components/AddProjectDialog"
 import { SchedulesPage } from "@/components/SchedulesPage"
@@ -9,7 +10,8 @@ import { SettingsDialog } from "@/components/SettingsDialog"
 import { Titlebar } from "@/components/Titlebar"
 import { OmniToolbar } from "@/components/OmniToolbar"
 import { ServerLoginDialog } from "@/components/ServerLoginDialog"
-import { api, streamChat } from "@/lib/api"
+import { Button } from "@/components/ui/button"
+import { api, HttpError, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
 import { isDesktop } from "@/lib/platform"
 import { useI18n } from "@/lib/i18n"
@@ -109,6 +111,17 @@ export default function App() {
   // 内置浏览器面板显隐（入口在输入框底部「完全访问」后的地球图标）
   const [browserOpen, setBrowserOpen] = useState(false)
   const [loadErr, setLoadErr] = useState("")
+  // 移动端换发 token 后，旧 Cookie 立刻失效。此时页面外壳还活着（HTML/JS 已在内存里），
+  // 但每个接口都 401，结果就是「列表全空 + 一条红条」，用户完全不知道发生了什么。
+  // 401 单独拎出来，整屏提示重新扫码。
+  const [unauth, setUnauth] = useState(false)
+  const fail = (e: unknown) => {
+    if (e instanceof HttpError && e.status === 401) {
+      setUnauth(true)
+      return
+    }
+    setLoadErr(e instanceof Error ? e.message : String(e))
+  }
   // 递增即让右侧输入框聚焦（新建任务、打开任务、点「任务」TAB）
   const [focusSignal, setFocusSignal] = useState(0)
   // 递增即让聊天消息列表滚到底部（侧栏点击任务、重开当前任务）
@@ -287,7 +300,7 @@ export default function App() {
       const r = await api.tasks("all")
       setTasks(r.tasks ?? [])
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }, [])
 
@@ -296,12 +309,12 @@ export default function App() {
       const r = await api.projects()
       setProjects(r.projects ?? [])
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }, [])
 
   useEffect(() => {
-    api.state().then((s) => setState(s)).catch((e) => setLoadErr(String(e)))
+    api.state().then((s) => setState(s)).catch(fail)
     void refreshTasks()
     void refreshProjects()
   }, [refreshTasks, refreshProjects])
@@ -393,7 +406,7 @@ export default function App() {
       const r = await api.saveSettings({ model: m })
       if (state) setState({ ...state, model: r.model })
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -516,7 +529,7 @@ export default function App() {
       runsRef.current[id] = buildRun(r.task)
       bump()
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -530,7 +543,7 @@ export default function App() {
       focusInput()
       bump()
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -564,7 +577,7 @@ export default function App() {
     try {
       await api.deleteTask(id)
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
     await refreshTasks()
   }
@@ -580,7 +593,7 @@ export default function App() {
     try {
       await api.openProject(p.id)
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -592,7 +605,7 @@ export default function App() {
       await api.addProject(path)
       await refreshProjects()
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -957,7 +970,7 @@ export default function App() {
           paths = up.files.map((f) => f.path)
           names = up.files.map((f) => f.name)
         } catch (e) {
-          setLoadErr(e instanceof Error ? e.message : String(e))
+          fail(e)
           return
         }
       }
@@ -994,7 +1007,7 @@ export default function App() {
           setActiveTaskId(c.task.id)
           await launch(c.task.id, t, files)
         } catch (e) {
-          setLoadErr(e instanceof Error ? e.message : String(e))
+          fail(e)
         }
       })()
       return
@@ -1080,7 +1093,7 @@ export default function App() {
     try {
       await api.approval(id, allow)
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -1100,7 +1113,7 @@ export default function App() {
     try {
       await api.answer(id, text)
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e))
+      fail(e)
     }
   }
 
@@ -1154,7 +1167,21 @@ export default function App() {
   )
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden pr-[env(safe-area-inset-right)]">
+    <div className="relative flex h-screen flex-col overflow-hidden pr-[env(safe-area-inset-right)]">
+      {/* 凭证失效整屏接管：换发 token 后旧设备的所有请求都是 401，
+          与其让用户对着空列表猜，不如明确让他回电脑端重新扫码。 */}
+      {unauth && (
+        <div className="bg-background absolute inset-0 z-[100] flex flex-col items-center justify-center gap-3 px-8 text-center">
+          <ShieldOffIcon className="text-muted-foreground size-8" />
+          <div className="text-base font-semibold">{t("a.unauthTitle")}</div>
+          <p className="text-muted-foreground max-w-xs text-sm leading-relaxed">
+            {t("a.unauthDesc")}
+          </p>
+          <Button className="mt-2" onClick={() => window.location.reload()}>
+            {t("a.unauthRetry")}
+          </Button>
+        </div>
+      )}
       {isDesktop && <Titlebar source={chatSource} title={chatTitle} browserOpen={browserOpen} />}
       <div className="flex min-h-0 flex-1">
         <Sidebar

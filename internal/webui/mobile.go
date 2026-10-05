@@ -77,7 +77,7 @@ func newMobile() (*mobile, error) {
 		_ = json.Unmarshal(b, &f)
 	}
 	changed := false
-	if len(f.Token) != base64.RawURLEncoding.EncodedLen(mobileTokenBytes) {
+	if !validToken(f.Token) {
 		tok, err := randomToken()
 		if err != nil {
 			return nil, err
@@ -102,6 +102,27 @@ func newMobile() (*mobile, error) {
 	m.publicURL = strings.TrimRight(strings.TrimSpace(f.PublicURL), "/")
 	m.persistEnabled = f.Enabled
 	return m, nil
+}
+
+// tokenPattern 校验落盘的 token：base64url 字符集，16~128 位。
+//
+// 这里只校验「可放进 URL 且不是明显随手写的弱值」，不再强制等于
+// randomToken() 的 43 位长度。之前卡死长度带来一个很难查的坑：
+// 用户（或任何工具）往 mobile.json 里写了个自定义 token，只要不是正好
+// 43 位，下次启动就被当成损坏数据悄悄换成新 token——二维码还在手机上，
+// 链接却已经失效，表现为「URL 莫名其妙又打不开了」。
+func validToken(s string) bool {
+	if len(s) < 16 || len(s) > 128 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // write 落盘 token / 端口 / 开关。
@@ -156,9 +177,51 @@ func (m *mobile) guard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		writeErr(w, "请用桌面端「移动端」里的二维码进入", http.StatusUnauthorized)
+		denyMobile(w, r)
 	})
 }
+
+// denyMobile 是凭证无效时的响应。
+//
+// 文档导航（浏览器地址栏、扫码）给人话 HTML 页面，XHR/SSE 仍回 JSON。
+// 换发 token 之后旧链接会失效，手机上此时正停在已打开的页面里，
+// 下一次请求就被拒——这时必须明确告诉用户「重新扫码」，而不是甩一段
+// {"error":...} 的 JSON 让用户对着原始数据猜。
+func denyMobile(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(mobileDeniedHTML))
+		return
+	}
+	writeErr(w, "请用桌面端「移动端」里的二维码进入", http.StatusUnauthorized)
+}
+
+// mobileDeniedHTML 是凭证失效时的落地页，刻意内联样式、不引外部资源，
+// 断网也能正常显示。
+const mobileDeniedHTML = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>需要重新扫码</title>
+<style>
+  body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;
+       background:#f6f6f7;color:#18181b;padding:24px;
+       font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  @media (prefers-color-scheme:dark){body{background:#18181b;color:#fafafa}}
+  .card{max-width:22rem;width:100%;text-align:center}
+  h1{font-size:1.125rem;margin:0 0 .75rem}
+  p{margin:.4rem 0;font-size:.875rem;line-height:1.6;opacity:.75}
+  a{display:inline-block;margin-top:1.25rem;padding:.5rem 1.25rem;border-radius:.5rem;
+    background:#18181b;color:#fafafa;text-decoration:none;font-size:.875rem;border:0;
+    font-family:inherit;cursor:pointer}
+  @media (prefers-color-scheme:dark){a{background:#fafafa;color:#18181b}}
+</style></head>
+<body><div class="card">
+  <h1>访问凭证已失效</h1>
+  <p>这个二维码或链接已经不能用了——它可能来自一次二维码换发，<br>或者这台设备还没在电脑端开启「移动端」。</p>
+  <p>请回到电脑，在左下角手机图标里重新扫码进入。</p>
+  <a onclick="location.reload()">我扫了新码，再试一次</a>
+</div></body></html>`
 
 // start 开启局域网监听（重复调用复用已有实例），返回第一个可扫码 URL。
 func (s *server) mobileStart() (string, error) {

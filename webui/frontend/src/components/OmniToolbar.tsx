@@ -105,12 +105,16 @@ export function OmniToolbar({
           o
         </button>
 
-        {/* 菜单向上弹出 */}
+        {/* 菜单向上弹出。宽度是算出来的：悬浮球 fixed left-3(12px) + 主菜单 w-48(192)
+            + 间距 4 + 子菜单 w-36(144) = 352px，360px 窄屏也还剩 8px 余量。
+            原来 w-52 + w-40 合计 372px，390px 只剩 6px，360px 直接被裁掉右边一截。 */}
         {open && (
-          <div className="bg-background text-foreground absolute bottom-full left-0 mb-2 w-52 rounded-lg border p-1 shadow-xl">
-            {/* 子菜单右飞 */}
+          <div className="bg-background text-foreground absolute bottom-full left-0 mb-2 w-48 rounded-lg border p-1 shadow-xl">
+            {/* 子菜单右飞，且改为「底对齐 + 向上长」：原来 top-0 是从主菜单顶端往下长，
+                8 个主题项有 248px，矮屏上最后两项直接掉出视口点不到。
+                悬浮球贴底，向上长才是永远有空间的方向；max-h + overflow 是极矮屏的兜底。 */}
             {sub !== "none" && (
-              <div className="bg-background text-foreground absolute left-full top-0 z-10 ml-1 w-40 rounded-lg border p-1 shadow-xl">
+              <div className="bg-background text-foreground absolute bottom-0 left-full z-10 ml-1 max-h-[70vh] w-36 overflow-y-auto rounded-lg border p-1 shadow-xl">
                 {sub === "lang" &&
                   LANGS.map((l) => (
                     <button
@@ -178,7 +182,10 @@ export function OmniToolbar({
               <CalendarClockIcon className="size-4" />
               <span className="flex-1">{t("menu.usage")}</span>
             </button>
-            <SeparatorLight />
+            {/* 只有下面那行（积分 / 登录）真的渲染出来时才画分隔线。
+                手机端后台不可达时是「纯本地版」：既没有积分也没有登录，
+                无条件渲染的话菜单底部会留一条没有下文的孤线。 */}
+            {(user || serverOnline) && <SeparatorLight />}
             {user ? (
               /* 积分行：与「使用统计」同款左对齐样式；余额为 0 时不显示数字；点击进设置「账号」页签。
                  退出登录也在「账号」页签里（帐号显示右侧），这里不再放 */

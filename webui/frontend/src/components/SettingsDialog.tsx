@@ -470,8 +470,16 @@ export function SettingsDialog({
           <DialogTitle>{t("se.title")}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex h-full min-h-0 flex-col md:flex-row">
+        {/* min-w-0 必须有：这是 grid item，min-width:auto 会解析成 min-content，
+            被页签那排 420px 顶开后整块内容比弹窗还宽，被 DialogContent 的
+            overflow-hidden 裁掉（窄屏表现为「保存」按钮和页签直接消失）。 */}
+        <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
           <nav className="shrink-0 border-b px-2 py-2 md:w-42 md:border-r md:border-b-0 md:px-2 md:py-3">
+            {/* 窄屏保持单行 + 横向滚动，绝不换行：五个页签一排约 420px，放不进 390px
+                视口。换成 flex-wrap 会把页签摊成两行，把内容整体往下顶、选中态落到
+                屏幕外；而 overflow-x-auto 顺带解决了宽度问题——overflow 非 visible 时
+                该 grid item 的 min-width:auto 会被压成 0，不会再被 min-content 顶宽。
+                md 以上恢复竖排。 */}
             <div className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
               {SECTIONS.filter((s) => s.id !== "account" || !!serverUser).map((s) => (
                 <button
@@ -492,13 +500,14 @@ export function SettingsDialog({
             </div>
           </nav>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="flex flex-col gap-4 p-5">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+            <div className="flex min-w-0 flex-col gap-4 p-5">
               {section === "model" && (
                 <div className="flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
-                    <Label>{t("se.providers")}</Label>
-                    <div className="flex gap-2">
+                  {/* 窄屏：标题可换行、按钮组不压缩，按钮不会被挤出弹窗右边 */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="min-w-0">{t("se.providers")}</Label>
+                    <div className="flex shrink-0 gap-2">
                       <Button variant="outline" size="sm" onClick={addProvider}>
                         <PlusIcon /> {t("se.add")}
                       </Button>
@@ -1477,7 +1486,7 @@ function ModelOptionsRow({
 
       {open && (
         <div className="flex flex-col gap-3 border-t p-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label className="text-muted-foreground text-xs">{t("se.contextWin")}</Label>
               <Input

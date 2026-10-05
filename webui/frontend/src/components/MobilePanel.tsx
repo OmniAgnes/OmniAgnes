@@ -83,8 +83,13 @@ export function MobilePanel() {
   }, [url])
 
   // 悬停延迟关闭：鼠标要从图标移到面板里，250ms 足够又不会粘手
+  //
+  // rotating 期间不关：换发确认框是 portal 到 body 的，鼠标点过去时本面板
+  // 必然已经触发 mouseleave，不拦住的话确认框一开面板就缩回去，
+  // 用户确认完只剩一个空图标，得重新悬停才知道换没换成。
   const scheduleClose = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current)
+    if (rotating) return
     closeTimer.current = setTimeout(() => setOpen(false), 250)
   }
   const cancelClose = () => {
@@ -95,11 +100,11 @@ export function MobilePanel() {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false)
+      if (e.key === "Escape" && !rotating) setOpen(false)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [open])
+  }, [open, rotating])
 
   useEffect(() => () => {
     if (closeTimer.current) clearTimeout(closeTimer.current)
@@ -169,7 +174,11 @@ export function MobilePanel() {
               title={t("mobile.refresh")}
               aria-label={t("mobile.refresh")}
               disabled={!enabled || busy}
-              onClick={() => setRotating(true)}
+              onClick={() => {
+                cancelClose()
+                setOpen(true)
+                setRotating(true)
+              }}
               className={cn(
                 "text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer rounded-sm p-1 transition-colors",
                 "disabled:pointer-events-none disabled:opacity-30",
