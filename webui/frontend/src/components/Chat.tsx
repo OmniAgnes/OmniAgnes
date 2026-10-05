@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   AlertCircleIcon,
   BrainIcon,
@@ -931,11 +932,17 @@ function ModePicker({
 }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
+  // 打开瞬间记录触发按钮位置：面板 portal 到 body 用 fixed 定位，
+  // 不被工具行 overflow-x-auto 滚动容器裁切（面板伸出行外会被整个裁掉，点了看不见）。
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+      const tgt = e.target as Node
+      if (wrapRef.current?.contains(tgt) || panelRef.current?.contains(tgt)) return
+      setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false)
@@ -955,14 +962,32 @@ function ModePicker({
         type="button"
         title={t("c.switchMode")}
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (open) {
+            setOpen(false)
+            return
+          }
+          const r = wrapRef.current?.getBoundingClientRect()
+          if (!r) return
+          setAnchor({ left: r.left, top: r.top })
+          setOpen(true)
+        }}
         className="bg-muted/60 hover:bg-muted flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors disabled:opacity-50"
       >
         <span className="font-medium">{t(cur.key)}</span>
         <ChevronUpIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
-      {open && (
-        <div className="bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-1.5 w-52 overflow-hidden rounded-md border p-1 shadow-md">
+      {open && anchor && createPortal(
+        <div
+          ref={panelRef}
+          style={{
+            position: "fixed",
+            zIndex: 50,
+            left: anchor.left,
+            bottom: window.innerHeight - anchor.top + 6,
+          }}
+          className="bg-popover text-popover-foreground w-52 overflow-hidden rounded-md border p-1 shadow-md"
+        >
           {MODES.map((m) => (
             <button
               key={m.id}
@@ -983,7 +1008,8 @@ function ModePicker({
               </span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

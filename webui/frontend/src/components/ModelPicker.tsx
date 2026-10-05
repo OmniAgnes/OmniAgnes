@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 
 import type { ModelGroup } from "@/components/Chat"
@@ -24,6 +25,9 @@ const PANEL_H = 288
 const BUILTIN = "__builtin__"
 /** 内置模型选中 key 的前缀：与用户自配的同名模型区分「选的是哪一个」 */
 const BUILTIN_PREFIX = "server:"
+
+/** 触发按钮的视口坐标（弹层 portal 到 body 后按它做 fixed 定位） */
+type Rect = { left: number; top: number; right: number; bottom: number }
 
 /** 倍率展示：限免（现倍率 0）且原倍率不同 → 原倍率中划线 + 现倍率；否则只显示现倍率 */
 function rateLabel(m: ServerModel) {
@@ -83,6 +87,9 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
   const [open, setOpen] = useState(false)
   // 已点击展开的供应商——空串 = 二级未展开。悬停不改变它（只在已展开时允许悬停切换）
   const [hoverProvider, setHoverProvider] = useState<string>("")
+  // 打开瞬间记录触发按钮的视口坐标与翻向：弹层 portal 到 body 用 fixed 定位，
+  // 不受工具行 overflow-x-auto 滚动容器裁切（面板伸出行外会被整个裁掉，点了看不见）。
+  const [anchor, setAnchor] = useState<Rect | null>(null)
   // 贴近输入框右下方；空间不足时向上翻转
   const [dropUp, setDropUp] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -96,26 +103,28 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
     setHoverProvider("")
   }
 
+  // 打开：同步量一次触发按钮位置（open 渲染前布局是干净的）
+  const openPanel = () => {
+    const r = wrapRef.current?.getBoundingClientRect()
+    if (!r) return
+    setAnchor({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+    setDropUp(window.innerHeight - r.bottom < PANEL_H + 16 && r.top > PANEL_H)
+    setOpen(true)
+  }
+
   // 外部切换模型（如设置页改了当前模型）时收起二级，避免残留别的供应商。
   // 依赖 model 而非 currentProvider：内置与本地同名模型互相切换时后者不变。
   useEffect(() => {
     setHoverProvider("")
   }, [model])
 
-  // 打开时按可用空间决定翻向
-  useLayoutEffect(() => {
-    if (!open) return
-    const anchor = wrapRef.current
-    if (!anchor) return
-    const rect = anchor.getBoundingClientRect()
-    setDropUp(window.innerHeight - rect.bottom < PANEL_H + 16 && rect.top > PANEL_H)
-  }, [open])
-
-  // 点外部 / Esc 关闭
+  // 点外部 / Esc 关闭（弹层已 portal 到 body，panelRef 也要算「内部」）
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) close()
+      const t = e.target as Node
+      if (wrapRef.current?.contains(t) || panelRef.current?.contains(t)) return
+      close()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close()
@@ -172,24 +181,26 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
       <button
         type="button"
         title={t("mp.title")}
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => (open ? close() : openPanel())}
         className="bg-muted/60 hover:bg-muted flex max-w-30 cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors sm:max-w-52"
       >
         <span className="truncate font-medium">{plainModel || t("mp.ph")}</span>
         <ChevronDownIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
 
-      {open && (
+      {open && anchor && createPortal(
         <div
+          ref={panelRef}
           style={{
-            bottom: dropUp ? "calc(100% + 6px)" : undefined,
-            top: dropUp ? undefined : "calc(100% + 6px)",
-            right: 0,
+            position: "fixed",
+            zIndex: 50,
+            right: window.innerWidth - anchor.right,
+            bottom: dropUp ? window.innerHeight - anchor.top + 6 : undefined,
+            top: dropUp ? undefined : anchor.bottom + 6,
           }}
-          className="absolute z-50"
         >
-          {/* 一级面板：在文档流里，位置由 right:0锚定，不受二级影响 */}
-          <div ref={panelRef} className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
+          {/* 一级面板：在文档流里，随外层 fixed 根右对齐到触发按钮，不受二级影响 */}
+          <div className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
             <div ref={scrollRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
               {builtin.length === 0 && groups.length === 0 && !serverUser ? (
                 <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noProvider")}</div>
@@ -214,7 +225,8 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
               builtin={showBuiltin ? builtin : undefined}
             />
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
