@@ -606,6 +606,15 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "任务不存在", http.StatusNotFound)
 		return
 	}
+	// 同一任务同时只允许一轮在跑：桌面端与手机可能各自发起，
+	// 并发 Execute 同一个 Agent 会把上下文和工具状态搅在一起。
+	// 必须抢在任何响应写入与 a.Prepare/a.SetApprove 之前：那些都会改动共享 Agent 状态，
+	// 而且一旦 send() 写过响应体，状态码就锁死成 200，后面再 WriteHeader(409) 无效。
+	if _, busy := s.runningTasks.LoadOrStore(t.ID, struct{}{}); busy {
+		writeErr(w, "该任务正在另一端运行中，请等它结束", http.StatusConflict)
+		return
+	}
+	defer s.runningTasks.Delete(t.ID)
 	// /技能名 展开
 	if expanded, ok := s.opts.Extras.ExpandSlash(s.cwdFor(t), text); ok {
 		text = expanded
@@ -695,10 +704,25 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	_ = rollback
 	errSent := false     // Execute 内部对失败轮已 emit EventError（带 round）；外层不得重复发送
 	var lastCk time.Time // 进行中任务的检查点节流：至少间隔 3s 落盘一次
+	// checkpoint 节流落盘 + 广播：让桌面端与手机等其它已连接的客户端实时跟上进度
+	// （它们收到信号后按服务端快照重建视图）。发起方自己正在流式，
+	// 前端见到 streaming 标记会跳过重建，不会被覆盖闪烁。
+	// 纯文本长回复也要落盘，否则不经过工具调用时要等整轮结束才可见。
+	const ckInterval = 3 * time.Second
+	checkpoint := func() {
+		if time.Since(lastCk) < ckInterval {
+			return
+		}
+		lastCk = time.Now()
+		t.Messages = a.History()
+		_ = s.store.SaveTask(t)
+		s.hub.broadcast()
+	}
 	runErr := a.Execute(r.Context(), func(ev agent.Event) {
 		switch ev.Type {
 		case agent.EventText:
 			send(map[string]any{"type": "text", "text": ev.Text, "round": ev.Round})
+			checkpoint()
 		case agent.EventReasoning:
 			send(map[string]any{"type": "thinking", "text": ev.Text, "round": ev.Round})
 		case agent.EventToolStart:
@@ -729,12 +753,8 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 				"type": "tool_end", "round": ev.Round, "id": ev.Tool.ID,
 				"name": ev.Tool.Name, "is_error": ev.IsError,
 			})
-			// 检查点落盘：任务运行中，其他实例（TUI /tasks、另一网页版）也能看到消息进度
-			if time.Since(lastCk) >= 3*time.Second {
-				lastCk = time.Now()
-				t.Messages = a.History()
-				_ = s.store.SaveTask(t)
-			}
+			// 检查点落盘 + 广播：其它客户端（桌面 ↔ 手机）据此实时补齐进度
+			checkpoint()
 		case agent.EventApproval:
 			send(map[string]any{"type": "approval_pending", "round": ev.Round, "id": ev.Tool.ID})
 		case agent.EventQuestion:
@@ -777,9 +797,12 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		delete(s.agents, t.ID)
 		s.mu.Unlock()
 		send(map[string]any{"type": "task_removed"})
+		s.hub.broadcast()
 		return
 	}
 	_ = s.store.SaveTask(t)
+	// 整轮结束再广播一次：其它客户端把最后一段补齐并退出「处理中」状态
+	s.hub.broadcast()
 }
 
 // ---------- 设置 ----------
