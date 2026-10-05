@@ -162,9 +162,10 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/skills/{name}", s.handleSkillDelete)
 	mux.HandleFunc("GET /api/browser/next", s.handleBrowserNext)
 	mux.HandleFunc("POST /api/browser/result", s.handleBrowserResult)
-	// 移动端远程访问：开关与扫码信息（仅桌面端 127.0.0.1 服务可调用）
+	// 移动端远程访问：开关、扫码信息与换发 token（仅桌面端 127.0.0.1 服务可调用）
 	mux.HandleFunc("GET /api/mobile", s.handleMobileInfo)
 	mux.HandleFunc("POST /api/mobile", s.handleMobileToggle)
+	mux.HandleFunc("POST /api/mobile/rotate", s.handleMobileRotate)
 	return mux
 }
 

@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import QRCode from "qrcode"
-import { Loader2Icon, SmartphoneIcon } from "lucide-react"
+import { Loader2Icon, RefreshCwIcon, SmartphoneIcon } from "lucide-react"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { useI18n } from "@/lib/i18n"
@@ -12,9 +22,13 @@ import type { MobileInfo } from "@/types"
  * 左下角「移动端」入口：悬停弹出面板，上方是扫码 URL 的二维码，
  * 下方是「允许移动端连接此设备」开关。
  *
- * 二维码内容就是 urls[0]（形如 http://<内网IP>:8792/device/<设备token>）：
+ * 二维码内容就是 urls[0]（形如 http://<内网IP>:8792/device/<设备token>，
+ * 部署到线上后是 https://<域名>/device/<设备token>）：
  * 手机扫码直接进入工作台，不需要登录。token 首次校验后由内核换成
  * HttpOnly Cookie 并 302 到干净的 /，所以它不会长期留在手机地址栏里。
+ *
+ * token 本身不过期，但可以手动换发：面板右上角的刷新按钮会先弹确认，
+ * 因为换发后旧二维码和已扫码的设备会立刻失效，必须重新扫。
  */
 export function MobilePanel() {
   const { t } = useI18n()
@@ -23,6 +37,7 @@ export function MobilePanel() {
   const [qr, setQr] = useState("")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState("")
+  const [rotating, setRotating] = useState(false)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -104,6 +119,19 @@ export function MobilePanel() {
 
   const enabled = Boolean(info?.enabled)
 
+  // 换发 token：旧二维码与已扫码的设备立刻失效，所以必须先在对话框里确认
+  const rotate = async () => {
+    setBusy(true)
+    try {
+      setInfo(await api.mobileRotate())
+      setErr("")
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div
       ref={wrapRef}
@@ -133,7 +161,24 @@ export function MobilePanel() {
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
         >
-          <div className="mb-2 text-sm font-medium">{t("mobile.title")}</div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-sm font-medium">{t("mobile.title")}</span>
+            {/* 换发 token：图标常驻但置灰，鼠标移上去才显形，避免抢二维码的注意力 */}
+            <button
+              type="button"
+              title={t("mobile.refresh")}
+              aria-label={t("mobile.refresh")}
+              disabled={!enabled || busy}
+              onClick={() => setRotating(true)}
+              className={cn(
+                "text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer rounded-sm p-1 transition-colors",
+                "disabled:pointer-events-none disabled:opacity-30",
+                "focus-visible:ring-ring/50 focus-visible:ring-[3px] outline-none",
+              )}
+            >
+              <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
+            </button>
+          </div>
 
           {err ? (
             <p className="text-destructive py-6 text-center text-xs">{err}</p>
@@ -178,6 +223,22 @@ export function MobilePanel() {
           </div>
         </div>
       )}
+
+      {/* 换发确认框。独立于面板之外（portal），所以面板因鼠标移开而收起也不影响它 */}
+      <AlertDialog open={rotating} onOpenChange={setRotating}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("mobile.refreshTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("mobile.refreshDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("mobile.refreshCancel")}</AlertDialogCancel>
+            <AlertDialogAction disabled={busy} onClick={() => void rotate()}>
+              {t("mobile.refreshOk")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

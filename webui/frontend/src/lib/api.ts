@@ -246,6 +246,9 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
     }).then((r) => json<MobileInfo>(r)),
+
+  /** 换发设备 token：旧二维码与已扫码的设备立即失效（界面上要先二次确认） */
+  mobileRotate: () => fetch("/api/mobile/rotate", { method: "POST" }).then((r) => json<MobileInfo>(r)),
 }
 
 // streamChat 发起 SSE 聊天；onEvent 收到每条事件，返回时流已结束。abort 信号可中断。

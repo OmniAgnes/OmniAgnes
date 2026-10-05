@@ -58,6 +58,14 @@ copy omni.exe webui\desktop\bin\      # 3. 覆盖桌面端内核副本
   浏览器不允许给 SSE 带自定义头。
 - **开关状态持久化**：重启后自动恢复监听，token 不变、二维码继续有效。
   副作用是重启不会自动收回端口——要断开就手动关开关。
+- **token 不过期，但可手动换发**：`POST /api/mobile/rotate` 重新生成并落盘。
+  旧二维码、旧链接、按旧 token 换到的 Cookie 全部立刻失效——不需要维护黑名单，
+  `guard` 每个请求都拿当前 token 比对，已连着的手机下一次请求就被拒。
+  不可逆，所以 `MobilePanel` 里必须先弹 `AlertDialog` 二次确认。
+- **内网 IP / 线上域名**：二维码基址取 `mobile.json` 的 `public_url`，
+  为空则回退到 `lanIPs()` 列出的本机 IPv4（当前形态）。部署到线上时把
+  `public_url` 填成 `https://<域名>`，扫码 URL 自动变成 `https://<域名>/device/<token>`，
+  不必改代码。开关往返不换 token，只有换发接口换。
 - 端口 8792（与桌面端 8791 分开，避免动 localStorage 的 origin）；
   未开启时 guard 直接 404，不暴露端口存在。
 - **多端实时同步**：交互式聊天过程中必须 `hub.broadcast()`（原先只有计划任务广播，

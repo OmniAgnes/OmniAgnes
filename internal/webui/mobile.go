@@ -48,6 +48,9 @@ type mobileFile struct {
 	Token   string `json:"token"`
 	Port    int    `json:"port"`
 	Enabled bool   `json:"enabled"`
+	// PublicURL 是对外可达的基址，例如部署到线上后的 https://omni.example.com。
+	// 为空时回退到本机局域网 IPv4，也就是现在「内网 IP:端口」的形态。
+	PublicURL string `json:"public_url,omitempty"`
 }
 
 // mobile 是局域网监听器状态，零值不可用，须先 load。
@@ -56,6 +59,8 @@ type mobile struct {
 	token   string
 	port    int
 	enabled bool
+	// publicURL 非空时二维码用域名而不是内网 IP，见 mobileURLsLocked。
+	publicURL string
 	// persistEnabled 是上次退出时的开关状态，用于重启后自动恢复监听。
 	persistEnabled bool
 	srv            *http.Server
@@ -94,6 +99,7 @@ func newMobile() (*mobile, error) {
 	}
 	m.token = f.Token
 	m.port = f.Port
+	m.publicURL = strings.TrimRight(strings.TrimSpace(f.PublicURL), "/")
 	m.persistEnabled = f.Enabled
 	return m, nil
 }
@@ -170,7 +176,7 @@ func (s *server) mobileStart() (string, error) {
 	}
 	m.enabled = true
 	m.persistEnabled = true
-	_ = m.write(mobileFile{Token: m.token, Port: m.port, Enabled: true})
+	_ = m.write(m.mobileFileLocked())
 	// 已在持锁状态，直接调 Locked 版本（sync.Mutex 不可重入）
 	urls := s.mobileURLsLocked()
 	if len(urls) == 0 {
@@ -190,7 +196,27 @@ func (s *server) mobileStop() {
 	}
 	m.enabled = false
 	m.persistEnabled = false
-	_ = m.write(mobileFile{Token: m.token, Port: m.port, Enabled: false})
+	_ = m.write(m.mobileFileLocked())
+}
+
+// mobileFileLocked 把当前状态打包成可落盘的结构，调用方必须已持有 m.mu。
+func (m *mobile) mobileFileLocked() mobileFile {
+	return mobileFile{Token: m.token, Port: m.port, Enabled: m.enabled, PublicURL: m.publicURL}
+}
+
+// rotateToken 换发新 token。
+//
+// 旧 token 立刻作废，不需要维护黑名单：guard 每个请求都拿「当前 token」做比对，
+// 所以已经用旧 token 换到 Cookie 的手机也会在下一次请求时被拒，重新扫码即可。
+func (m *mobile) rotateToken() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tok, err := randomToken()
+	if err != nil {
+		return err
+	}
+	m.token = tok
+	return m.write(m.mobileFileLocked())
 }
 
 // mobileState 懒初始化，保证测试里直接构造 &server{} 也不会空指针。
@@ -208,9 +234,13 @@ func (s *server) mobileState() *mobile {
 	return s.mobile
 }
 
-// mobileURLsLocked 生成每张网卡一个扫码 URL：http://<内网IP>:<端口>/device/<token>。
+// mobileURLsLocked 生成扫码 URL。优先用配置的对外域名（部署到线上时），
+// 没配就退回每张网卡一个内网地址：http://<内网IP>:<端口>/device/<token>。
 // 调用方必须已持有 m.mu，且 m 已由 mobileState() 初始化过。
 func (s *server) mobileURLsLocked() []string {
+	if s.mobile.publicURL != "" {
+		return []string{s.mobile.publicURL + mobilePathPrefix + s.mobile.token}
+	}
 	ips := lanIPs()
 	urls := make([]string, 0, len(ips))
 	for _, ip := range ips {
@@ -285,6 +315,18 @@ func (s *server) handleMobileToggle(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		s.mobileStop()
+	}
+	writeJSON(w, s.mobileInfo())
+}
+
+// handleMobileRotate 换发设备 token。
+//
+// 这是一次安全操作：旧二维码、旧的扫码链接、以及按旧 token 换到的 Cookie
+// 会全部立刻失效，已经连着的手机必须重新扫新码。所以界面上要先二次确认再调这里。
+func (s *server) handleMobileRotate(w http.ResponseWriter, r *http.Request) {
+	if err := s.mobileState().rotateToken(); err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, s.mobileInfo())
 }
