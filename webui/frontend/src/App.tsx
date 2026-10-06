@@ -359,12 +359,21 @@ export default function App() {
           .then((resp) => {
             const msgs = resp.task.messages ?? []
             if (msgs.length === 0 || activeTaskIdRef.current !== id) return
+            const cur = runsRef.current[id]
+            // 拉快照的往返里本地可能又开了一轮（上一轮结束、队列刚出队）：
+            // 重建会把正在流式的实时进度整段换成旧快照，必须让位
+            if (cur?.streaming) return
             // 快照落后于本地视图（末条还是未获回复的提问，本地挂着错误横幅）：
             // 错误不落服务端快照，重建会把横幅抹掉、只剩光秃秃的提问（表现为错误一闪而过）。
             // 保留本地视图，直到快照真正前进（其他客户端续跑）或下次发送。
-            const lastLocal = r?.items.at(-1)
+            const lastLocal = cur?.items.at(-1)
             if (msgs[msgs.length - 1].role === "user" && lastLocal?.role === "assistant" && lastLocal.error) return
-            runsRef.current[id] = buildRun(resp.task)
+            const next = buildRun(resp.task)
+            // 排队消息是纯客户端状态、不在服务端快照里：重建 RunState 时必须原样搬过来。
+            // 轮次一结束 streaming 先置 false、要等 refreshTasks 回来才出队，这个空窗里落进的
+            // 广播（整轮结束那一次正踩着点来）会把队列整段抹掉——排队消息就「突然没了」。
+            next.queue = cur?.queue ?? []
+            runsRef.current[id] = next
             bump()
           })
           .catch(() => {})
@@ -1110,7 +1119,10 @@ export default function App() {
     if (activeTaskId) abortRefs.current[activeTaskId]?.abort()
   }
 
-  // 队列「发送」：中断当前轮，立即发这条
+  // 队列「发送」：中断当前轮，立即发这条。
+  // 插回队首而不是自己 launch：当前轮 abort 后要等它收尾 streaming 才置 false，那段里
+  // 兜底扫描可能已把队首发出去，这边直接 launch 只会拿到 "skip" 把本条悄悄丢掉；
+  // 统一走 flushQueue 出队，无论谁抢到头部，发的都是同一条。
   const dispatchQueued = async (qid: number) => {
     const tid = activeTaskId
     if (!tid) return
@@ -1118,7 +1130,7 @@ export default function App() {
     if (!r) return
     const item = r.queue.find((q) => q.id === qid)
     if (!item) return
-    r.queue = r.queue.filter((q) => q.id !== qid)
+    r.queue = [item, ...r.queue.filter((q) => q.id !== qid)]
     bump()
     abortRefs.current[tid]?.abort()
     const p = runPromises.current[tid]
@@ -1129,7 +1141,7 @@ export default function App() {
         /* 中断的错误忽略 */
       }
     }
-    await launch(tid, item.text, item.files)
+    void flushQueue(tid)
   }
 
   const editQueued = (qid: number) => {
