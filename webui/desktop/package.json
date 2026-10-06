@@ -1,7 +1,7 @@
 {
     "name": "omni-desktop",
     "private": true,
-    "version": "0.0.9",
+    "version": "1.0.5",
     "productName": "OmniAgens",
     "description": "OmniAgens desktop",
     "author": "OmniAgens",
