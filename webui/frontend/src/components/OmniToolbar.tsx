@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   CalendarClockIcon,
   ChevronRightIcon,
@@ -21,7 +21,7 @@ const THEMES = [
   "light",
   "violet",
   "blue",
-  "sky",
+  "lime",
   "emerald",
   "amber",
   "rose",
@@ -65,6 +65,27 @@ export function OmniToolbar({
   const [open, setOpen] = useState(false)
   const [sub, setSub] = useState<Sub>("none")
   const wrapRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef<Map<Sub, HTMLButtonElement>>(new Map())
+  // 子菜单 top（相对主菜单容器）：由下面的布局效果按点击行算出
+  const [subTop, setSubTop] = useState(0)
+
+  // 子菜单右飞且垂直居中锚定到点击行，再按视口钳位——原先固定「底对齐」，
+  // 语言这种短子菜单会坠到菜单最下方，看起来不跟着行走；钳位保证主题 8 项
+  // 在矮屏也不掉出视口（max-h + overflow 是极矮屏的兜底）。
+  useLayoutEffect(() => {
+    if (sub === "none") return
+    const menu = menuRef.current
+    const panel = panelRef.current
+    const row = rowRefs.current.get(sub)
+    if (!menu || !panel || !row) return
+    const menuRect = menu.getBoundingClientRect()
+    const rowCenter = row.offsetTop + row.offsetHeight / 2
+    let vpTop = menuRect.top + rowCenter - panel.offsetHeight / 2
+    vpTop = Math.max(8, Math.min(vpTop, window.innerHeight - panel.offsetHeight - 8))
+    setSubTop(vpTop - menuRect.top)
+  }, [sub])
 
   // 点其他地方关闭弹出菜单
   useEffect(() => {
@@ -109,12 +130,14 @@ export function OmniToolbar({
             + 间距 4 + 子菜单 w-36(144) = 352px，360px 窄屏也还剩 8px 余量。
             原来 w-52 + w-40 合计 372px，390px 只剩 6px，360px 直接被裁掉右边一截。 */}
         {open && (
-          <div className="bg-background text-foreground absolute bottom-full left-0 mb-2 w-48 rounded-lg border p-1 shadow-xl">
-            {/* 子菜单右飞，且改为「底对齐 + 向上长」：原来 top-0 是从主菜单顶端往下长，
-                8 个主题项有 248px，矮屏上最后两项直接掉出视口点不到。
-                悬浮球贴底，向上长才是永远有空间的方向；max-h + overflow 是极矮屏的兜底。 */}
+          <div ref={menuRef} className="bg-background text-foreground absolute bottom-full left-0 mb-2 w-48 rounded-lg border p-1 shadow-xl">
+            {/* 子菜单右飞，垂直位置见上方 useLayoutEffect */}
             {sub !== "none" && (
-              <div className="bg-background text-foreground absolute bottom-0 left-full z-10 ml-1 max-h-[70vh] w-36 overflow-y-auto rounded-lg border p-1 shadow-xl">
+              <div
+                ref={panelRef}
+                style={{ top: subTop }}
+                className="bg-background text-foreground absolute left-full z-10 ml-1 max-h-[70vh] w-36 overflow-y-auto rounded-lg border p-1 shadow-xl"
+              >
                 {sub === "lang" &&
                   LANGS.map((l) => (
                     <button
@@ -164,6 +187,10 @@ export function OmniToolbar({
                 <button
                   key={m.key}
                   type="button"
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(m.key, el)
+                    else rowRefs.current.delete(m.key)
+                  }}
                   onClick={() => setSub(sub === m.key ? "none" : m.key)}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent cursor-pointer"
                 >

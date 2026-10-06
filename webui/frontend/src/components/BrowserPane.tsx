@@ -19,6 +19,8 @@ interface BrowserOpMsg {
   id: string
   op: string
   args: Record<string, unknown>
+  /** 内核探测到目标是 JSON（裸 JSON 没有浏览意义）：照常执行但不自动展开面板 */
+  noAutoOpen?: boolean
 }
 
 interface BrowserPaneProps {
@@ -110,7 +112,8 @@ export function BrowserPane({ open, onOpenChange }: BrowserPaneProps) {
           const u = typeof op.args.url === "string" ? op.args.url : ""
           if (u) setUrl(u)
         }
-        if (op.op !== "close" && op.op !== "hide") openChangeRef.current(true)
+        // JSON 目标不自动展开：视图隐藏照常执行，AI 照样拿到结果，用户不被一屏裸 JSON 打扰
+        if (op.op !== "close" && op.op !== "hide" && !op.noAutoOpen) openChangeRef.current(true)
         await runOp(op)
         setBusy(false)
       }

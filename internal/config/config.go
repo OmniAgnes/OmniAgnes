@@ -166,7 +166,7 @@ type Config struct {
 	SystemPromptExtra string                     `json:"system_prompt_extra,omitempty"`
 	MaxHistoryTurns   int                        `json:"max_history_turns"`     // 上下文保留的最近用户提问轮数；0 用默认
 	Theme             string                     `json:"theme,omitempty"`       // dark | light | system
-	ThemeColor        string                     `json:"theme_color,omitempty"` // 主题配色：zinc/violet/blue/emerald/amber/rose
+	ThemeColor        string                     `json:"theme_color,omitempty"` // 主题配色：zinc/violet/blue/lime/emerald/amber/rose
 	MCPServers        map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 	DisabledSkills    []string                   `json:"disabled_skills,omitempty"` // 禁用的技能名，默认全部启用
 	ServerURL         string                     `json:"server_url,omitempty"`      // omni-server 后台地址（桌面端调用），缺省 http://127.0.0.1:9000
@@ -312,7 +312,7 @@ func Load(path string) (*Config, error) {
 		cfg.Theme = "light"
 	}
 	switch cfg.ThemeColor {
-	case "violet", "blue", "sky", "emerald", "amber", "rose":
+	case "violet", "blue", "lime", "emerald", "amber", "rose":
 	default:
 		cfg.ThemeColor = "zinc"
 	}

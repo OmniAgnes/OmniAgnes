@@ -159,14 +159,14 @@ body {
 /* ---- 主题配色：主色 + 侧栏底色 / 悬停面 / 选中态全面着色 ---- */
 .theme-violet { --t-h: 293; --t-c: 0.22; }
 .theme-blue { --t-h: 255; --t-c: 0.2; }
-.theme-sky { --t-h: 235; --t-c: 0.17; }
+.theme-lime { --t-h: 118; --t-c: 0.16; }
 .theme-emerald { --t-h: 162; --t-c: 0.14; }
 .theme-amber { --t-h: 75; --t-c: 0.16; }
 .theme-rose { --t-h: 17; --t-c: 0.2; }
 
 .theme-violet,
 .theme-blue,
-.theme-sky,
+.theme-lime,
 .theme-emerald,
 .theme-amber,
 .theme-rose {
@@ -195,7 +195,7 @@ body {
 }
 .dark.theme-violet,
 .dark.theme-blue,
-.dark.theme-sky,
+.dark.theme-lime,
 .dark.theme-emerald,
 .dark.theme-amber,
 .dark.theme-rose {

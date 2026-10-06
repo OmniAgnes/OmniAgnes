@@ -16,8 +16,8 @@ interface ModelPickerProps {
   serverUser?: ServerUser | null
 }
 
-/** 一级（供应商）面板宽度，供二级定位用 */
-const PANEL_W = 160 // w-40
+/** 一级（供应商）面板宽度，供二级初始定位用；二级实际位置挂载后按视口钳位 */
+const PANEL_W = 160 // w-40（窄屏 w-32）
 const PANEL_GAP = 6
 /** 一级面板最大高度 max-h-72，用于翻向判断 */
 const PANEL_H = 288
@@ -28,6 +28,10 @@ const BUILTIN_PREFIX = "server:"
 
 /** 触发按钮的视口坐标（弹层 portal 到 body 后按它做 fixed 定位） */
 type Rect = { left: number; top: number; right: number; bottom: number }
+
+/** 窄屏判定与 App.tsx 的 WIDE 同一阈值：<48rem（手机）两级面板收窄，
+ * 一级+间隙+二级 ≈ 310px，主流手机竖屏（≥360px）放得下 */
+const NARROW = "(width < 48rem)"
 
 /** 倍率展示：限免（现倍率 0）且原倍率不同 → 原倍率中划线 + 现倍率；否则只显示现倍率 */
 function rateLabel(m: ServerModel) {
@@ -83,6 +87,17 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
       alive = false
     }
   }, [serverUser])
+
+  // 窄屏（手机）：一级/二级面板收窄
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(NARROW).matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW)
+    const onChange = () => setNarrow(mq.matches)
+    mq.addEventListener("change", onChange)
+    return () => mq.removeEventListener("change", onChange)
+  }, [])
 
   const [open, setOpen] = useState(false)
   // 已点击展开的供应商——空串 = 二级未展开。悬停不改变它（只在已展开时允许悬停切换）
@@ -200,7 +215,12 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
           }}
         >
           {/* 一级面板：在文档流里，随外层 fixed 根右对齐到触发按钮，不受二级影响 */}
-          <div className="bg-popover text-popover-foreground relative z-10 w-40 overflow-hidden rounded-md border shadow-md">
+          <div
+            className={cn(
+              "bg-popover text-popover-foreground relative z-10 overflow-hidden rounded-md border shadow-md",
+              narrow ? "w-32" : "w-40",
+            )}
+          >
             <div ref={scrollRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
               {builtin.length === 0 && groups.length === 0 && !serverUser ? (
                 <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noProvider")}</div>
@@ -223,6 +243,7 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
               pick={pick}
               anchor={rowRefs.current.get(hoverProvider)}
               builtin={showBuiltin ? builtin : undefined}
+              narrow={narrow}
             />
           )}
         </div>,
@@ -233,13 +254,15 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
 }
 
 /** 二级：模型飞层，绝对定位在一级面板左侧，垂直方向锚定到一级当前选中行。
- * builtin 非空时行尾显示倍率：限免且原倍率不同 → 原倍率中划线 + 现倍率。 */
+ * builtin 非空时行尾显示倍率：限免且原倍率不同 → 原倍率中划线 + 现倍率。
+ * 窄屏时面板收窄（w-44），横向定位随之用收窄后的一级宽度。 */
 function Flyout({
   models,
   model,
   pick,
   anchor,
   builtin,
+  narrow,
 }: {
   models: string[]
   model: string
@@ -247,12 +270,15 @@ function Flyout({
   /** 一级选中行按钮：二级 top 相对它（offsetTop 天然以一级面板为基准，无需再减 scrollTop） */
   anchor?: HTMLButtonElement | null
   builtin?: ServerModel[]
+  narrow: boolean
 }) {
   const { t } = useI18n()
   const listRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
   // 默认顶对齐；有锚点时中心对齐
   const [top, setTop] = useState(0)
+  // 二级右缘相对弹层根的偏移；挂载后按一级面板实际位置算
+  const [right, setRight] = useState(PANEL_W + PANEL_GAP)
   const byKey = useMemo(() => new Map((builtin ?? []).map((b) => [b.key, b])), [builtin])
 
   // 当前模型滚到可视区（provider 下模型多时默认定位到选中项）
@@ -267,8 +293,9 @@ function Flyout({
     }
   }, [models, model])
 
-  // 垂直定位：二级中心对齐一级选中行；按视口 clamp（不能贴死一级面板——
-  // 面板比二级矮时按面板 clamp 会把二级压回顶部，用户实测踩过）
+  // 定位：垂直二级中心对齐一级选中行（不能贴死一级面板——面板比二级矮时
+  // 按面板 clamp 会把二级压回顶部，用户实测踩过）；横向默认贴一级左侧留 6px，
+  // 窄屏放不下时钳进视口（此时允许盖住一级面板，二级 z 层在一级之上）
   useLayoutEffect(() => {
     const list = listRef.current
     const fly = list?.parentElement // 二级面板根（absolute，offsetParent = 外层弹层容器）
@@ -277,22 +304,29 @@ function Flyout({
       setTop(0)
       return
     }
+    const op = fly.offsetParent as HTMLElement | null
+    if (!op) return
+    const opRect = op.getBoundingClientRect()
+    // 横向：默认右缘 = 根左缘 - 6（根内容宽即一级面板宽）；左缘出视口则右移钳位
+    let rightVp = opRect.left - PANEL_GAP
+    if (rightVp - fly.offsetWidth < 8) rightVp = Math.min(8 + fly.offsetWidth, window.innerWidth - 8)
+    setRight(opRect.right - rightVp)
     const h = list.offsetHeight
     const a = anchor.getBoundingClientRect()
     // 期望：选中行中心 = 二级中心
     let vpTop = a.top + a.height / 2 - h / 2
     // 视口内留 8px 边距
     vpTop = Math.max(8, Math.min(vpTop, window.innerHeight - h - 8))
-    // 视口坐标 → 相对 offsetParent（外层弹层容器，可能与一级面板同顶，dropUp 时不同）
-    const op = fly.offsetParent as HTMLElement | null
-    const opTop = op ? op.getBoundingClientRect().top : 0
-    setTop(vpTop - opTop)
+    setTop(vpTop - opRect.top)
   }, [anchor, models])
 
   return (
     <div
-      className="bg-popover text-popover-foreground absolute z-0 w-56 rounded-md border shadow-md"
-      style={{ right: PANEL_W + PANEL_GAP, top }}
+      className={cn(
+        "bg-popover text-popover-foreground absolute z-20 rounded-md border shadow-md",
+        narrow ? "w-44" : "w-56",
+      )}
+      style={{ right, top }}
     >
       <div ref={listRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
         {models.length === 0 ? (

@@ -153,9 +153,11 @@ export function MobilePanel() {
         title={t("mobile.title")}
         aria-label={t("mobile.title")}
         aria-expanded={open}
-        className={cn(enabled && "text-primary")}
+        // 与右侧设置图标同款中性灰，不加任何选中/状态色；开关状态由悬停面板表达
+        className="text-muted-foreground hover:text-foreground"
       >
-        <SmartphoneIcon />
+        {/* 全局 svg 规则压到 16px，手机图形本身偏窄更显小，单独放大一档 */}
+        <SmartphoneIcon className="size-5" />
       </Button>
 
       {open && (

@@ -1,10 +1,11 @@
 // 内置浏览器桥：desktop 壳（Electron）里的 WebContentsView 由内核的 browser 工具驱动。
 //
 // 通道设计与 approval/question 对称（内核→前端有 SSE，前端→内核有 REST）：
-//   · browser 工具 Execute → 造一个 op 入队，阻塞等结果（最长 3 分钟）；
-//   · 前端 BrowserPane 长轮询 GET /api/browser/next 取走 op，经 preload IPC
-//     交给 Electron 主进程执行（CDP 级输入事件 / executeJavaScript）；
-//   · 执行完 POST /api/browser/result 回填，工具拿到页面文本/元素树返回给模型。
+//
+//	· browser 工具 Execute → 造一个 op 入队，阻塞等结果（最长 3 分钟）；
+//	· 前端 BrowserPane 长轮询 GET /api/browser/next 取走 op，经 preload IPC
+//	  交给 Electron 主进程执行（CDP 级输入事件 / executeJavaScript）；
+//	· 执行完 POST /api/browser/result 回填，工具拿到页面文本/元素树返回给模型。
 //
 // 长轮询连接本身就是「桌面壳在线」的心跳：纯浏览器（非 Electron）没有 poller，
 // 工具会快速失败并提示，不会让模型干等。
@@ -13,7 +14,11 @@ package webui
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,11 +27,12 @@ import (
 
 // browserOp 是一次待前端执行的浏览器操作。
 type browserOp struct {
-	ID     string         `json:"id"`
-	Op     string         `json:"op"`
-	Args   map[string]any `json:"args"`
-	ch     chan browserRes
-	issued time.Time // 发给前端的时间（零值=还在队列）
+	ID         string         `json:"id"`
+	Op         string         `json:"op"`
+	Args       map[string]any `json:"args"`
+	NoAutoOpen bool           `json:"noAutoOpen,omitempty"` // 目标是 JSON：前端照常执行但不自动展开面板
+	ch         chan browserRes
+	issued     time.Time // 发给前端的时间（零值=还在队列）
 }
 
 // browserRes 是前端回传的执行结果。
@@ -72,6 +78,16 @@ func (b *BrowserBridge) dispatch(ctx context.Context, op string, args map[string
 		Args: args,
 		ch:   make(chan browserRes, 1),
 	}
+	b.mu.Unlock()
+	// open/navigate 先探一下目标是不是 JSON：裸 JSON 没有浏览意义，自动展开
+	// 只会弹出一屏原始数据。标记后前端照常（隐藏）执行，面板保持收起。
+	// 放在锁外——探测是网络 IO，最坏几秒，不能堵住其他 op 的入队。
+	if op == "open" || op == "navigate" {
+		if u, _ := args["url"].(string); u != "" && probeJSON(ctx, u) {
+			o.NoAutoOpen = true
+		}
+	}
+	b.mu.Lock()
 	b.pending = append(b.pending, o)
 	b.mu.Unlock()
 	select {
@@ -165,9 +181,10 @@ func (s *server) handleBrowserNext(w http.ResponseWriter, r *http.Request) {
 	// 顺带清理超期未回填的 op（前端崩溃/关页防泄漏）
 	b.gcStale()
 	writeJSON(w, map[string]any{"op": map[string]any{
-		"id":   got.ID,
-		"op":   got.Op,
-		"args": got.Args,
+		"id":         got.ID,
+		"op":         got.Op,
+		"args":       got.Args,
+		"noAutoOpen": got.NoAutoOpen,
 	}})
 }
 
@@ -216,6 +233,41 @@ func (s *server) handleBrowserResult(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// probeJSON 探测 URL 是否返回 JSON：路径以 .json 结尾，或响应 Content-Type 含
+// json（application/json、application/*+json 都命中）。探测失败（超时/网络错误/
+// 非 2xx 的 HEAD）一律按非 JSON 处理——宁可多弹一次面板，不能让工具卡住或失灵。
+func probeJSON(ctx context.Context, rawURL string) bool {
+	if u, err := url.Parse(rawURL); err == nil && strings.EqualFold(path.Ext(u.Path), ".json") {
+		return true
+	}
+	// 相对写法（如 example.com/x）与主进程 runBrowserOp 的补齐规则一致
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "https://" + rawURL
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		ct := resp.Header.Get("Content-Type")
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
+		resp.Body.Close()
+		if strings.Contains(ct, "json") {
+			return true
+		}
+		if resp.StatusCode < 400 || method == http.MethodGet {
+			return false // 拿得到正常响应就信它；GET 是最后一次尝试
+		}
+		// HEAD 被拒（4xx/5xx）退化 GET 再试一次
+	}
+	return false
 }
 
 // browserTool 构造 browser 内置工具。op 语义由桌面端实现，这里只做参数校验与转发。

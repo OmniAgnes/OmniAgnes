@@ -369,7 +369,7 @@ export default function App() {
   useEffect(() => {
     const color = state?.theme_color ?? "zinc"
     const root = document.documentElement
-    for (const c of ["zinc", "violet", "blue", "sky", "emerald", "amber", "rose"]) {
+    for (const c of ["zinc", "violet", "blue", "lime", "emerald", "amber", "rose"]) {
       root.classList.toggle(`theme-${c}`, c === color)
     }
   }, [state?.theme_color])
@@ -1167,7 +1167,9 @@ export default function App() {
   )
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden pr-[env(safe-area-inset-right)]">
+    // h-dvh 而非 h-screen：手机浏览器地址栏收起时 100vh 大于可见区，整页能滚、
+    // 输入框底部被顶出屏幕；dvh 跟随实际可见高度（桌面端两者相等，无差别）。
+    <div className="relative flex h-dvh flex-col overflow-hidden pr-[env(safe-area-inset-right)]">
       {/* 凭证失效整屏接管：换发 token 后旧设备的所有请求都是 401，
           与其让用户对着空列表猜，不如明确让他回电脑端重新扫码。 */}
       {unauth && (

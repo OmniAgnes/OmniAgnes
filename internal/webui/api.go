@@ -844,7 +844,7 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.ThemeColor {
 	case "":
-	case "zinc", "violet", "blue", "sky", "emerald", "amber", "rose":
+	case "zinc", "violet", "blue", "lime", "emerald", "amber", "rose":
 		s.cfg.ThemeColor = req.ThemeColor
 		changed = true
 	default:

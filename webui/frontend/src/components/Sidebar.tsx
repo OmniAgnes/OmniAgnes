@@ -182,8 +182,8 @@ export function Sidebar(props: SidebarProps) {
         <div className="bg-sidebar-border/50 mx-3 mb-2 flex rounded-md p-0.5">
           {(
             [
-              { id: "projects", key: "s.tabProjects", count: projects.length, icon: FolderIcon },
-              { id: "tasks", key: "s.tabTasks", count: tasks.length, icon: MessageSquareIcon },
+              { id: "projects", key: "s.tabProjects", icon: FolderIcon },
+              { id: "tasks", key: "s.tabTasks", icon: MessageSquareIcon },
             ] as const
           ).map((ti) => (
             <button
@@ -203,7 +203,6 @@ export function Sidebar(props: SidebarProps) {
             >
               <ti.icon className="size-3.5" />
               {t(ti.key)}
-              <span className="text-muted-foreground text-[11px]">{ti.count}</span>
             </button>
           ))}
         </div>
@@ -266,8 +265,16 @@ export function Sidebar(props: SidebarProps) {
         {/* 底部：移动端入口（仅桌面端）+ 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
         <div className="flex items-center justify-end gap-0.5 px-3 py-1.5">
           {isDesktop && <MobilePanel />}
-          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} title={t("s.settings")}>
-            <SettingsIcon />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onOpenSettings}
+            title={t("s.settings")}
+            // 中性灰：与左侧手机图标（品牌色）区分，通用工具按钮保持低调
+            className="text-muted-foreground hover:text-foreground"
+          >
+            {/* 与左侧手机图标同级放大（size-5），两个图标观感一致 */}
+            <SettingsIcon className="size-5" />
           </Button>
         </div>
       </aside>
