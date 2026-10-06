@@ -244,6 +244,23 @@ export default function App() {
     setSettingsSection("model")
     setSettingsOpen(true)
   }
+
+  // 输入框历史：Ctrl+Z 回退到之前发送过的消息、Ctrl(+Shift)+Z / Ctrl+Y 前进（用户要求）
+  const sentHist = useRef<string[]>([])
+  const [histBack, setHistBack] = useState(0) // 回退步数；0 = 停在最新
+  const onInputUndo = () => {
+    if (histBack >= sentHist.current.length) return
+    const next = histBack + 1
+    setHistBack(next)
+    setDraftSeed((s) => ({ text: sentHist.current[sentHist.current.length - next], seq: s.seq + 1 }))
+  }
+  const onInputRedo = () => {
+    if (histBack === 0) return
+    const next = histBack - 1
+    setHistBack(next)
+    const text = next === 0 ? "" : sentHist.current[sentHist.current.length - next]
+    setDraftSeed((s) => ({ text, seq: s.seq + 1 }))
+  }
   const openSettings = () => {
     setSettingsSection(undefined)
     setSettingsOpen(true)
@@ -292,7 +309,7 @@ export default function App() {
   // 后台事件随时 patch 后 bump()。
   const runsRef = useRef<Record<string, RunState>>({})
   const abortRefs = useRef<Record<string, AbortController>>({})
-  const runPromises = useRef<Record<string, Promise<void>>>({})
+  const runPromises = useRef<Record<string, Promise<unknown>>>({})
   const [, setRunsV] = useState(0)
   const bump = useCallback(() => setRunsV((v) => v + 1), [])
 
@@ -864,15 +881,21 @@ export default function App() {
   // 真正发起一轮问答。同一任务串行（streaming 期间不并发），不同任务并行。
   // attachments = 已上传附件的绝对路径（随文本一起发给模型），attNames = 展示用文件名。
   // replaceLast：AI 还没回复上一条时，重发直接替换最后一对 user+assistant（在当前行上改），不追加新行
+  // 返回值：本轮是否真正开跑（"ok" 开跑 / "busy" 另一端正跑 409 未开跑 / "skip" 未满足发送条件），
+  // flushQueue 据此决定排队消息放回重试还是丢掉。
   const doSend = async (
     tid: string,
     text: string,
     attachments: string[] = [],
     attNames?: string[],
     replaceLast = false,
-  ) => {
+  ): Promise<"ok" | "busy" | "skip"> => {
     const r = runsRef.current[tid]
-    if (!r || r.streaming) return
+    if (!r || r.streaming) return "skip"
+    let res: "ok" | "busy" = "ok"
+    // 输入框历史：每次实际发送都记账，供 Ctrl+Z 回退
+    if (text) sentHist.current.push(text)
+    setHistBack(0)
     const ac = new AbortController()
     abortRefs.current[tid] = ac
     const baseAtSend = r.roundBase
@@ -921,10 +944,17 @@ export default function App() {
     } catch (e) {
       if (!ac.signal.aborted) {
         const msg = e instanceof Error ? e.message : String(e)
-        const items = [...r.items]
-        const cur = items[items.length - 1]
-        if (cur && cur.role === "assistant") cur.error = msg
-        r.items = items
+        // 另一端正跑（409）：本轮没真正开起来，不报错也不进历史——由 flushQueue 保留队列等空闲重试
+        if (msg.includes("另一端运行中")) {
+          res = "busy"
+          sentHist.current = sentHist.current.slice(0, -1)
+          setHistBack(0)
+        } else {
+          const items = [...r.items]
+          const cur = items[items.length - 1]
+          if (cur && cur.role === "assistant") cur.error = msg
+          r.items = items
+        }
       }
     } finally {
       delete abortRefs.current[tid]
@@ -965,13 +995,14 @@ export default function App() {
       await refreshTasks()
       // 侧栏项目按"最后对话时间"排序，对话后也要重排
       void refreshProjects()
-      // 正常跑完（非中断）→ 自动发下一条排队消息；手动停止/中断不发
-      if (!ac.signal.aborted) void flushQueue(tid)
+      // 正常跑完（非中断）→ 自动发下一条排队消息；手动停止/中断不发；busy 未开跑由 flushQueue 兜底
+      if (!ac.signal.aborted && res === "ok") void flushQueue(tid)
     }
+    return res
   }
 
   // 发送入口：有附件先上传（拿到落盘路径），再发起一轮问答。
-  const launch = (tid: string, text: string, files?: File[], replaceLast = false): Promise<void> => {
+  const launch = (tid: string, text: string, files?: File[], replaceLast = false): Promise<"ok" | "busy" | "skip"> => {
     const p = (async () => {
       let paths: string[] = []
       let names: string[] = []
@@ -982,7 +1013,7 @@ export default function App() {
           names = up.files.map((f) => f.name)
         } catch (e) {
           fail(e)
-          return
+          return "skip"
         }
       }
       return doSend(tid, text, paths, names, replaceLast)
@@ -994,15 +1025,46 @@ export default function App() {
     return p
   }
 
-  // 队列头自动出队（当前轮正常结束后调用）
+  // 队列头自动出队（当前轮正常结束后调用 / 兜底扫描触发）。
+  // 同一任务同一时刻只允许一条在队列上工作（互斥锁），杜绝并发双发；
+  // 本轮没真正开跑（另一端正跑 409 等）时放回队首，由兜底扫描在任务空闲后自动补发——
+  // 排队消息绝不弄丢、不静默消失，也绝不紧循环。
+  const flushing = useRef<Set<string>>(new Set())
   const flushQueue = async (tid: string) => {
+    if (flushing.current.has(tid)) return
     const r = runsRef.current[tid]
     if (!r || r.streaming || r.queue.length === 0) return
-    const [head, ...rest] = r.queue
-    r.queue = rest
-    bump()
-    await launch(tid, head.text, head.files)
+    flushing.current.add(tid)
+    try {
+      const [head, ...rest] = r.queue
+      r.queue = rest
+      bump()
+      const res = await launch(tid, head.text, head.files)
+      if (res !== "ok") {
+        const rr = runsRef.current[tid]
+        if (rr) {
+          rr.queue = [head, ...rr.queue]
+          bump()
+        }
+      }
+    } finally {
+      flushing.current.delete(tid)
+    }
   }
+
+  // 队列兜底扫描：无论发起的 flush 链是否被瞬时异常打乱，这里有排队的任务且空闲时
+  // 就尝试出队发送（唯一的重试时钟，避免多个定时器紧循环）。保证排队消息最终一定发出
+  useEffect(() => {
+    const t = setInterval(() => {
+      for (const tid of Object.keys(runsRef.current)) {
+        const r = runsRef.current[tid]
+        if (r && !r.streaming && r.queue.length > 0) void flushQueue(tid)
+      }
+    }, 2000)
+    return () => clearInterval(t)
+    // flushQueue 用 ref 读实时状态且不在闭包里变，只挂一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 输入框「发送」入口：空闲直接发；处理中（或已有排队）进队列。附件随消息一起发。
   const submitText = (text: string, files?: File[]) => {
@@ -1043,6 +1105,7 @@ export default function App() {
     }
   }
 
+  // 停止只停当前这一轮对话；排队消息仍在任务空闲后继续逐个自动处理
   const stop = () => {
     if (activeTaskId) abortRefs.current[activeTaskId]?.abort()
   }
@@ -1261,6 +1324,8 @@ export default function App() {
           onToggleBrowser={() => setBrowserOpen((v) => !v)}
           serverUser={serverUser}
           onConfigureModels={openModels}
+          onInputUndo={onInputUndo}
+          onInputRedo={onInputRedo}
         />
         )}
         {/* 内置浏览器面板：仅桌面端（Electron 壳有 WebContentsView 与操作桥） */}

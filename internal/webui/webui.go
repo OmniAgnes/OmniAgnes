@@ -120,6 +120,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("GET /api/server-url", s.handleServerURL)
 	mux.HandleFunc("GET /api/models", s.handleModels)
+	mux.HandleFunc("POST /api/test-model", s.handleTestModel)
 	mux.HandleFunc("GET /api/providers", s.handleProvidersGet)
 	mux.HandleFunc("PUT /api/providers", s.handleProvidersPut)
 	mux.HandleFunc("GET /api/projects", s.handleProjectsList)

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   BlocksIcon,
   BrainIcon,
@@ -9,6 +10,7 @@ import {
   CpuIcon,
   ChevronRightIcon,
   FolderOpenIcon,
+  Loader2Icon,
   LogOutIcon,
   PencilIcon,
   PlusIcon,
@@ -16,6 +18,7 @@ import {
   SunMoonIcon,
   Trash2Icon,
   UserIcon,
+  WifiIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -1403,6 +1406,27 @@ function ModelOptionsRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
 
+  // 连通性测试：点图标发一次极短探测，结果用 toast 提示
+  const [testing, setTesting] = useState(false)
+  const [testToast, setTestToast] = useState<{ msg: string; ok: boolean } | null>(null)
+  const runTest = async () => {
+    if (testing) return
+    setTesting(true)
+    let msg = "连接失败"
+    let ok = false
+    try {
+      const r = await api.testModel(name)
+      ok = r.ok
+      msg = r.ok ? r.error || "连接正常 ✔" : r.error || "连接失败"
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e)
+    } finally {
+      setTesting(false)
+      setTestToast({ msg, ok })
+      setTimeout(() => setTestToast(null), 3500)
+    }
+  }
+
   // 已配置项摘要，让用户不展开也能看到差异
   const summary: string[] = []
   if (options.context_window) summary.push(t("se.sumContext", { n: options.context_window }))
@@ -1463,6 +1487,15 @@ function ModelOptionsRow({
               variant="ghost"
               size="icon-sm"
               className="text-muted-foreground"
+              onClick={runTest}
+              title="测试该模型连通性"
+            >
+              {testing ? <Loader2Icon className="size-4 animate-spin" /> : <WifiIcon className="size-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
               onClick={() => {
                 setDraft(name)
                 setEditing(true)
@@ -1480,6 +1513,18 @@ function ModelOptionsRow({
             >
               <Trash2Icon />
             </Button>
+            {/* 连通性结果 toast：portal 到 body 覆盖在弹窗之上 */}
+            {testToast && createPortal(
+              <div
+                className={cn(
+                  "text-foreground fixed bottom-6 left-1/2 z-[200] -translate-x-1/2 max-w-[80vw] rounded-md border px-3.5 py-2.5 text-sm shadow-md",
+                  testToast.ok ? "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950" : "border-destructive/40 bg-destructive/10",
+                )}
+              >
+                {testToast.msg}
+              </div>,
+              document.body,
+            )}
           </div>
         )}
       </div>

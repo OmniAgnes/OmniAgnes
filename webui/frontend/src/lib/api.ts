@@ -54,6 +54,14 @@ export const api = {
       }>(r),
     ),
 
+  /** 测试某模型连通性：后端发一次极短探测，返回通/不通及原因 */
+  testModel: (model: string) =>
+    fetch("/api/test-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    }).then((r) => json<{ ok: boolean; error?: string }>(r)),
+
   providers: () => fetch("/api/providers").then((r) => json<{ providers: ProviderConfig[] }>(r)),
 
   saveProviders: (providers: ProviderConfig[]) =>

@@ -91,6 +91,49 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"models": out, "current": s.cfg.Provider})
 }
 
+// handleTestModel 连通性测试：对指定模型发一次极短的探测调用，限时 15s。
+// 连通且能回话 = 通；超时/报错/配置缺失 = 不通，返回原因。
+func (s *server) handleTestModel(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Model string `json:"model"`
+	}](r)
+	if err != nil || req.Model == "" {
+		writeErr(w, "请求体需为 {\"model\": ...}", http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(req.Model, config.BuiltinModelPrefix) {
+		writeJSON(w, map[string]any{"ok": false, "error": "内置模型由后台网关提供，请到后台验证"})
+		return
+	}
+	p := s.cfg.ProviderForModel(req.Model)
+	if p == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "未找到该模型对应的供应商配置"})
+		return
+	}
+	prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey()})
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "创建通道失败: " + err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	resp, err := prov.Chat(ctx, llm.ChatRequest{
+		Model:     req.Model,
+		Messages:  []llm.Message{llm.NewTextMessage(llm.RoleUser, "ping")},
+		MaxTokens: 1,
+	}, nil)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if len(resp.ToolCalls) == 0 && resp.Content == "" {
+		// 通道通但模型没回话（坏模型/网关返回空）：仍算连上，但如实提示
+		writeJSON(w, map[string]any{"ok": true, "error": "连接正常，但模型未返回内容（如持续如此请换模型）"})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
 // ---------- 供应商 ----------
 
 func (s *server) handleProvidersGet(w http.ResponseWriter, r *http.Request) {

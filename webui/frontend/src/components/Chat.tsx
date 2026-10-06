@@ -132,6 +132,9 @@ interface ChatProps {
   onAnswer: (id: string, answer: string) => void
   onModeChange: (mode: "build" | "plan") => void
   onModelChange: (model: string) => void
+  /** 输入框历史回退/前进（Ctrl+Z 后退 / Ctrl+Y 前进） */
+  onInputUndo?: () => void
+  onInputRedo?: () => void
   onOpenSidebar: () => void
   /** 内置浏览器面板是否展开（仅桌面端有该入口） */
   browserOpen?: boolean
@@ -169,6 +172,8 @@ export function Chat({
   onAnswer,
   onModeChange,
   onModelChange,
+  onInputUndo,
+  onInputRedo,
   onOpenSidebar,
   browserOpen,
   onToggleBrowser,
@@ -213,6 +218,18 @@ export function Chat({
     stickRef.current = near
     setNotBottom((prev) => (prev === !near ? prev : !near))
   }
+
+  // 用户消息导航条（仅大屏）：每道横线对应一条用户提问；悬停时浮出该条内容预览卡
+  const [msgPreview, setMsgPreview] = useState<{ mid: number; text: string; top: number; left: number } | null>(null)
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  // 预览卡收起定时器：离开导航条/卡片后只留这片刻过桥时间（够鼠标从线上挪到卡片上），
+  // 不是奔着卡片去就立刻收，不挂着碍眼
+  const PREVIEW_HIDE_MS = 150
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (previewTimer.current) clearTimeout(previewTimer.current)
+  }, [])
+  const userMsgs = useMemo(() => items.filter((it) => it.role === "user" && it.text), [items])
 
   // 滚到底（切任务、首次渲染、点「回到底部」按钮）时立刻归位
   const jumpToBottom = () => {
@@ -264,6 +281,8 @@ export function Chat({
     setDraft("")
     const files = pendingFiles
     setPendingFiles([])
+    // 发送即归底：哪怕之前手动上滚看过历史，新提问发出后也要跟着最新回复走
+    jumpToBottom()
     // 处理中发送不再阻止：App 会把它放进队列（输入框上方可见）
     onSend(text, files.length > 0 ? files : undefined)
   }
@@ -372,7 +391,7 @@ export function Chat({
         }
       }
       return (
-        <div key={b.user?.id ?? `blk-${bi}`} className="flex flex-col gap-4">
+        <div key={b.user?.id ?? `blk-${bi}`} data-mid={b.user?.id} className="flex flex-col gap-4">
           {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} onEdit={onEditMessage} />}
 
           {/* 本次提问的产出：工具折叠组 + 各轮回复。两者同属一组内容，贴紧排（gap-1.5），
@@ -454,7 +473,7 @@ export function Chat({
           上滚离开底部时右下角浮现「回到底部」按钮 */}
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={onScroll} className="omni-scroll h-full overflow-y-auto">
-          <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-6 md:px-6">
+          <div className="mx-auto flex max-w-3xl lg:max-w-4xl xl:max-w-5xl flex-col gap-4 px-3 py-6 md:px-6">
             {items.length === 0 && emptyHint}
             {renderItems()}
 
@@ -462,6 +481,61 @@ export function Chat({
             {showThinking && <ProcessingIndicator retry={retry} />}
           </div>
         </div>
+        {/* 用户消息导航条（仅 2xl 及以上大屏）：一道横线对应一条用户提问，上下扫过时按距离
+            依次变长（Dock 放大效果），悬停浮出该条提问的内容预览卡，点击平滑跳到那一轮对话 */}
+        {userMsgs.length > 1 && (
+          <div
+            className="absolute left-1.5 top-1/2 hidden max-h-[70vh] -translate-y-1/2 flex-col items-start overflow-hidden 2xl:flex"
+            onMouseLeave={() => {
+              // 离开导航条：鼠标不是奔着预览卡去就立刻收（留 PREVIEW_HIDE_MS 够它过桥上卡）
+              setHoverIdx(null)
+              if (previewTimer.current) clearTimeout(previewTimer.current)
+              previewTimer.current = setTimeout(() => setMsgPreview(null), PREVIEW_HIDE_MS)
+            }}
+          >
+            {userMsgs.map((u, i) => {
+              // 只有悬停项上下各 2 道参与变长（0→24、1→20、2→16），更远的保持基准 12 不动
+              const dist = hoverIdx == null ? 3 : Math.min(3, Math.abs(i - hoverIdx))
+              return (
+                // 命中区撑满整条槽位（12px 高 × 36px 宽）：可见横线仍是中间那道 2px 细线，
+                // 鼠标沿导航条竖直长度随便放都能悬停/点击，不必精准压在细线上
+                <button
+                  key={u.id}
+                  type="button"
+                  onMouseEnter={(e) => {
+                    if (previewTimer.current) {
+                      clearTimeout(previewTimer.current)
+                      previewTimer.current = null
+                    }
+                    setHoverIdx(i)
+                    const r = e.currentTarget.getBoundingClientRect()
+                    setMsgPreview({
+                      mid: u.id,
+                      text: u.text,
+                      top: Math.min(Math.max(8, r.top + r.height / 2 - 40), window.innerHeight - 190),
+                      // 预览卡贴着实线最长处（24px）右侧 10px，不随透明命中区变宽而远离
+                      left: r.left + 34,
+                    })
+                  }}
+                  onClick={() => {
+                    scrollRef.current
+                      ?.querySelector(`[data-mid="${u.id}"]`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  }}
+                  className="group/line flex h-3 w-9 shrink-0 cursor-pointer items-center"
+                >
+                  <span
+                    style={{ width: [24, 20, 16, 12][dist] }}
+                    className={cn(
+                      "h-0.5 rounded-full transition-[width] duration-200 ease-out",
+                      dist === 0 ? "bg-muted-foreground/60" : "bg-muted-foreground/25",
+                    )}
+                  />
+                </button>
+              )
+            })}
+          </div>
+        )}
         {notBottom && (
           <Button
             variant="ghost"
@@ -493,13 +567,13 @@ export function Chat({
           <QueuePanel queue={queue} onDispatch={onQueueDispatch} onEdit={onQueueEdit} onRemove={onQueueRemove} />
         )}
         {lastError && !pending && !pendingQ && (
-          <div className="border-destructive/40 bg-destructive/8 text-destructive mx-auto mb-2 flex max-w-3xl items-start gap-2 rounded-xl border px-3.5 py-2.5 text-sm">
+          <div className="border-destructive/40 bg-destructive/8 text-destructive mx-auto mb-2 flex max-w-3xl lg:max-w-4xl xl:max-w-5xl items-start gap-2 rounded-xl border px-3.5 py-2.5 text-sm">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
             <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{lastError}</span>
           </div>
         )}
         {!showQ && (
-        <div className="bg-card relative mx-auto max-w-3xl rounded-2xl border p-2 shadow-xs">
+        <div className="bg-card relative mx-auto max-w-3xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border p-2 shadow-xs">
           <input
             ref={fileRef}
             type="file"
@@ -571,6 +645,18 @@ export function Chat({
             placeholder={t("c.inputPh")}
             className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-0"
             onKeyDown={(e) => {
+              // Ctrl+Z 回退到之前发送过的消息、Ctrl(+Shift)+Z / Ctrl+Y 前进
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+                e.preventDefault()
+                if (e.shiftKey) onInputRedo?.()
+                else onInputUndo?.()
+                return
+              }
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+                e.preventDefault()
+                onInputRedo?.()
+                return
+              }
               if (slashOpen && slashMatch.length > 0) {
                 if (e.key === "ArrowDown") {
                   e.preventDefault()
@@ -651,6 +737,33 @@ export function Chat({
         </div>
         )}
       </div>
+
+      {/* 用户提问预览卡：导航条悬停时浮出（portal 到 body 避开滚动容器裁切）。
+          卡片可悬停可点击：移上去取消收起计时，点卡片同样跳到那一轮对话 */}
+      {msgPreview && createPortal(
+        <div
+          onMouseEnter={() => {
+            if (previewTimer.current) clearTimeout(previewTimer.current)
+            previewTimer.current = null
+          }}
+          onMouseLeave={() => {
+            // 离开卡片：不是回导航条就立刻收（同样只留过桥时间）
+            if (previewTimer.current) clearTimeout(previewTimer.current)
+            previewTimer.current = setTimeout(() => setMsgPreview(null), PREVIEW_HIDE_MS)
+          }}
+          onClick={() => {
+            scrollRef.current
+              ?.querySelector(`[data-mid="${msgPreview.mid}"]`)
+              ?.scrollIntoView({ behavior: "smooth", block: "start" })
+            setMsgPreview(null)
+          }}
+          className="bg-popover text-popover-foreground fixed z-50 hidden w-80 cursor-pointer rounded-md border p-3 text-xs leading-relaxed break-words shadow-md md:block"
+          style={{ top: msgPreview.top, left: msgPreview.left }}
+        >
+          <div className="line-clamp-6">{msgPreview.text}</div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
@@ -857,15 +970,25 @@ function QueuePanel({
   onRemove: (id: number) => void
 }) {
   const { t } = useI18n()
+  // 队列可点击头部展开/收起（默认展开）
+  const [collapsed, setCollapsed] = useState(false)
   return (
-    <div className="mx-auto mb-2 flex max-w-3xl flex-col gap-1">
-      <div className="text-muted-foreground px-1 text-[11px]">
+    <div className="mx-auto mb-2 flex max-w-3xl lg:max-w-4xl xl:max-w-5xl flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => setCollapsed((v) => !v)}
+        className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1 self-start px-1 text-[11px]"
+      >
         {t("c.queue", { n: queue.length })}
-      </div>
-      {queue.map((q) => (
+        <ChevronDownIcon
+          className={cn("size-3 transition-transform", collapsed && "-rotate-90")}
+        />
+      </button>
+      {!collapsed &&
+      queue.map((q) => (
         <div
           key={q.id}
-          className="group bg-card flex items-center gap-2 rounded-lg border px-2.5 py-1.5"
+          className="group flex items-center gap-2 rounded-md px-2 py-1"
         >
           <ListChecksIcon className="text-muted-foreground size-3.5 shrink-0" />
           <span
@@ -1028,7 +1151,7 @@ function ApprovalBanner({  run,
   const { t } = useI18n()
   const { label, summary } = toolApprovalLabel(run, t)
   return (
-    <div className="border-amber-500/50 bg-amber-500/10 mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3.5 py-2.5">
+    <div className="border-amber-500/50 bg-amber-500/10 mx-auto mb-2 flex max-w-3xl lg:max-w-4xl xl:max-w-5xl flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3.5 py-2.5">
       <CircleAlertIcon className="text-amber-600 dark:text-amber-400 size-4 shrink-0" />
       <div className="min-w-0 flex-1 text-sm">
         <span className="text-amber-700 dark:text-amber-400 font-medium">{t("c.confirmNeed")}</span>
@@ -1078,7 +1201,7 @@ function QuestionBanner({
     if (v) onAnswer(run.questionId!, v)
   }
   return (
-    <div className="bg-card relative mx-auto mb-2 max-w-3xl rounded-2xl border p-2 shadow-xs">
+    <div className="bg-card relative mx-auto mb-2 max-w-3xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border p-2 shadow-xs">
       <Button
         variant="ghost"
         size="icon-sm"
@@ -1147,7 +1270,7 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
   const [open, setOpen] = useState(false)
   const done = items.filter((tt) => tt.status === "completed").length
   return (
-    <div className="bg-card mx-auto mb-2 max-w-3xl rounded-xl border px-3 py-2 shadow-xs">
+    <div className="bg-card mx-auto mb-2 max-w-3xl lg:max-w-4xl xl:max-w-5xl rounded-xl border px-3 py-2 shadow-xs">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
