@@ -11,6 +11,7 @@ import {
   ChevronRightIcon,
   FolderOpenIcon,
   Loader2Icon,
+  LogInIcon,
   LogOutIcon,
   PencilIcon,
   PlusIcon,
@@ -130,10 +131,14 @@ interface SettingsDialogProps {
   initialSection?: string
   /** 供应商配置保存成功后回调——外层据此刷新模型列表 */
   onProvidersSaved?: () => void
-  /** 登录后台用户：有值才显示「账号」页签 */
+  /** 登录后台用户：有值则「账号」页签显示账号信息 */
   serverUser?: ServerUser | null
+  /** 后台可达性：未登录但可达时「账号」页签也要出来（里面给登录入口） */
+  serverOnline?: boolean
   /** 退出登录（「账号」页签里用） */
   onLogout?: () => void
+  /** 「账号」页签未登录时打开登录弹窗 */
+  onOpenLogin?: () => void
 }
 
 // MCP 服务器编辑草稿
@@ -214,7 +219,9 @@ export function SettingsDialog({
   onStateChange,
   onProvidersSaved,
   serverUser,
+  serverOnline,
   onLogout,
+  onOpenLogin,
 }: SettingsDialogProps) {
   const { t } = useI18n()
   const [section, setSection] = useState<SectionId>("model")
@@ -223,12 +230,12 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) setUsageSeq((s) => s + 1)
   }, [open])
-  // 外层指定直达 section（使用统计、账号等）；未登录时「账号」页签不存在，回落到默认页签
+  // 外层指定直达 section（使用统计、账号等）；后台不可达时「账号」页签不存在，回落到默认页签
   useEffect(() => {
     if (!open || !initialSection) return
-    if (initialSection === "account" && !serverUser) return
+    if (initialSection === "account" && !serverUser && !serverOnline) return
     setSection(initialSection as SectionId)
-  }, [open, initialSection, serverUser])
+  }, [open, initialSection, serverUser, serverOnline])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
@@ -292,7 +299,8 @@ export function SettingsDialog({
     void refreshMcp()
     void refreshSkills()
     void loadDirs()
-    // 账号：有登录态才拉；未登录不显示该页签
+    // 账号：有登录态才拉；未登录不显示该页签。
+    // 依赖带上 serverUser：在设置里当场登录成功时也要重拉，否则面板停在「后台暂不可达」
     if (serverUser) {
       setCredLoading(true)
       server
@@ -306,7 +314,7 @@ export function SettingsDialog({
     setErr("")
     setToast("")
     setMcpDraft(null)
-  }, [open])
+  }, [open, serverUser])
 
   const saveProviders = async () => {
     if (!providers) return
@@ -484,7 +492,8 @@ export function SettingsDialog({
                 该 grid item 的 min-width:auto 会被压成 0，不会再被 min-content 顶宽。
                 md 以上恢复竖排。 */}
             <div className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-              {SECTIONS.filter((s) => s.id !== "account" || !!serverUser).map((s) => (
+              {/* 后台可达就显示「账号」页签：已登录看信息，未登录给登录入口 */}
+              {SECTIONS.filter((s) => s.id !== "account" || !!serverUser || serverOnline).map((s) => (
                 <button
                   key={s.id}
                   type="button"
@@ -937,7 +946,12 @@ export function SettingsDialog({
 
               {section === "usage" && <UsagePanel key={usageSeq} />}
 
-              {section === "account" && serverUser && <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />}
+              {section === "account" &&
+                (serverUser ? (
+                  <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />
+                ) : (
+                  <LoginPrompt onLogin={onOpenLogin} />
+                ))}
             </div>
           </div>
         </div>
@@ -948,8 +962,24 @@ export function SettingsDialog({
 }
 
 /**
+ * 后台可达但未登录：账号页签只给一个登录入口。
+ * 登录成功后 App 的 serverUser 有了值，这里会换成 AccountPanel。
+ */
+function LoginPrompt({ onLogin }: { onLogin?: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex flex-col items-start gap-3 py-2">
+      <p className="text-muted-foreground text-sm">{t("account.notLoggedIn")}</p>
+      <Button size="sm" onClick={onLogin}>
+        <LogInIcon className="size-4" /> {t("menu.login")}
+      </Button>
+    </div>
+  )
+}
+
+/**
  * 账号页签（登录用户可见）：账号信息（手机号/管理员/注册时间）+ 积分余额 + 流水。
- * 未登录时入口不显示，因此这里不再渲染「未登录」占位。
+ * 未登录时的登录入口在 LoginPrompt（后台可达但没登录时渲染）。
  */
 function AccountPanel({
   cred,
@@ -1041,54 +1071,65 @@ function AccountPanel({
             {t("se.credEmpty")}
           </div>
         ) : (
-          <div className="flex flex-col gap-1.5">
-            {list.map((r) => {
-              // 已到期（到期时间已过）：整行置灰
-              const expired = !!r.expires_at && new Date(r.expires_at).getTime() < Date.now()
-              return (
-                <div
-                  key={r.id}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
-                    expired && "text-muted-foreground/60",
-                  )}
-                >
-                  <span className="min-w-0 flex-1 truncate" title={r.model ? `${reasonLabel(r)} · ${r.model}` : undefined}>
-                    {reasonLabel(r)}
-                    {r.model ? <span className="text-muted-foreground ml-2 font-mono text-xs">{r.model}</span> : null}
-                    {r.expires_at ? (
-                      <span className={cn("ml-2 text-xs", expired ? "" : "text-muted-foreground")}>
-                        {t("se.credExpire")} {fmtDateTime(r.expires_at)}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span
-                    className={cn(
-                      "shrink-0 font-medium tabular-nums",
-                      !expired && (r.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"),
-                    )}
-                  >
-                    {r.amount >= 0 ? `+${r.amount}` : r.amount}
-                  </span>
-                  <span className="text-muted-foreground w-32 shrink-0 text-right text-xs tabular-nums">
-                    {fmtDateTime(r.created_at)}
-                  </span>
-                </div>
-              )
-            })}
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-muted-foreground border-b text-left">
+                  <th className="px-3 py-1.5 font-medium">{t("se.credReason")}</th>
+                  <th className="px-3 py-1.5 text-right font-medium">{t("se.credAmount")}</th>
+                  <th className="px-3 py-1.5 text-right font-medium">{t("se.credTime")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((r) => {
+                  // 已到期（到期时间已过）：整行置灰
+                  const expired = !!r.expires_at && new Date(r.expires_at).getTime() < Date.now()
+                  return (
+                    <tr key={r.id} className={cn("border-b last:border-b-0", expired && "text-muted-foreground/60")}>
+                      <td className="px-3 py-1.5">
+                        <span
+                          className="break-all"
+                          title={r.model ? `${reasonLabel(r)} · ${r.model}` : undefined}
+                        >
+                          {reasonLabel(r)}
+                        </span>
+                        {r.model ? <span className="text-muted-foreground ml-2 font-mono text-xs">{r.model}</span> : null}
+                        {r.expires_at ? (
+                          <span className={cn("ml-2 text-xs", expired ? "" : "text-muted-foreground")}>
+                            {t("se.credExpire")} {fmtDateTime(r.expires_at)}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-3 py-1.5 text-right font-medium tabular-nums",
+                          !expired && (r.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"),
+                        )}
+                      >
+                        {r.amount >= 0 ? `+${r.amount}` : r.amount}
+                      </td>
+                      <td className="text-muted-foreground px-3 py-1.5 text-right text-xs whitespace-nowrap tabular-nums">
+                        {fmtDateTime(r.created_at)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
-        {total > 0 && (
+        {/* 只有一页时不渲染分页：翻页控件没有意义，白白占一行 */}
+        {pages > 1 && (
           <div className="flex items-center justify-end gap-2 text-xs">
-            <span className="text-muted-foreground">共 {total} 条</span>
+            <span className="text-muted-foreground">{t("se.credTotal", { n: total })}</span>
             <Button variant="outline" size="sm" className="h-7 px-2" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              上一页
+              {t("se.credPrev")}
             </Button>
             <span className="text-muted-foreground tabular-nums">
               {page} / {pages}
             </span>
             <Button variant="outline" size="sm" className="h-7 px-2" disabled={page >= pages} onClick={() => setPage(page + 1)}>
-              下一页
+              {t("se.credNext")}
             </Button>
           </div>
         )}

@@ -152,22 +152,30 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(""), 3000)
   }
-  // 有 token 时启动恢复登录态；仅 401（会话过期）清 token，
-  // 服务器暂不可达时保留，恢复后可直接续用。
-  // 先探活：后台没开时不发任何请求，桌面端按纯本地版运行
+  // 后台（omni-server）探活 + 登录态恢复。桌面端常在后台还没起来时就打开，
+  // 只在启动探一次会永远卡在「纯本地版」（没有登录入口、设置里没有账号页签），
+  // 所以点左下角 LOGO 球、点设置时都要现探：通了才渲染登录/账号入口，
+  // 已有 token 则顺手刷新资料。
+  const checkServer = async () => {
+    // 先拿内核配置里的后台域名，再探活；后台没开时不发任何业务请求
+    await initServerUrl()
+    if (!(await probeServer())) return
+    setServerOnline(true)
+    if (!serverToken()) return
+    try {
+      const r = await server.me()
+      setServerUser(r.user)
+    } catch (e) {
+      // 401 = 会话过期：清 token 回未登录；服务器暂不可达则保留，恢复后可直接续用
+      if (e instanceof Error && (e as { status?: number }).status === 401) {
+        setServerToken("")
+        setServerUser(null)
+      }
+    }
+  }
   useEffect(() => {
-    // 先拿内核配置里的后台域名，再探活；探活通过才恢复会话
-    void initServerUrl().then(async () => {
-      if (!(await probeServer())) return
-      setServerOnline(true)
-      if (!serverToken()) return
-      server
-        .me()
-        .then((r) => setServerUser(r.user))
-        .catch((e) => {
-          if (e instanceof Error && (e as { status?: number }).status === 401) setServerToken("")
-        })
-    })
+    void checkServer()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // 登录态建立后自动领取每日积分（幂等：服务端当天已领则不发）
   useEffect(() => {
@@ -264,20 +272,8 @@ export default function App() {
   const openSettings = () => {
     setSettingsSection(undefined)
     setSettingsOpen(true)
-  }
-  // 点左下角头像：已登录就拉一次最新资料，积分余额及时更新
-  const refreshServerUser = () => {
-    if (!serverToken()) return
-    server
-      .me()
-      .then((r) => setServerUser(r.user))
-      .catch((e) => {
-        // 401 = 会话过期：清 token 回未登录；服务器暂不可达则保留，恢复后可直接续用
-        if (e instanceof Error && (e as { status?: number }).status === 401) {
-          setServerToken("")
-          setServerUser(null)
-        }
-      })
+    // 后台可能刚启动：现探一次，通了设置里才出「账号」页签
+    void checkServer()
   }
   // 上报一次 AI 用量到 omni-server：按模型倍率扣积分并留请求记录。
   // 成功即把最新余额写回工具条；402=积分不足时Toast 提醒，其余错误静默（不影响桌面端）
@@ -1356,7 +1352,9 @@ export default function App() {
         onStateChange={setState}
         onProvidersSaved={() => void refreshModels()}
         serverUser={serverUser}
+        serverOnline={serverOnline}
         onLogout={() => void logout()}
+        onOpenLogin={() => setLoginOpen(true)}
       />
       <AddProjectDialog
         open={addProjectOpen}
@@ -1374,7 +1372,7 @@ export default function App() {
           onTheme={(id) => void changeThemePreset(id)}
           onOpenUsage={openUsage}
           onOpenAccount={openAccount}
-          onRefreshUser={refreshServerUser}
+          onCheckServer={() => void checkServer()}
           user={serverUser}
           serverOnline={serverOnline}
           onOpenLogin={() => setLoginOpen(true)}

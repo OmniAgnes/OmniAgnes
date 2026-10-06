@@ -32,6 +32,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "me.credits": "积分",
     "me.records": "积分使用记录",
     "me.admin": "管理员",
+    "account.notLoggedIn": "未登录。登录后可查看账号信息与积分余额。",
     "theme.dark": "深色",
     "theme.light": "浅色",
     "theme.violet": "紫罗兰",
@@ -277,6 +278,12 @@ const dict: Record<Lang, Record<string, string>> = {
   "se.credGain": "获得",
   "se.credSpend": "消耗",
   "se.credExpire": "到期",
+  "se.credReason": "原因",
+  "se.credAmount": "积分",
+  "se.credTime": "时间",
+  "se.credPrev": "上一页",
+  "se.credNext": "下一页",
+  "se.credTotal": "共 {n} 条",
 
     // ---- 使用量 ----
     "u.r30": "最近30天",
@@ -385,6 +392,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "me.credits": "積分",
     "me.records": "積分使用記錄",
     "me.admin": "管理員",
+    "account.notLoggedIn": "未登入。登入後可查看帳號資訊與積分餘額。",
     "theme.dark": "深色",
     "theme.light": "淺色",
     "theme.violet": "紫羅蘭",
@@ -630,6 +638,12 @@ const dict: Record<Lang, Record<string, string>> = {
   "se.credGain": "獲得",
   "se.credSpend": "消耗",
   "se.credExpire": "到期",
+  "se.credReason": "原因",
+  "se.credAmount": "積分",
+  "se.credTime": "時間",
+  "se.credPrev": "上一頁",
+  "se.credNext": "下一頁",
+  "se.credTotal": "共 {n} 條",
 
     // ---- 使用量 ----
     "u.r30": "最近30天",
@@ -738,6 +752,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "me.credits": "Credits",
     "me.records": "Credit usage",
     "me.admin": "Admin",
+    "account.notLoggedIn": "Not signed in. Sign in to view your account and credits.",
     "theme.dark": "Dark",
     "theme.light": "Light",
     "theme.violet": "Violet",
@@ -983,6 +998,12 @@ const dict: Record<Lang, Record<string, string>> = {
   "se.credGain": "Earned",
   "se.credSpend": "Spent",
   "se.credExpire": "Expires",
+  "se.credReason": "Reason",
+  "se.credAmount": "Credits",
+  "se.credTime": "Time",
+  "se.credPrev": "Previous",
+  "se.credNext": "Next",
+  "se.credTotal": "{n} total",
 
     // ---- Usage ----
     "u.r30": "Last 30 days",

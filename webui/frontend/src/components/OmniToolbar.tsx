@@ -42,7 +42,7 @@ export function OmniToolbar({
   onTheme,
   onOpenUsage,
   onOpenAccount,
-  onRefreshUser,
+  onCheckServer,
   user,
   serverOnline,
   onOpenLogin,
@@ -54,8 +54,8 @@ export function OmniToolbar({
   onOpenUsage: () => void
   /** 点积分行：打开设置「账号」页签看余额与流水 */
   onOpenAccount: () => void
-  /** 点左下角头像：已登录则重新拉一次资料，积分余额及时更新 */
-  onRefreshUser: () => void
+  /** 点左下角 LOGO 球：现探后台通不通，通了才显示登录/账号入口；已登录则顺手刷新资料 */
+  onCheckServer: () => void
   user: ServerUser | null
   /** 后台可达才有登录入口；不可达时整个 server 相关 UI 不出现（纯本地版） */
   serverOnline: boolean
@@ -118,7 +118,7 @@ export function OmniToolbar({
           type="button"
           onClick={() => {
             setOpen((o) => !o)
-            onRefreshUser()
+            onCheckServer()
           }}
           title={t("toolbar.title")}
           className="bg-foreground text-background flex size-8 items-center justify-center rounded-full text-sm font-bold shadow-md cursor-pointer"
