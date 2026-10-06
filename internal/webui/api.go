@@ -699,7 +699,13 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		text = b.String()
 	}
 
-	// 不用 Run（失败即回滚）：webui 保留失败轮次已产生的内容（至少保留提问），便于回溯
+	// 上一轮失败会留下未获回答的 user 尾巴（webui 失败不回滚，保留提问便于回溯）。
+	// 直接追加会出现连续两条 user 消息——要求角色交替的网关会持续空响应
+	//（表现为「换了正常模型回复还是空」），重发同一条也会让历史里提问重复。
+	// 这里把未获回答的提问替换成本轮消息；旧提问在界面上的错误横幅不受影响。
+	if h := a.History(); len(h) > 0 && h[len(h)-1].Role == llm.RoleUser {
+		a.RollbackLastTurn()
+	}
 	rollback := a.Prepare(text)
 	_ = rollback
 	errSent := false     // Execute 内部对失败轮已 emit EventError（带 round）；外层不得重复发送

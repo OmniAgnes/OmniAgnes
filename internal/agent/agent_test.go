@@ -74,6 +74,42 @@ func TestAgentSingleTurn(t *testing.T) {
 	}
 }
 
+// 空最终回复按错误收场：报错带模型名，且空 assistant 消息绝不进历史——
+// 否则它留在上下文里，后续轮次换回正常模型也会跟着空响应（用户实测踩坑）。
+func TestAgentEmptyReplyErrorsAndSkipsHistory(t *testing.T) {
+	prov := &mockProvider{responses: []llm.ChatResponse{
+		{Content: ""},        // 坏模型：上游 200 空响应
+		{Content: "正常回复"}, // 换回正常模型后的下一轮
+	}}
+	a, _, _ := newTestAgent(t, prov, ModeBuild, 8)
+
+	var gotErr string
+	err := a.Run(context.Background(), "第一问", func(ev Event) {
+		if ev.Type == EventError && ev.Err != nil {
+			gotErr = ev.Err.Error()
+		}
+	})
+	if err == nil {
+		t.Fatal("空回复应按错误收场")
+	}
+	if !strings.Contains(gotErr, "mock-model") {
+		t.Fatalf("错误信息应带模型名: %q", gotErr)
+	}
+	// Run 失败即回滚：user 消息也撤掉，历史不含任何空轮残留
+	if len(a.History()) != 0 {
+		t.Fatalf("历史应无残留，got %d 条", len(a.History()))
+	}
+
+	// 下一轮（换好模型）不受影响，上下文里没有空回复
+	if err := a.Run(context.Background(), "第二问", func(ev Event) {}); err != nil {
+		t.Fatalf("下一轮不应被污染: %v", err)
+	}
+	h := a.History()
+	if len(h) != 2 || h[1].Text != "正常回复" {
+		t.Fatalf("下一轮历史异常: %d 条", len(h))
+	}
+}
+
 func TestAgentToolLoop(t *testing.T) {
 	prov := &mockProvider{responses: []llm.ChatResponse{
 		{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "glob", Args: map[string]any{"pattern": "*.go"}}}},

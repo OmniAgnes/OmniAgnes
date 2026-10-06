@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -296,9 +298,25 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		err := p.httpError(resp)
+		err = p.httpError(resp)
 		resp.Body.Close()
-		return nil, err
+		// max_tokens 超出网关允许区间（如「field MaxTokens invalid, should be in [1, 65536]」）
+		// 属于可自愈的配置问题：解析报错里的合法上限，钳位后重试一次；解析不出就去掉
+		// max_tokens 用网关默认值。仍失败才把错误交出去。
+		fixed, ok := clampMaxTokens(body, err)
+		if !ok {
+			return nil, err
+		}
+		body = fixed
+		resp, err = p.doWithRetry(ctx, body, onEvent)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			err = p.httpError(resp)
+			resp.Body.Close()
+			return nil, err
+		}
 	}
 
 	// 空响应重试：上游 200 却什么都没回（文本/思考/工具全空）也视为瞬时故障——
@@ -433,6 +451,48 @@ func notifyRetry(onEvent func(StreamEvent) error, attempt, max int) {
 		Type:  EventRetry,
 		Retry: &RetryInfo{Attempt: attempt, Max: max},
 	})
+}
+
+// maxTokensRangeRe 从网关报错里解析 max_tokens 的合法区间上限，
+// 如「field MaxTokens invalid, should be in [1, 65536]」→ 65536。
+var maxTokensRangeRe = regexp.MustCompile(`(?i)max[_ ]?tokens[^.]{0,80}?\[\s*1\s*,\s*(\d+)\s*\]`)
+
+// clampMaxTokens 判断 err 是否为 max_tokens 超限类报错，是则返回修正后的请求体：
+// 能从报错里解析出上限就钳位到上限；解析不出就删掉 max_tokens 交给网关默认值。
+func clampMaxTokens(body []byte, err error) ([]byte, bool) {
+	if err == nil {
+		return nil, false
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if !strings.Contains(lower, "max") || !strings.Contains(lower, "token") {
+		return nil, false
+	}
+	var payload map[string]any
+	if json.Unmarshal(body, &payload) != nil {
+		return nil, false
+	}
+	mt, ok := payload["max_tokens"].(float64)
+	if !ok {
+		return nil, false
+	}
+	if m := maxTokensRangeRe.FindStringSubmatch(msg); m != nil {
+		limit, e := strconv.Atoi(m[1])
+		if e != nil {
+			return nil, false
+		}
+		if mt <= float64(limit) {
+			return nil, false // 并未超限，是别的错，别乱动
+		}
+		payload["max_tokens"] = limit
+	} else {
+		delete(payload, "max_tokens")
+	}
+	b, e := json.Marshal(payload)
+	if e != nil {
+		return nil, false
+	}
+	return b, true
 }
 
 // httpError 把非 200 响应转成可读错误，并针对 401/403 给出定位提示。

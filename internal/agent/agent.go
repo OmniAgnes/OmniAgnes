@@ -353,6 +353,16 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			totalUsage.OutputTokens += resp.Usage.OutputTokens
 		}
 
+		// 空最终回复（上游 200 却连文本/工具都没有，坏模型名/网关假完成，
+		// openai 通道空响应重试耗尽后仍空）：按错误收场，报错带上模型名让用户
+		// 知道该换哪个；且空 assistant 消息绝不进历史——否则它一直留在上下文里，
+		// 后续每轮请求都带着这条空回复，换回正常模型也会跟着连续空响应，
+		// 只有新建任务（干净历史）才能恢复。
+		if len(resp.ToolCalls) == 0 && resp.Content == "" {
+			err := fmt.Errorf("模型 %s 没有返回任何内容（上游持续空响应），请重试或换个模型", a.model)
+			emit(Event{Type: EventError, Err: err, Round: round})
+			return err
+		}
 		a.history = append(a.history, llm.Message{
 			Role:      llm.RoleAssistant,
 			Text:      resp.Content,

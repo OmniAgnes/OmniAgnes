@@ -221,3 +221,38 @@ func TestGeminiStreamToolCall(t *testing.T) {
 		t.Fatalf("args = %v", resp.ToolCalls[0].Args)
 	}
 }
+
+// 网关对 max_tokens 有上限（如 GLM 系 [1, 65536]），超限报 400。钳位重试前先准确识别这类错。
+func TestClampMaxTokens(t *testing.T) {
+	body := []byte(`{"model":"glm-4","max_tokens":200000,"messages":[{"role":"user","content":"hi"}]}`)
+	over := fmt.Errorf("provider glm(https://x/v1) 返回 400: field MaxTokens invalid, should be in [1, 65536]")
+	fixed, ok := clampMaxTokens(body, over)
+	if !ok {
+		t.Fatal("应识别 max_tokens 超限")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(fixed, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["max_tokens"].(float64) != 65536 {
+		t.Fatalf("max_tokens = %v, want 65536", payload["max_tokens"])
+	}
+	// 解析不出上限数字时兜底删除 max_tokens，用网关默认值
+	noRange := fmt.Errorf("provider glm(https://x/v1) 返回 400: MaxTokens invalid")
+	fixed2, ok := clampMaxTokens(body, noRange)
+	if !ok {
+		t.Fatal("应兜底删除 max_tokens")
+	}
+	if strings.Contains(string(fixed2), "max_tokens") {
+		t.Fatalf("max_tokens 应被删除: %s", fixed2)
+	}
+	// 与 max_tokens 无关的错误不触发
+	if _, ok := clampMaxTokens(body, fmt.Errorf("provider 返回 400: invalid api key")); ok {
+		t.Fatal("无关错误不应触发")
+	}
+	// 未超限的错误也不动
+	small := []byte(`{"model":"glm-4","max_tokens":1024,"messages":[]}`)
+	if _, ok := clampMaxTokens(small, over); ok {
+		t.Fatal("未超限不应触发")
+	}
+}
