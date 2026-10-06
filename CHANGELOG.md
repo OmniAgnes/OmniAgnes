@@ -2,6 +2,16 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.4 (2026-10-06)
+
+安装包元数据修复：应用名统一为 OmniAgens。
+
+### 🐛 修复
+
+- **安装后图标悬浮提示中文乱码**：`package.json` 的 `description` 字段本身已是编码损坏的乱码（「桌面版：Electron 壳 + 内核」→ `妗岄潰鐗堬細…`），安装器把它写进 exe 文件说明与快捷方式信息，鼠标悬浮即见。现 `productName` 设为 OmniAgens（安装目录、快捷方式名、exe 名跟随），description 改为干净的 "OmniAgens desktop"，并补 `author` 避免 exe 属性 CompanyName 落成默认值
+
+---
+
 ## v1.0.3 (2026-10-06)
 
 围绕「选错模型时用户两眼一抹黑」的修复批次：错误看得见、说得清，常见配置错误能自愈。
