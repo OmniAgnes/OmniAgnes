@@ -1406,23 +1406,21 @@ function ModelOptionsRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
 
-  // 连通性测试：点图标发一次极短探测，结果用 toast 提示
+  // 连通性测试：点图标发一次极短探测，结果只提示连接成功 / 连接失败
   const [testing, setTesting] = useState(false)
-  const [testToast, setTestToast] = useState<{ msg: string; ok: boolean } | null>(null)
+  const [testToast, setTestToast] = useState<{ ok: boolean } | null>(null)
   const runTest = async () => {
     if (testing) return
     setTesting(true)
-    let msg = "连接失败"
     let ok = false
     try {
       const r = await api.testModel(name)
       ok = r.ok
-      msg = r.ok ? r.error || "连接正常 ✔" : r.error || "连接失败"
-    } catch (e) {
-      msg = e instanceof Error ? e.message : String(e)
+    } catch {
+      ok = false
     } finally {
       setTesting(false)
-      setTestToast({ msg, ok })
+      setTestToast({ ok })
       setTimeout(() => setTestToast(null), 3500)
     }
   }
@@ -1521,7 +1519,7 @@ function ModelOptionsRow({
                   testToast.ok ? "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950" : "border-destructive/40 bg-destructive/10",
                 )}
               >
-                {testToast.msg}
+                {testToast.ok ? "连接成功" : "连接失败"}
               </div>,
               document.body,
             )}
