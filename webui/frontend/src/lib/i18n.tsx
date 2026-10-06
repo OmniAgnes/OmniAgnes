@@ -337,7 +337,8 @@ const dict: Record<Lang, Record<string, string>> = {
     "mp.ph": "选择模型",
     "mp.noProvider": "没有可用供应商",
     "mp.noModel": "该供应商下没有模型",
-    "mp.builtin": "内置模型",
+	"mp.builtin": "内置模型",
+	"mp.config": "配置模型",
 
     // ---- 内置浏览器 ----
     "b.back": "后退",
@@ -689,7 +690,8 @@ const dict: Record<Lang, Record<string, string>> = {
     "mp.ph": "選擇模型",
     "mp.noProvider": "沒有可用供應商",
     "mp.noModel": "該供應商下沒有模型",
-    "mp.builtin": "內建模型",
+	"mp.builtin": "內建模型",
+	"mp.config": "配置模型",
 
     // ---- 內嵌瀏覽器 ----
     "b.back": "後退",
@@ -1041,7 +1043,8 @@ const dict: Record<Lang, Record<string, string>> = {
     "mp.ph": "Pick a model",
     "mp.noProvider": "No providers available",
     "mp.noModel": "No models under this provider",
-    "mp.builtin": "Built-in models",
+	"mp.builtin": "Built-in models",
+	"mp.config": "Configure models",
 
     // ---- Built-in browser ----
     "b.back": "Back",

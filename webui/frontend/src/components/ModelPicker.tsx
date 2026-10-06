@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, SettingsIcon } from "lucide-react"
 
 import type { ModelGroup } from "@/components/Chat"
 import { useI18n } from "@/lib/i18n"
@@ -14,6 +14,8 @@ interface ModelPickerProps {
   onChange: (model: string) => void
   /** 登录后台用户：有值时在列表最上方展示后台「内置模型」组 */
   serverUser?: ServerUser | null
+  /** 底部「配置模型」：打开设置并直达「模型」页签 */
+  onConfigure?: () => void
 }
 
 /** 一级（供应商）面板宽度，供二级初始定位用；二级实际位置挂载后按视口钳位 */
@@ -60,7 +62,7 @@ function rateLabel(m: ServerModel) {
  * 自实现弹层而不引 Radix Popover：项目没装对应依赖，需求简单（受控开合 +
  * 点外部/Esc 关闭 + 边界避让）。
  */
-export function ModelPicker({ groups, model, onChange, serverUser }: ModelPickerProps) {
+export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }: ModelPickerProps) {
   const { t } = useI18n()
   // 内置模型选中 key 带前缀（server:xxx）：与用户自配的同名模型区分「选的是哪一个」。
   // plainModel 是去掉前缀的真名，供界面显示和内置组高亮用。
@@ -231,6 +233,20 @@ export function ModelPicker({ groups, model, onChange, serverUser }: ModelPicker
                 </>
               )}
             </div>
+            {/* 底部固定「配置模型」：不随列表滚动，直达设置「模型」页签 */}
+            {onConfigure && (
+              <button
+                type="button"
+                onClick={() => {
+                  close()
+                  onConfigure()
+                }}
+                className="border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full cursor-pointer items-center gap-1.5 border-t px-2 py-1.5 text-left text-xs transition-colors"
+              >
+                <SettingsIcon className="size-3 shrink-0" />
+                <span className="truncate">{t("mp.config")}</span>
+              </button>
+            )}
           </div>
 
           {/* 二级：absolute 钉在一级左侧，垂直方向锚定到一级当前选中行的中心 */}

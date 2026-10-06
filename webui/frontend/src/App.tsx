@@ -239,6 +239,11 @@ export default function App() {
     setSettingsSection("account")
     setSettingsOpen(true)
   }
+  // 模型选择器底部「配置模型」：直达设置「模型」页签
+  const openModels = () => {
+    setSettingsSection("model")
+    setSettingsOpen(true)
+  }
   const openSettings = () => {
     setSettingsSection(undefined)
     setSettingsOpen(true)
@@ -335,7 +340,13 @@ export default function App() {
         void api
           .task(id)
           .then((resp) => {
-            if ((resp.task.messages ?? []).length === 0 || activeTaskIdRef.current !== id) return
+            const msgs = resp.task.messages ?? []
+            if (msgs.length === 0 || activeTaskIdRef.current !== id) return
+            // 快照落后于本地视图（末条还是未获回复的提问，本地挂着错误横幅）：
+            // 错误不落服务端快照，重建会把横幅抹掉、只剩光秃秃的提问（表现为错误一闪而过）。
+            // 保留本地视图，直到快照真正前进（其他客户端续跑）或下次发送。
+            const lastLocal = r?.items.at(-1)
+            if (msgs[msgs.length - 1].role === "user" && lastLocal?.role === "assistant" && lastLocal.error) return
             runsRef.current[id] = buildRun(resp.task)
             bump()
           })
@@ -1249,6 +1260,7 @@ export default function App() {
           browserOpen={browserOpen}
           onToggleBrowser={() => setBrowserOpen((v) => !v)}
           serverUser={serverUser}
+          onConfigureModels={openModels}
         />
         )}
         {/* 内置浏览器面板：仅桌面端（Electron 壳有 WebContentsView 与操作桥） */}

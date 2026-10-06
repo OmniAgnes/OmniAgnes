@@ -138,6 +138,8 @@ interface ChatProps {
   onToggleBrowser?: () => void
   /** 登录后台用户：有值时模型选择器顶部显示「内置模型」组 */
   serverUser?: ServerUser | null
+  /** 模型选择器底部「配置模型」：打开设置并直达「模型」页签 */
+  onConfigureModels?: () => void
 }
 
 export function Chat({
@@ -171,6 +173,7 @@ export function Chat({
   browserOpen,
   onToggleBrowser,
   serverUser,
+  onConfigureModels,
 }: ChatProps) {
   const { t } = useI18n()
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -627,7 +630,7 @@ export function Chat({
               )}
               {(models.length > 0 || !!serverUser) && (
                 <div className="shrink-0">
-                  <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} />
+                  <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} onConfigure={onConfigureModels} />
                 </div>
               )}
             </div>
