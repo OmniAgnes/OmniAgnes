@@ -10,6 +10,7 @@ import {
   CpuIcon,
   ChevronRightIcon,
   FolderOpenIcon,
+  InfoIcon,
   Loader2Icon,
   LogInIcon,
   LogOutIcon,
@@ -64,7 +65,11 @@ const SECTIONS = [
   { id: "memory", key: "se.memory", icon: BrainIcon },
   { id: "plugins", key: "se.plugins", icon: BlocksIcon },
   { id: "usage", key: "se.usage", icon: ChartNoAxesColumnIcon },
+  { id: "version", key: "se.version", icon: InfoIcon },
 ] as const
+
+/** 应用版本号：发版（CHANGELOG/tag）时同步更新 */
+const APP_VERSION = "v1.0.7"
 
 /** 新添加模型时自动填入的默认上下文/输出上限 */
 const DEFAULT_CONTEXT_WINDOW = 1_000_000
@@ -945,6 +950,13 @@ export function SettingsDialog({
               )}
 
               {section === "usage" && <UsagePanel key={usageSeq} />}
+
+              {section === "version" && (
+                <div className="flex items-center justify-between">
+                  <Label>{t("se.currentVersion")}</Label>
+                  <span className="text-muted-foreground text-sm tabular-nums">{APP_VERSION}</span>
+                </div>
+              )}
 
               {section === "account" &&
                 (serverUser ? (

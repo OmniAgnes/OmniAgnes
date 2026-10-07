@@ -72,6 +72,8 @@ interface SidebarProps {
   activeTaskId: string | null
   /** 正在执行的任务 ID → 状态文字（处理中/重试 n/10），行右侧显示动画与状态 */
   running: Record<string, string>
+  /** 后台（omni-server）可达：手机图标仅在线时显示，不通不出现 */
+  serverOnline: boolean
   open: boolean
   onOpenTask: (id: string) => void
   onDeleteTask: (id: string) => void
@@ -95,6 +97,7 @@ export function Sidebar(props: SidebarProps) {
     tasksByProject,
     activeTaskId,
     running,
+    serverOnline,
     open,
     onOpenTask,
     onDeleteTask,
@@ -262,9 +265,9 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* 底部：移动端入口（仅桌面端）+ 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
+        {/* 底部：移动端入口（仅桌面端且后台可达）+ 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
         <div className="flex items-center justify-end gap-0.5 px-3 py-1.5">
-          {isDesktop && <MobilePanel />}
+          {isDesktop && serverOnline && <MobilePanel />}
           <Button
             variant="ghost"
             size="icon-sm"

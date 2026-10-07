@@ -695,8 +695,8 @@ export function Chat({
               }
             }}
           />
-          {/* 工具行：附件/模式/模型放进可横向滚动区，窄屏（H5）滑动查看而不是把模型名挤成省略号；
-              发送/中断按钮固定在右侧，不随滚动跑掉，随时可点。 */}
+          {/* 工具行：附件/模式放进可横向滚动区，窄屏（H5）滑动查看；
+              选择模型固定在最右、发送/中断按钮左边，不随滚动跑掉。 */}
           <div className="flex items-center gap-2 px-1 pt-1">
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <Button
@@ -723,14 +723,12 @@ export function Chat({
                   <GlobeIcon />
                 </Button>
               )}
-              {(models.length > 0 || !!serverUser) && (
-                <div className="shrink-0">
-                  <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} onConfigure={onConfigureModels} />
-                </div>
-              )}
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
+              {(models.length > 0 || !!serverUser) && (
+                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} onConfigure={onConfigureModels} />
+              )}
               {streaming ? (
                 <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title={t("c.stop")}>
                   {/* 实心方块：更像"停止"语义（lucide 默认是描边空心） */}
