@@ -69,7 +69,7 @@ const SECTIONS = [
 ] as const
 
 /** 应用版本号：发版（CHANGELOG/tag）时同步更新 */
-const APP_VERSION = "v1.0.8"
+const APP_VERSION = "v1.0.9"
 
 /** 新添加模型时自动填入的默认上下文/输出上限 */
 const DEFAULT_CONTEXT_WINDOW = 1_000_000
