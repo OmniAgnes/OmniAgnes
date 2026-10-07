@@ -283,6 +283,18 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 	if req.MaxTokens > 0 {
 		payload["max_tokens"] = req.MaxTokens
 	}
+	// 思考开关（智谱 GLM / 火山方舟等 OpenAI 兼容端点的通用约定）；
+	// 未配置时不发该字段，避免不认识的网关拒绝请求
+	switch req.Reasoning {
+	case "on":
+		payload["thinking"] = map[string]any{"type": "enabled"}
+	case "off":
+		payload["thinking"] = map[string]any{"type": "disabled"}
+	}
+	// 推理强度（low/medium/high）：仅部分模型支持，按模型配置，未配置不发送
+	if req.ReasoningEffort != "" {
+		payload["reasoning_effort"] = req.ReasoningEffort
+	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {

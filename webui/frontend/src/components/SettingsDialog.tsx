@@ -121,11 +121,15 @@ const INPUT_TYPES = [
   { value: "pdf", key: "se.it.pdf" },
 ] as const
 
+// 只有开/关两档：未配置（空）视同开启
 const REASONING_LEVELS = [
-  { value: "default", key: "se.rl.default" },
-  { value: "off", key: "se.rl.off" },
   { value: "on", key: "se.rl.on" },
+  { value: "off", key: "se.rl.off" },
 ] as const
+
+// 推理强度仅部分模型支持（low/medium/high）；none 哨兵 = 不发送该参数
+const REASONING_EFFORTS = ["low", "medium", "high"] as const
+const EFFORT_NONE = "none"
 
 interface SettingsDialogProps {
   open: boolean
@@ -1248,7 +1252,8 @@ function ProviderCard({
       !next.context_window &&
       !next.max_output_tokens &&
       !next.input_types?.length &&
-      !next.reasoning
+      !next.reasoning &&
+      !next.reasoning_effort
     const all = { ...provider.model_options }
     if (empty) {
       delete all[m]
@@ -1421,7 +1426,7 @@ function ReasoningPicker({
 }) {
   const { t } = useI18n()
   return (
-    <Select value={value || "default"} onValueChange={onChange}>
+    <Select value={value === "off" ? "off" : "on"} onValueChange={onChange}>
       <SelectTrigger size="sm" className="w-36">
         <SelectValue />
       </SelectTrigger>
@@ -1429,6 +1434,35 @@ function ReasoningPicker({
         {REASONING_LEVELS.map((r) => (
           <SelectItem key={r.value} value={r.value}>
             {t(r.key)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+/** 推理强度下拉：none 哨兵对应"不发送"（存空值） */
+function ReasoningEffortPicker({
+  value,
+  onChange,
+}: {
+  value?: string
+  onChange: (v: string) => void
+}) {
+  const { t } = useI18n()
+  return (
+    <Select
+      value={value || EFFORT_NONE}
+      onValueChange={(v) => onChange(v === EFFORT_NONE ? "" : v)}
+    >
+      <SelectTrigger size="sm" className="w-36">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={EFFORT_NONE}>{t("se.effortNone")}</SelectItem>
+        {REASONING_EFFORTS.map((e) => (
+          <SelectItem key={e} value={e}>
+            {e}
           </SelectItem>
         ))}
       </SelectContent>
@@ -1483,7 +1517,9 @@ function ModelOptionsRow({
   if (options.context_window) summary.push(t("se.sumContext", { n: options.context_window }))
   if (options.max_output_tokens) summary.push(t("se.sumOutput", { n: options.max_output_tokens }))
   if (options.input_types?.length) summary.push(options.input_types.join("/"))
-  if (options.reasoning) summary.push(t("se.sumReasoning", { level: options.reasoning }))
+  if (options.reasoning)
+    summary.push(t("se.sumReasoning", { level: t(options.reasoning === "off" ? "se.rl.off" : "se.rl.on") }))
+  if (options.reasoning_effort) summary.push(t("se.sumEffort", { level: options.reasoning_effort }))
 
   const commitRename = () => {
     setEditing(false)
@@ -1616,6 +1652,13 @@ function ModelOptionsRow({
             <ReasoningPicker
               value={options.reasoning}
               onChange={(v) => onChange({ reasoning: v })}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-muted-foreground text-xs">{t("se.effort")}</Label>
+            <ReasoningEffortPicker
+              value={options.reasoning_effort}
+              onChange={(v) => onChange({ reasoning_effort: v || undefined })}
             />
           </div>
         </div>

@@ -149,6 +149,8 @@ export interface ModelOptions {
   max_output_tokens?: number
   input_types?: string[]
   reasoning?: string
+  /** 推理强度 low | medium | high；留空不发送（不支持该参数的模型留空） */
+  reasoning_effort?: string
 }
 
 export interface ProviderConfig {

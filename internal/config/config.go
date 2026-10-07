@@ -28,12 +28,13 @@ type ModelOptions struct {
 	ContextWindow   int      `json:"context_window,omitempty"`    // 上下文窗口（token）
 	MaxOutputTokens int      `json:"max_output_tokens,omitempty"` // 最大输出 token
 	InputTypes      []string `json:"input_types,omitempty"`       // 支持的输入类型：text/image/video/pdf/audio
-	Reasoning       string   `json:"reasoning,omitempty"`         // 推理等级：default | off | on
+	Reasoning       string   `json:"reasoning,omitempty"`         // 推理等级：on | off；空 = 跟随服务端默认（思考模型默认开）
+	ReasoningEffort string   `json:"reasoning_effort,omitempty"`  // 推理强度：low | medium | high；空 = 不发送（模型不支持时留空）
 }
 
 // Empty 报告该模型是否未配置任何个性化参数。
 func (o ModelOptions) Empty() bool {
-	return o.ContextWindow == 0 && o.MaxOutputTokens == 0 && len(o.InputTypes) == 0 && o.Reasoning == ""
+	return o.ContextWindow == 0 && o.MaxOutputTokens == 0 && len(o.InputTypes) == 0 && o.Reasoning == "" && o.ReasoningEffort == ""
 }
 
 // ProviderConfig 描述单个 LLM 提供方。
@@ -81,6 +82,9 @@ func (p *ProviderConfig) OptionsFor(model string) ModelOptions {
 	if m.Reasoning != "" {
 		o.Reasoning = m.Reasoning
 	}
+	if m.ReasoningEffort != "" {
+		o.ReasoningEffort = m.ReasoningEffort
+	}
 	return o
 }
 
@@ -101,6 +105,16 @@ func (c *Config) ProviderForModel(model string) *ProviderConfig {
 
 // Normalize 同步 Model 与 Models 字段，并剔除已删除模型残留的个性化配置。
 func (p *ProviderConfig) Normalize() {
+	// 迁移旧取值 "default"（已废除）：等价于空 = 跟随服务端默认
+	if p.Reasoning == "default" {
+		p.Reasoning = ""
+	}
+	for name, o := range p.ModelOptions {
+		if o.Reasoning == "default" {
+			o.Reasoning = ""
+			p.ModelOptions[name] = o
+		}
+	}
 	if len(p.Models) == 0 {
 		if p.Model != "" {
 			p.Models = []string{p.Model}

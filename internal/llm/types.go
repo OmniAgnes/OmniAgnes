@@ -186,6 +186,10 @@ type ChatRequest struct {
 	Messages  []Message
 	Tools     []ToolDef
 	MaxTokens int
+	// Reasoning 思考开关：on | off；空 = 不控制，跟随服务端默认。
+	Reasoning string
+	// ReasoningEffort 推理强度：low | medium | high；空 = 不发送（模型不支持时留空）。
+	ReasoningEffort string
 }
 
 // ChatResponse 是 Chat 的返回。

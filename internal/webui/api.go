@@ -1448,6 +1448,14 @@ func (s *server) agentForOpts(t *store.Task, withBrowser bool) (*agent.Agent, er
 		SystemPromptExtra: s.cfg.SystemPromptExtra,
 		// 恢复持久化的历史消息：重启后继续对话时模型仍记得之前的内容
 		History: t.Messages,
+		// 思考参数按当前模型实时取配置：模型中途切换时下一轮请求自动跟随
+		Reasoning: func(model string) (string, string) {
+			if p := s.cfg.ProviderForModel(model); p != nil {
+				o := p.OptionsFor(model)
+				return o.Reasoning, o.ReasoningEffort
+			}
+			return "", ""
+		},
 		ExtraPrompt: func() string {
 			return s.opts.Extras.ExtraPrompt(cwd)
 		},

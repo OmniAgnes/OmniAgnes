@@ -70,6 +70,46 @@ func TestOpenAIStreamText(t *testing.T) {
 	}
 }
 
+// 思考开关：on/off 写进 thinking.type；未配置时不发该字段。
+// 推理强度：配置了才发 reasoning_effort（仅部分模型支持）。
+func TestOpenAIReasoningPayload(t *testing.T) {
+	body := sseChunk(`data: {"choices":[{"index":0,"delta":{"content":"好"},"finish_reason":"stop"}]}`) + "data: [DONE]\n\n"
+	cases := []struct {
+		reasoning string
+		effort    string
+		want      string // 期望 payload 包含的片段
+	}{
+		{reasoning: "on", want: `"thinking":{"type":"enabled"}`},
+		{reasoning: "off", want: `"thinking":{"type":"disabled"}`},
+		{effort: "high", want: `"reasoning_effort":"high"`},
+	}
+	for _, c := range cases {
+		srv, got := mockSSEServer(t, body)
+		p := &OpenAIProvider{baseURL: srv.URL, apiKey: "k", model: "gpt-4o"}
+		if _, err := p.Chat(context.Background(), ChatRequest{
+			Messages:        []Message{NewTextMessage(RoleUser, "hi")},
+			Reasoning:       c.reasoning,
+			ReasoningEffort: c.effort,
+		}, nil); err != nil {
+			t.Fatalf("Chat(%q,%q) error: %v", c.reasoning, c.effort, err)
+		}
+		if !strings.Contains(string(*got), c.want) {
+			t.Fatalf("payload 缺少 %s: %s", c.want, string(*got))
+		}
+	}
+	// 未配置：payload 里不能出现 thinking / reasoning_effort
+	srv, got := mockSSEServer(t, body)
+	p := &OpenAIProvider{baseURL: srv.URL, apiKey: "k", model: "gpt-4o"}
+	if _, err := p.Chat(context.Background(), ChatRequest{
+		Messages: []Message{NewTextMessage(RoleUser, "hi")},
+	}, nil); err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if s := string(*got); strings.Contains(s, "thinking") || strings.Contains(s, "reasoning_effort") {
+		t.Fatalf("未配置时不应发送思考参数: %s", s)
+	}
+}
+
 func TestOpenAIStreamToolCall(t *testing.T) {
 	args := `{"path":"a.txt"}`
 	body := sseChunk(

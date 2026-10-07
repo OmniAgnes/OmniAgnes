@@ -88,6 +88,10 @@ type Options struct {
 	// Ask 在模型调用 ask 工具时被调用：向用户展示问题、阻塞等待回答，返回答案文本。
 	// 为 nil 时 ask 走注册表兜底（提示按合理假设继续）。
 	Ask func(callID, question string, options []string) string
+	// Reasoning 按模型名解析思考参数：开关（on | off，空 = 跟随服务端默认）
+	// 与推理强度（low | medium | high，空 = 不发送）。每轮请求前调用，
+	// 模型中途切换时下一轮自动跟随；nil = 不控制。
+	Reasoning func(model string) (onOff, effort string)
 }
 
 // Agent 持有一个 LLM provider、工具注册表与消息历史。
@@ -105,6 +109,7 @@ type Agent struct {
 	extraPrompt   func() string
 	approve       func(callID, name string, args map[string]any) bool
 	question      func(callID, question string, options []string) string
+	reasoning     func(model string) (onOff, effort string)
 	history       []llm.Message
 	lastTurnStart int
 	maxKeepTurns  int
@@ -134,6 +139,7 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		extraPrompt:   opts.ExtraPrompt,
 		approve:       opts.Approve,
 		question:      opts.Ask,
+		reasoning:     opts.Reasoning,
 		history:       opts.History,
 		maxKeepTurns:  keep,
 		lastTurnStart: -1,
@@ -323,12 +329,18 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 
 	for i := 0; i < a.maxIter; i++ {
 		round := i // 本轮序号，供 UI 分组
+		var reasoning, effort string
+		if a.reasoning != nil {
+			reasoning, effort = a.reasoning(a.model)
+		}
 		req := llm.ChatRequest{
-			Model:     a.model,
-			System:    a.BuildSystemPrompt(),
-			Messages:  contextWindow(a.history, a.maxKeepTurns),
-			Tools:     a.toolDefs(),
-			MaxTokens: a.maxToken,
+			Model:           a.model,
+			System:          a.BuildSystemPrompt(),
+			Messages:        contextWindow(a.history, a.maxKeepTurns),
+			Tools:           a.toolDefs(),
+			MaxTokens:       a.maxToken,
+			Reasoning:       reasoning,
+			ReasoningEffort: effort,
 		}
 		resp, err := a.provider.Chat(ctx, req, func(ev llm.StreamEvent) error {
 			switch ev.Type {
