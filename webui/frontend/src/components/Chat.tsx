@@ -390,6 +390,15 @@ export function Chat({
           }
         }
       }
+      // 本次提问的全部思考合并为一块（同工具调用组的做法）：每轮一条 assistant 消息
+      // 各带一段思考，散开就是好几个「思考」折叠行，收集拼接后整段只出一个入口；
+      // 任一轮还在流式输出思考就显示「思考中…」
+      const thinkParts: string[] = []
+      let thinkingActive = false
+      for (const r of b.replies) {
+        if (r.thinking) thinkParts.push(r.thinking)
+        if (r.thinkingActive) thinkingActive = true
+      }
       return (
         <div key={b.user?.id ?? `blk-${bi}`} data-mid={b.user?.id} className="flex flex-col gap-4">
           {b.user && <UserBubble text={b.user.text} attachments={b.user.attachments} onEdit={onEditMessage} />}
@@ -404,16 +413,16 @@ export function Chat({
               {(live || elapsedMs != null) && (
                 <ElapsedLabel live={live} liveSince={workSince} now={now} elapsedMs={elapsedMs} />
               )}
+              {(thinkParts.length > 0 || thinkingActive) && (
+                <ThinkingBlock text={thinkParts.join("\n\n")} active={thinkingActive} />
+              )}
               {b.tools.length > 0 && (
                 <ToolCallGroup tools={b.tools} onOpenQuestion={() => setQClosed(false)} />
               )}
               {b.replies
-                .filter((r) => r.text || r.thinking || r.thinkingActive || r.media?.length)
+                .filter((r) => r.text || r.media?.length)
                 .map((item) => (
                   <div key={item.id} className="flex flex-col gap-1.5">
-                    {(item.thinking || item.thinkingActive) && (
-                      <ThinkingBlock text={item.thinking} active={item.thinkingActive} />
-                    )}
                     {item.text && <Markdown text={item.text} />}
                     {/* 本轮产出的多媒体（生成图片/视频/音频）：在最终回答里集中展示 */}
                     {item.media && item.media.length > 0 && <MediaList atts={item.media} />}
