@@ -1092,7 +1092,7 @@ func (s *server) handleMCPConfigPut(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Command = strings.TrimSpace(cfg.Command)
 		cfg.URL = strings.TrimSpace(cfg.URL)
-		if cfg.Command == "" && cfg.URL == "" {
+		if cfg.Command == "" && cfg.URL == "" && !cfg.Builtin {
 			writeErr(w, fmt.Sprintf("MCP 服务器 %s 需要填写启动命令或 URL", name), http.StatusBadRequest)
 			return
 		}
@@ -1103,6 +1103,8 @@ func (s *server) handleMCPConfigPut(w http.ResponseWriter, r *http.Request) {
 		servers[name] = cfg
 	}
 	s.cfg.MCPServers = servers
+	// 认领/重新解析内置插件条目（builtin 标记与 exe 路径为内存态，Save 会清空其 command）
+	s.cfg.BuiltinMCPServers()
 	if err := s.cfg.Save(s.opts.ConfigPath); err != nil {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1111,7 +1113,7 @@ func (s *server) handleMCPConfigPut(w http.ResponseWriter, r *http.Request) {
 	if mgr := s.mcpManager(); mgr != nil {
 		go func() {
 			mgr.Reset()
-			mgr.Start(context.Background(), servers)
+			mgr.Start(context.Background(), s.cfg.MCPServers)
 			s.refreshMCPTools()
 		}()
 	}

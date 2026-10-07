@@ -160,12 +160,17 @@ func (p *ProviderConfig) HasModel(model string) bool {
 }
 
 // MCPServerConfig 描述一个 MCP 服务器：command（stdio）或 url（streamable HTTP）二选一。
+// Description 供设置界面展示，并注入系统提示词让模型知道该服务器何时可用。
+// Builtin 标记随安装包内置的 MCP 插件：其 command 是机器相关的绝对路径，Save 时不落盘，
+// 运行时由 BuiltinMCPServers 按目录重新解析。
 type MCPServerConfig struct {
-	Command  string            `json:"command,omitempty"`
-	Args     []string          `json:"args,omitempty"`
-	Env      map[string]string `json:"env,omitempty"`
-	URL      string            `json:"url,omitempty"`
-	Disabled bool              `json:"disabled,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Disabled    bool              `json:"disabled,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Builtin     bool              `json:"builtin,omitempty"`
 }
 
 // Config 是 omni 的顶层配置。
@@ -238,7 +243,7 @@ func Default() *Config {
 }
 
 // Load 从路径加载配置；path 为空则尝试默认路径。文件不存在时返回默认配置且不报错。
-// builtinMCPServers 扫描内置插件目录，把其中的可执行文件自动注册为
+// BuiltinMCPServers 扫描内置插件目录，把其中的可执行文件自动注册为
 // MCP 服务器（名为文件名去扩展名）。扫描范围：
 //   - 工作目录 .omni/mcp/（本地开发构建产物，见 dev/README.md）
 //   - 数据目录 mcp/（~/.local/share/omni/mcp）
@@ -246,7 +251,17 @@ func Default() *Config {
 //
 // 配置里已有同名条目（包括已停用的）默认不覆盖，保留用户配置；
 // 但条目的 command 文件已不存在时视为失效路径，改用内置插件路径（env 等字段保留）。
-func (c *Config) builtinMCPServers() {
+// builtinMCPDescs 是内置 MCP 插件的默认描述（配置里没填描述时回填，注入系统提示词用）。
+var builtinMCPDescs = map[string]string{
+	"pdf":   "PDF 读/写（read_pdf 提取文本；write_pdf 文本生成 PDF，支持中文）",
+	"xlsx":  "Excel 读/写（read_xlsx 读表；write_xlsx 多表生成，列宽/表头加粗/冻结）",
+	"docx":  "Word 读/写（read_docx 提取正文；write_docx 标题/段落/列表/表格生成）",
+	"pptx":  "PPT 读/写（read_pptx 提取文本；write_pptx 标题/要点/备注生成）",
+	"agnes": "Agnes 生图 / 生视频（需 AGNES_API_KEY）",
+	"mimo":  "MiMo 语音合成（需 MIMO_API_KEY）",
+}
+
+func (c *Config) BuiltinMCPServers() {
 	dirs := []string{
 		filepath.Join(".omni", "mcp"),
 		filepath.Join(DefaultDataDir(), "mcp"),
@@ -257,6 +272,8 @@ func (c *Config) builtinMCPServers() {
 	if exe, err := os.Executable(); err == nil {
 		dirs = append(dirs, filepath.Dir(exe))
 	}
+	// 收集每个内置插件 exe 的解析路径（靠前的目录优先）
+	builtinPath := map[string]string{}
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -274,24 +291,35 @@ func (c *Config) builtinMCPServers() {
 				continue
 			}
 			server := strings.TrimSuffix(name, filepath.Ext(name))
-			if c.MCPServers == nil {
-				c.MCPServers = map[string]MCPServerConfig{}
-			}
-			// 同名条目保留用户配置；但 command 指向的文件已不存在（如卸载后残留的
-			// 旧开发路径）视为失效，用内置路径覆盖——env 等其他字段仍保留。
-			if cur, ok := c.MCPServers[server]; ok {
-				if _, err := os.Stat(cur.Command); err == nil {
-					continue
-				}
-				if cur.Command == "" || cur.URL != "" { // HTTP 或未填 command 的不算失效
-					continue
-				}
-				cur.Command = filepath.Join(dir, name)
-				c.MCPServers[server] = cur
+			if _, ok := builtinPath[server]; ok {
 				continue
 			}
-			c.MCPServers[server] = MCPServerConfig{Command: filepath.Join(dir, name)}
+			builtinPath[server] = filepath.Join(dir, name)
 		}
+	}
+	if c.MCPServers == nil {
+		c.MCPServers = map[string]MCPServerConfig{}
+	}
+	// 逐个落实内置条目：新建、回填（command 被 Save 清空）、认领（旧配置里残留的
+	// 本机绝对路径，按 command 文件名与插件名一致认定）。运行时解析出的路径只存内存，
+	// Save 会清空 builtin 条目的 command，配置里不保留机器相关路径。
+	for server, path := range builtinPath {
+		cur, ok := c.MCPServers[server]
+		if ok && cur.URL != "" {
+			continue // HTTP 型用户配置优先
+		}
+		if ok && !cur.Builtin {
+			curBase := strings.ToLower(strings.TrimSuffix(filepath.Base(cur.Command), filepath.Ext(filepath.Base(cur.Command))))
+			if curBase != strings.ToLower(server) {
+				continue // 同名但指向别的可执行文件，视为用户自建，不动
+			}
+		}
+		cur.Command = path
+		cur.Builtin = true
+		if cur.Description == "" {
+			cur.Description = builtinMCPDescs[server]
+		}
+		c.MCPServers[server] = cur
 	}
 }
 
@@ -342,18 +370,30 @@ func Load(path string) (*Config, error) {
 			}
 		}
 	}
-	cfg.builtinMCPServers()
+	cfg.BuiltinMCPServers()
 	return cfg, nil
 }
 
 // Save 将配置写为 JSON。
 func (c *Config) Save(path string) error {
 	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o644); err != nil {
 			return err
 		}
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	out := *c
+	if c.MCPServers != nil {
+		out.MCPServers = make(map[string]MCPServerConfig, len(c.MCPServers))
+		for name, srv := range c.MCPServers {
+			if srv.Builtin {
+				// 内置插件路径是机器相关的，不落盘；重启后由 BuiltinMCPServers 重新解析
+				srv.Command = ""
+				srv.Args = nil
+			}
+			out.MCPServers[name] = srv
+		}
+	}
+	data, err := json.MarshalIndent(&out, "", "  ")
 	if err != nil {
 		return err
 	}

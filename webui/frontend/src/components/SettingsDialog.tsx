@@ -155,12 +155,16 @@ interface MCPDraft {
   name: string
   kind: "stdio" | "http"
   command: string
+  /** 内置插件的真实 exe 路径（command 显示为屏蔽文案）；非内置为空 */
+  builtinCmd: string
   argsText: string
   /** 环境变量键值列表（左 KEY 右值，可增删多行） */
   envRows: { key: string; value: string }[]
   url: string
   disabled: boolean
   isNew: boolean
+  /** 用途描述（列表展示 + 注入系统提示词） */
+  description: string
 }
 
 function emptyMcpDraft(): MCPDraft {
@@ -168,11 +172,13 @@ function emptyMcpDraft(): MCPDraft {
     name: "",
     kind: "stdio",
     command: "",
+    builtinCmd: "",
     argsText: "",
     envRows: [],
     url: "",
     disabled: false,
     isNew: true,
+    description: "",
   }
 }
 
@@ -180,6 +186,18 @@ function emptyMcpDraft(): MCPDraft {
 const MCP_ENV_KEYS: Record<string, string[]> = {
   agnes: ["AGNES_API_KEY", "AGNES_IMAGE_MODEL", "AGNES_VIDEO_MODEL"],
   mimo: ["MIMO_API_KEY", "MIMO_TTS_MODEL"],
+}
+
+// 随桌面端分发的内置 MCP 插件名（dev/ 构建、打进 resources/bin）。
+// 编辑弹窗里把它们的完整 exe 路径屏蔽为「内置 <名> 插件」，保存时原样回填，
+// 避免把本机绝对路径摊在界面与配置里。
+const BUILTIN_MCP_NAMES = new Set(["pdf", "xlsx", "docx", "pptx", "agnes", "mimo"])
+
+function builtinMcpMask(cmd: string): string | null {
+  const base = cmd.replace(/\\/g, "/").split("/").pop()?.toLowerCase()
+  if (!base) return null
+  const name = base.replace(/\.(exe|bin)$/, "")
+  return BUILTIN_MCP_NAMES.has(name) ? name : null
 }
 
 // 已知插件环境变量的默认值（预填进输入框，用户可改）
@@ -381,15 +399,19 @@ export function SettingsDialog({
   const startEditMcp = (name: string) => {
     setErr("")
     const cfg = mcpServers[name] ?? {}
+    // 内置插件：完整 exe 路径是机器相关的，界面只展示标签，保存时回填
+    const mask = builtinMcpMask(cfg.command ?? "") || (cfg.builtin ? name : null)
     setMcpDraft({
       name,
       kind: cfg.url ? "http" : "stdio",
-      command: cfg.command ?? "",
+      command: mask ? t("se.mcpBuiltinCmd", { name: mask }) : (cfg.command ?? ""),
+      builtinCmd: mask ? (cfg.command ?? "") : "",
       argsText: (cfg.args ?? []).join(" "),
       envRows: seedEnvRows(name, cfg.env),
       url: cfg.url ?? "",
       disabled: Boolean(cfg.disabled),
       isNew: false,
+      description: cfg.description ?? "",
     })
   }
 
@@ -410,12 +432,14 @@ export function SettingsDialog({
     }
     next[name] =
       mcpDraft.kind === "http"
-        ? { url: mcpDraft.url.trim(), disabled: mcpDraft.disabled }
+        ? { url: mcpDraft.url.trim(), disabled: mcpDraft.disabled, description: mcpDraft.description.trim() }
         : {
-            command: mcpDraft.command.trim(),
+            command: mcpDraft.builtinCmd || mcpDraft.command.trim(),
             args: mcpDraft.argsText.split(/\s+/).filter(Boolean),
             env,
             disabled: mcpDraft.disabled,
+            description: mcpDraft.description.trim(),
+            builtin: mcpDraft.builtinCmd !== "",
           }
     setSaving(true)
     setErr("")
@@ -702,7 +726,7 @@ export function SettingsDialog({
                               className="shrink-0"
                               onClick={() => void toggleSkill(s.name, !s.disabled)}
                             >
-                              {s.disabled ? t("se.disable") : t("se.enable")}
+                              {s.disabled ? t("se.enable") : t("se.disable")}
                             </Button>
                           </div>
                         ))}
@@ -784,12 +808,22 @@ export function SettingsDialog({
                                 </div>
                               </div>
 
+                              <div className="flex flex-col gap-1.5">
+                                <Label className="text-muted-foreground text-xs">{t("se.mcpDesc")}</Label>
+                                <Input
+                                  value={mcpDraft.description}
+                                  onChange={(e) => setMcpDraft({ ...mcpDraft, description: e.target.value })}
+                                  placeholder={t("se.mcpDescPh")}
+                                />
+                              </div>
+
                               {mcpDraft.kind === "stdio" ? (
                                 <>
                                   <div className="flex flex-col gap-1.5">
                                     <Label className="text-muted-foreground text-xs">{t("se.mcpCommand")}</Label>
                                     <Input
                                       value={mcpDraft.command}
+                                      disabled={mcpDraft.builtinCmd !== ""}
                                       onChange={(e) => setMcpDraft({ ...mcpDraft, command: e.target.value })}
                                       placeholder="npx"
                                     />
@@ -878,7 +912,7 @@ export function SettingsDialog({
                                   size="sm"
                                   onClick={() => setMcpDraft({ ...mcpDraft, disabled: !mcpDraft.disabled })}
                                 >
-                                  {mcpDraft.disabled ? t("se.disable") : t("se.enable")}
+                                  {mcpDraft.disabled ? t("se.enable") : t("se.disable")}
                                 </Button>
                               </div>
 
@@ -909,41 +943,51 @@ export function SettingsDialog({
                           return (
                             <div
                               key={name}
-                              className="group flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                              className="group flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
                             >
                               {st?.connected ? (
-                                <CheckCircle2Icon className="size-4 shrink-0 text-green-600" />
+                                <CheckCircle2Icon className="size-4 shrink-0 text-green-600 mt-0.5" />
                               ) : (
-                                <CircleAlertIcon className="text-destructive size-4 shrink-0" />
+                                <CircleAlertIcon className="text-destructive size-4 shrink-0 mt-0.5" />
                               )}
-                              <span className="font-medium">{name}</span>
-                              {cfg.disabled && <Badge variant="outline">{t("se.disable")}</Badge>}
-                              <span className="text-muted-foreground w-full text-xs sm:w-auto sm:flex-1">
-                                {st?.connected ? t("se.mcpTools", { n: st.tool_count }) : st?.error ? st.error : ""}
-                              </span>
-                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">{name}</span>
+                                  {cfg.disabled && <Badge variant="outline">{t("se.disable")}</Badge>}
+                                  <span className="text-muted-foreground truncate text-xs">
+                                    {st?.connected ? t("se.mcpTools", { n: st.tool_count }) : st?.error ? st.error : ""}
+                                  </span>
+                                </div>
+                                {cfg.description && (
+                                  <div className="text-muted-foreground text-xs [overflow-wrap:anywhere] line-clamp-1">
+                                    {cfg.description}
+                                  </div>
+                                )}
+                                {envMissing && (
+                                  <div className="text-amber-600 dark:text-amber-400 text-xs">
+                                    {t("se.mcpEnvMissing", { hint: t(envHintKey) })}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <div className="opacity-0 transition-opacity group-hover:opacity-100">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() => startEditMcp(name)}
+                                    title={t("se.mcpEdit")}
+                                  >
+                                    <PencilIcon />
+                                  </Button>
+                                </div>
                                 <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() => startEditMcp(name)}
-                                  title={t("se.mcpEdit")}
+                                  variant={cfg.disabled ? "outline" : "secondary"}
+                                  size="sm"
+                                  onClick={() => void toggleMcp(name)}
                                 >
-                                  <PencilIcon />
+                                  {cfg.disabled ? t("se.enable") : t("se.disable")}
                                 </Button>
                               </div>
-                              <Button
-                                variant={cfg.disabled ? "outline" : "secondary"}
-                                size="sm"
-                                className="shrink-0"
-                                onClick={() => void toggleMcp(name)}
-                              >
-                                {cfg.disabled ? t("se.disable") : t("se.enable")}
-                              </Button>
-                              {envMissing && (
-                                <div className="text-amber-600 dark:text-amber-400 w-full text-xs">
-                                  {t("se.mcpEnvMissing", { hint: t(envHintKey) })}
-                                </div>
-                              )}
                             </div>
                           )
                         })}

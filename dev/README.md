@@ -6,10 +6,10 @@
 
 | 目录 | 工具 | 说明 |
 |---|---|---|
-| `pdf` | `read_pdf` | 提取 PDF 文本，按页返回。仅文本型 PDF，不支持扫描件/加密文件 |
-| `xlsx` | `read_xlsx`、`write_xlsx` | 读取/生成 .xlsx/.xlsm（markdown 表格 / 二维行数组）。不支持 .xls 老格式 |
-| `docx` | `read_docx` | 提取 .docx 正文（标题映射 markdown #、表格映射 markdown 表）。不支持 .doc 老格式 |
-| `pptx` | `read_pptx` | 按页提取 .pptx 文本，含演讲者备注。不支持 .ppt 老格式 |
+| `pdf` | `read_pdf`、`write_pdf` | 提取 PDF 文本（仅文本型，不支持扫描件/加密）；从纯文本生成 PDF（A4、中文按 STSong-Light 渲染，仅文本版式无表格/图片） |
+| `xlsx` | `read_xlsx`、`write_xlsx` | 读取 .xlsx/.xlsm（markdown 表格）；生成多工作表（列宽/表头加粗/冻结首行）。不支持 .xls 老格式 |
+| `docx` | `read_docx`、`write_docx` | 提取 .docx 正文；从内容块（标题/段落/列表/表格）生成 .docx。不支持 .doc 老格式 |
+| `pptx` | `read_pptx`、`write_pptx` | 按页提取 .pptx 文本；从 slides（标题/要点/备注）生成 16:9 .pptx。不支持 .ppt 老格式 |
 | `agnes` | `generate_image`、`generate_video` | Agnes AI 生图（agnes-image-2.5-flash / 2.1-flash，文生图与图生图）与生视频（agnes-video-2.5 / 2.5-flash，异步轮询）。需环境变量 `AGNES_API_KEY` |
 | `mimo` | `tts` | MiMo 语音合成（mimo-v2.5-tts / voicedesign / voiceclone）。需环境变量 `MIMO_API_KEY` |
 

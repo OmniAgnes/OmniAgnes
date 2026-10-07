@@ -35,7 +35,12 @@ func main() {
 			Title:        "读取 pptx",
 			ReadOnlyHint: true,
 		},
-	}, readPPTX)
+		}, readPPTX)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "write_pptx",
+		Description: "生成 .pptx：传入 slides（每页 title/bullets/notes），输出 16:9 演示文稿；bullets 为项目符号要点，notes 进演讲者备注。",
+		Annotations: &mcp.ToolAnnotations{Title: "写入 pptx"},
+	}, writePPTX)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintln(os.Stderr, "omni-pptx:", err)
 		os.Exit(1)

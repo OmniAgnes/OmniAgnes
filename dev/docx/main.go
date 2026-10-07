@@ -34,7 +34,12 @@ func main() {
 			Title:        "读取 docx",
 			ReadOnlyHint: true,
 		},
-	}, readDocx)
+		}, readDocx)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "write_docx",
+		Description: "生成 .docx：传入 title 与内容块（heading/段落/列表/表格），输出可在 Word 打开的文件；表格首行自动加粗为表头。",
+		Annotations: &mcp.ToolAnnotations{Title: "写入 docx"},
+	}, writeDocx)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintln(os.Stderr, "omni-docx:", err)
 		os.Exit(1)

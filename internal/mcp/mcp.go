@@ -24,12 +24,13 @@ const Prefix = "mcp__"
 
 // Status 是单个 MCP 服务器的连接状态（供 /mcp 命令与 webui 展示）。
 type Status struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`   // stdio | http
-	Target    string `json:"target"` // 启动命令或 URL
-	Connected bool   `json:"connected"`
-	ToolCount int    `json:"tool_count"`
-	Err       string `json:"error,omitempty"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"` // stdio | http
+	Target      string `json:"target"`
+	Connected   bool   `json:"connected"`
+	ToolCount   int    `json:"tool_count"`
+	Description string `json:"description,omitempty"`
+	Err         string `json:"error,omitempty"`
 }
 
 // Manager 持有全部 MCP 会话与其连接状态。
@@ -94,7 +95,7 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg config.MCPServer
 	if cfg.URL != "" {
 		kind, target = "http", cfg.URL
 	}
-	st := &Status{Name: name, Kind: kind, Target: target}
+	st := &Status{Name: name, Kind: kind, Target: target, Description: strings.TrimSpace(cfg.Description)}
 	m.statuses[name] = st
 
 	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

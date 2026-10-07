@@ -30,7 +30,12 @@ func main() {
 			Title:        "读取 PDF",
 			ReadOnlyHint: true,
 		},
-	}, readPDF)
+		}, readPDF)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "write_pdf",
+		Description: "生成 .pdf：传入 title 与纯文本 content（\\n 分行，-/* 行变项目符号），A4 竖版、支持中文（STSong-Light）。仅文本版式，无表格/图片/样式。",
+		Annotations: &mcp.ToolAnnotations{Title: "写入 PDF"},
+	}, writePDF)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintln(os.Stderr, "omni-pdf:", err)
 		os.Exit(1)

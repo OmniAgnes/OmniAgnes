@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,10 +25,18 @@ type readXLSXArgs struct {
 }
 
 type writeXLSXArgs struct {
-	Path      string  `json:"path" jsonschema:"目标文件路径；已存在时报错（除非 overwrite）"`
-	Rows      [][]any `json:"rows" jsonschema:"二维行数组，第一行通常为表头，如 [[\"名称\",\"数量\"],[\"A\",1]]"`
-	Sheet     string  `json:"sheet,omitempty" jsonschema:"工作表名，默认 Sheet1"`
-	Overwrite bool    `json:"overwrite,omitempty" jsonschema:"目标文件已存在时是否覆盖"`
+	Path      string `json:"path" jsonschema:"目标文件路径；已存在时报错（除非 overwrite）"`
+	Sheets    []xlsxSheet `json:"sheets" jsonschema:"工作表序列，不能为空"`
+	Overwrite bool `json:"overwrite,omitempty" jsonschema:"目标文件已存在时是否覆盖"`
+}
+
+// xlsxSheet 一个工作表。
+type xlsxSheet struct {
+	Name       string  `json:"name,omitempty" jsonschema:"工作表名（省略按 Sheet1/Sheet2… 编号）"`
+	Rows       [][]any `json:"rows" jsonschema:"二维行数组，第一行通常为表头，如 [[\"名称\",\"数量\"],[\"A\",1]]"`
+	ColWidths  []int   `json:"col_widths,omitempty" jsonschema:"逐列宽度（Excel 字符宽，默认约 9），未指定的列保持默认"`
+	BoldHeader *bool   `json:"bold_header,omitempty" jsonschema:"表头（首行）加粗，默认 true，传 false 关闭"`
+	FreezeTop  bool    `json:"freeze_top,omitempty" jsonschema:"冻结首行（滚动时表头保持可见）"`
 }
 
 func main() {
@@ -44,7 +51,7 @@ func main() {
 	}, readXLSX)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "write_xlsx",
-		Description: "从二维行数组生成 xlsx 文件；第一行通常为表头。文件已存在时报错，除非 overwrite=true。",
+		Description: "生成 xlsx 文件（可多工作表）：每个 sheet 传二维 rows；支持列宽、表头加粗、冻结首行。文件已存在时报错，除非 overwrite=true。",
 		Annotations: &mcp.ToolAnnotations{Title: "写入 xlsx"},
 	}, writeXLSX)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -139,8 +146,8 @@ func writeXLSX(ctx context.Context, req *mcp.CallToolRequest, args writeXLSXArgs
 	if strings.TrimSpace(args.Path) == "" {
 		return nil, nil, fmt.Errorf("缺少 path 参数")
 	}
-	if len(args.Rows) == 0 {
-		return nil, nil, fmt.Errorf("rows 不能为空")
+	if len(args.Sheets) == 0 {
+		return nil, nil, fmt.Errorf("sheets 不能为空")
 	}
 	path, err := resolveParent(args.Path)
 	if err != nil {
@@ -152,25 +159,71 @@ func writeXLSX(ctx context.Context, req *mcp.CallToolRequest, args writeXLSXArgs
 
 	f := excelize.NewFile()
 	defer f.Close()
-	sheet := strings.TrimSpace(args.Sheet)
-	if sheet == "" {
-		sheet = "Sheet1"
-	}
-	if sheet != "Sheet1" {
-		if err := f.SetSheetName("Sheet1", sheet); err != nil {
-			return nil, nil, fmt.Errorf("write_xlsx: %w", err)
+	totalRows := 0
+	for i, sh := range args.Sheets {
+		if len(sh.Rows) == 0 {
+			return nil, nil, fmt.Errorf("write_xlsx: 第 %d 个 sheet 的 rows 不能为空", i+1)
 		}
-	}
-	for i, row := range args.Rows {
-		cell := "A" + strconv.Itoa(i+1)
-		if err := f.SetSheetRow(sheet, cell, &row); err != nil {
-			return nil, nil, fmt.Errorf("write_xlsx: 第 %d 行写入失败: %w", i+1, err)
+		name := strings.TrimSpace(sh.Name)
+		if name == "" {
+			name = fmt.Sprintf("Sheet%d", i+1)
+		}
+		if i == 0 {
+			if err := f.SetSheetName("Sheet1", name); err != nil {
+				return nil, nil, fmt.Errorf("write_xlsx: %w", err)
+			}
+		} else if _, err := f.NewSheet(name); err != nil {
+			return nil, nil, fmt.Errorf("write_xlsx: 新建 %q 失败: %w", name, err)
+		}
+		for r, row := range sh.Rows {
+			cell, err := excelize.CoordinatesToCellName(1, r+1)
+			if err != nil {
+				return nil, nil, fmt.Errorf("write_xlsx: %q 第 %d 行: %w", name, r+1, err)
+			}
+			if err := f.SetSheetRow(name, cell, &row); err != nil {
+				return nil, nil, fmt.Errorf("write_xlsx: %q 第 %d 行写入失败: %w", name, r+1, err)
+			}
+		}
+		totalRows += len(sh.Rows)
+		for ci, w := range sh.ColWidths {
+			if w > 0 {
+				_ = f.SetColWidth(name, colName(ci+1), colName(ci+1), float64(w))
+			}
+		}
+		// 表头加粗（默认开）
+		if (sh.BoldHeader == nil || *sh.BoldHeader) {
+			style, err := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}})
+			if err == nil {
+				for c := 0; c < len(sh.Rows[0]); c++ {
+					cell := colName(c+1) + "1"
+					_ = f.SetCellStyle(name, cell, cell, style)
+				}
+			}
+		}
+		if sh.FreezeTop && len(sh.Rows) > 1 {
+			_ = f.SetPanes(name, &excelize.Panes{
+				Freeze:      true,
+				YSplit:      1,
+				TopLeftCell: "A2",
+				ActivePane:  "bottomLeft",
+			})
 		}
 	}
 	if err := f.SaveAs(path); err != nil {
 		return nil, nil, fmt.Errorf("write_xlsx: %w", err)
 	}
-	return textResult(fmt.Sprintf("已生成 %s（%d 行 × %d 列，工作表 %s）", path, len(args.Rows), rowWidth(args.Rows), sheet)), nil, nil
+	return textResult(fmt.Sprintf("已生成 %s（%d 个工作表，共 %d 行）", path, len(args.Sheets), totalRows)), nil, nil
+}
+
+// colName 把 1 基列号转成 Excel 列名（1→A，27→AA）。
+func colName(n int) string {
+	s := ""
+	for n > 0 {
+		n--
+		s = string(rune('A'+n%26)) + s
+		n /= 26
+	}
+	return s
 }
 
 // textResult 以纯文本内容返回（不用 structured content，避免客户端拿到 JSON 编码文本）。
@@ -207,16 +260,6 @@ func mapCells(cols []string) []string {
 		out[i] = c
 	}
 	return out
-}
-
-func rowWidth(rows [][]any) int {
-	w := 0
-	for _, r := range rows {
-		if len(r) > w {
-			w = len(r)
-		}
-	}
-	return w
 }
 
 // resolvePath 解析已存在的文件；相对路径基于 MCP 进程工作目录。

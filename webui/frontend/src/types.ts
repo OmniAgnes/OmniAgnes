@@ -112,6 +112,10 @@ export interface MCPServerConfig {
   env?: Record<string, string>
   url?: string
   disabled?: boolean
+  /** 用途描述：设置界面展示，并注入系统提示词供模型自动选用 */
+  description?: string
+  /** 随安装包内置的 MCP 插件（路径由内核解析，不落盘） */
+  builtin?: boolean
 }
 
 // 技能 / MCP 的落盘位置（供「打开目录」与粘贴导入用）

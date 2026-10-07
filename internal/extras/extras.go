@@ -4,6 +4,8 @@ package extras
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
 
 	"omni/internal/mcp"
@@ -83,6 +85,19 @@ func (e *Extras) ExtraPrompt(projectDir string) string {
 		if len(enabled) > 0 {
 			b.WriteString("\n\n## 可用技能\n")
 			b.WriteString(skills.Summary(enabled))
+		}
+	}
+	if e.MCP != nil {
+		var lines []string
+		for _, st := range e.MCP.Statuses() {
+			if st.Connected && strings.TrimSpace(st.Description) != "" {
+				lines = append(lines, fmt.Sprintf("- %s: %s", st.Name, st.Description))
+			}
+		}
+		if len(lines) > 0 {
+			sort.Strings(lines)
+			b.WriteString("\n\n## MCP 工具\n以下 MCP 服务器已连接，工具名以 mcp__<服务器名>__ 开头；任务匹配描述时主动使用其工具：\n")
+			b.WriteString(strings.Join(lines, "\n"))
 		}
 	}
 	return b.String()

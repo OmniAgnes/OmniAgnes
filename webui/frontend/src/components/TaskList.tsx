@@ -9,6 +9,21 @@ import type { TaskMeta } from "@/types"
 // 默认显示 5 条；「显示更多」每次再加载 5 条
 const VISIBLE = 5
 
+/** 相对时间文案：刚刚 / N 分钟前 / N 小时前 / N 天前；超过 30 天显示 MM-DD */
+function relTime(t: (k: string, v?: Record<string, string | number>) => string, iso: string): string {
+  const ts = new Date(iso).getTime()
+  if (!Number.isFinite(ts)) return ""
+  const min = Math.floor(Math.max(0, Date.now() - ts) / 60000)
+  if (min < 1) return t("s.agoNow")
+  if (min < 60) return t("s.agoMin", { n: min })
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return t("s.agoHour", { n: hr })
+  const day = Math.floor(hr / 24)
+  if (day < 30) return t("s.agoDay", { n: day })
+  const d = new Date(ts)
+  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+
 interface TaskListProps {
   tasks: TaskMeta[]
   activeTaskId: string | null
@@ -48,7 +63,8 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           >
             {task.title}
           </button>
-          {/* 运行中：转圈 + 状态文字（处理中/重试 n/10），切走任务后台也在跑也看得见；否则悬停显示删除 */}
+          {/* 运行中：转圈 + 状态文字（处理中/重试 n/10），切走任务后台也在跑也看得见；
+              空闲：默认显示相对时间（刚刚/N 天前），悬停时时间隐藏、切换为删除按钮 */}
           {running[task.id] ? (
             <span
               className="text-muted-foreground flex shrink-0 items-center gap-1 text-[11px]"
@@ -58,18 +74,23 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
               <span className="max-w-20 truncate">{running[task.id]}</span>
             </span>
           ) : (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
-              onClick={(e) => {
-                e.stopPropagation()
-                onDelete(task.id, task.title)
-              }}
-              title={t("s.deleteTask")}
-            >
-              <XIcon />
-            </Button>
+            <>
+              <span className="text-muted-foreground w-14 shrink-0 text-right text-[11px] tabular-nums group-hover:hidden">
+                {relTime(t, task.updated_at)}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete(task.id, task.title)
+                }}
+                title={t("s.deleteTask")}
+              >
+                <XIcon />
+              </Button>
+            </>
           )}
         </div>
       ))}
