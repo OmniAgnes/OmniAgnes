@@ -117,6 +117,13 @@ jobs:
           cp webui/desktop/bin/omni-windows-x64.exe webui/desktop/bin/omni.exe
           ls -l webui/desktop/bin
 
+      # ⚠️ 打包前先用 electron-builder 自带 schema 校验 electron-builder.yml。
+      #    非法字段（如 linux.desktop 下平铺一个键）会让 electron-builder 起步就抛
+      #    "Invalid configuration object" 并浪费一整轮交叉编译；提前校验是秒级失败。
+      - name: 校验 electron-builder.yml 配置
+        run: npm run check:config
+        working-directory: webui/desktop
+
       # dist 脚本里已串 check-bin + --publish never；这里再显式传一遍发布参数。
       # --x64 --arm64：一次出双架构包（两个 flag 都要写——只传一个就只出那一个架构）。
       # 产物：omni-Setup-x64.exe + omni-Setup-arm64.exe（artifactName 带 ${arch}），
@@ -287,6 +294,11 @@ jobs:
           iconutil -c icns build/icon.iconset -o build/icon.icns
           ls -l build/icon.icns
 
+      # 打包前 schema 校验（理由同 Windows job：非法配置要秒级失败，别浪费交叉编译）
+      - name: 校验 electron-builder.yml 配置
+        run: npm run check:config
+        working-directory: webui/desktop
+
       # dist:mac 已串 check-bin。这里额外关掉签名自动发现，
       # 否则没有钥匙串证书时 electron-builder 会要求签名而失败。
       # --arm64 --x64：一次出双架构包（mac.artifactName 带 ${arch}，互不覆盖）。
@@ -426,6 +438,12 @@ jobs:
           cp webui/desktop/bin/omni-linux-x64 webui/desktop/bin/omni
           chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-linux-* webui/desktop/bin/mcp-linux-*/*
           ls -l webui/desktop/bin
+
+      # 打包前 schema 校验（理由同 Windows job）。v1.0.12 首次跑这个 job 就是
+      # 因为 linux.desktop 写了非法字段而在 electron-builder 起步时炸掉，白跑一轮编译。
+      - name: 校验 electron-builder.yml 配置
+        run: npm run check:config
+        working-directory: webui/desktop
 
       # AppImage 需要 FUSE 才能挂载运行，ubuntu runner 上没有，
       # 打 AppImage 用 electron-builder 内置的 linuxDeploy/AppImage 工具链，不依赖 FUSE。

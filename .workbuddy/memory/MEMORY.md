@@ -15,6 +15,10 @@
 - 发版：打 tag v* → `.github/workflows/release.yml` **三平台**出包：Win NSIS（x64 固定名 omni-Setup.exe + arm64）、mac dmg（arm64/x64，未签名）、**Linux AppImage + deb（x64/arm64）**；mac 与 linux job 都是 `continue-on-error: true`（发版主体是 Windows）。CI 交叉编译内核用**备料名**（omni-<平台>-<架构>[.exe]）放 bin/，beforePack 钩子无条件覆盖正式名（顺序无关、幂等）。
 - **cp 到 `webui/desktop/bin/omni.exe` 报 `Device or resource busy`** = 旧 omni.exe 还在跑，先 `taskkill //F //IM omni.exe` 和 `taskkill //F //IM electron.exe` 再 cp（重启后后台任务显示 failed 是预期的，那是我自己杀的）。
 - **改内置技能必须改三份**：仓库源 `.omni/skills/` → `go run ./build/gen-builtin-skills` → `internal/skills/embedded/`；**全局 `~/.config/omni/skills/` 要手动 cp**——`SeedBuiltIn` 见目录已存在就跳过，永不覆盖（改了源文件全局旧副本不会更新）。
+- **发版前三处版本号一起查（v1.0.6~v1.0.11 连续漏了 6 次，v1.0.12 才补正）**：
+  ① `webui/desktop/package.json` 的 version；② `webui/desktop/package-lock.json` 的 `version` **与** `packages[""].version`（两处）；③ `webui/frontend/src/components/SettingsDialog.tsx` 的 `const APP_VERSION`（设置面板显示用）。
+  改了 ③ 必须 `npm run build` 重出 dist（go:embed 进内核）再 `go build -o omni.exe .`。
+  本地 `omni.exe --version` 显示 `main.go` 默认值 `0.2.0`，**不是 tag 号**（CI 用 `-ldflags -X main.version=${TAG}` 注入），别误判版本错。
 
 ## 已有约定
 - 会话历史：webui `agentFor` 创建 Agent 时必须传 `History: t.Messages` 恢复持久化消息。

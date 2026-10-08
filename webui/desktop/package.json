@@ -3,18 +3,22 @@
     "private": true,
     "version": "1.0.12",
     "productName": "OmniAgens",
+    "desktopName": "OmniAgens",
     "description": "OmniAgens desktop",
     "author": "OmniAgens",
     "main": "main.js",
     "scripts": {
         "start": "electron .",
         "check:bin": "node check-bin.mjs",
-        "dist": "npm run check:bin && electron-builder --win --publish never",
-        "dist:mac": "npm run check:bin && electron-builder --mac --publish never",
-        "dist:linux": "npm run check:bin && electron-builder --linux --publish never"
+        "check:config": "node scripts/validate-builder-config.cjs",
+        "dist": "npm run check:bin && npm run check:config && electron-builder --win --publish never",
+        "dist:mac": "npm run check:bin && npm run check:config && electron-builder --mac --publish never",
+        "dist:linux": "npm run check:bin && npm run check:config && electron-builder --linux --publish never"
     },
     "devDependencies": {
+        "ajv": "^8.20.0",
         "electron": "^38.0.0",
-        "electron-builder": "^26.15.3"
+        "electron-builder": "^26.15.3",
+        "js-yaml": "^4.1.0"
     }
 }

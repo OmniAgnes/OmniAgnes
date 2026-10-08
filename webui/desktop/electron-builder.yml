@@ -63,8 +63,20 @@ linux:
     - AppImage
     - deb
   artifactName: omni-Setup-${arch}.${ext}
-  desktop:
-    StartupWMClass: OmniAgens
+  # 窗口关联（任务栏图标/名称）靠 StartupWMClass 与 Electron 的 app_id 一致，
+  # 而 Electron 的 app_id 取自 package.json 的 desktopName —— 所以正确做法是
+  # 在 package.json 里设 desktopName + 这里开 syncDesktopName，让 electron-builder
+  # 自己把 .desktop 文件名与 StartupWMClass 同步过去（见 LinuxTargetHelper 的 wmClass 逻辑）。
+  #
+  # ⚠️ 别再手写 desktop.entry.StartupWMClass：
+  #   1) linux.desktop 只接受 desktopActions / entry 两个键
+  #      （schema: LinuxDesktopFile.additionalProperties = false），
+  #      平铺第三个键会让 electron-builder 起步就抛 "Invalid configuration object"
+  #      —— v1.0.12 首次跑 build-linux 就是这么炸的，白跑一轮交叉编译；
+  #   2) 即便写进 entry，手填值也可能与 desktopName 不同步导致桌面环境
+  #      关联不上窗口（图标名显示为 omni/electron）。
+  # 要改桌面分类名请改 package.json 的 productName；要加别的 .desktop 键用 entry 映射。
+  syncDesktopName: true
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

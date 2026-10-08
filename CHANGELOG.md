@@ -12,9 +12,11 @@
 - **新增 `build-linux` CI job**（`ubuntu-latest`，`continue-on-error: true` 与 macOS 同级）：交叉编译 linux amd64/arm64 内核与内置 MCP 插件进备料目录，`npx electron-builder --linux AppImage deb --x64 --arm64` 出包
 - **打包后强校验**：用 `file` 断言内核 ELF machine 匹配目标架构（`x86-64` / `aarch64`，防交叉轮忘换内核）、可执行位齐全、6 个 MCP 插件随包、4 个安装包产物齐全——任一不满足直接失败，不让错架构的包混上 Release
 - **新增 `npm run dist:linux`** 本地打包脚本
+- **新增配置 schema 校验**（`npm run check:config`）：用 electron-builder 自带的 `scheme.json` 静态校验 `electron-builder.yml`，并已接入 CI 三个打包 job 的 electron-builder 步骤之前。非法字段从「等一轮 CI 才炸」变成「本地秒级失败」，改配置不再靠猜
 
 ### 🐛 修复
 
+- **Linux 窗口关联改用官方机制**：`linux.syncDesktopName: true` + `package.json` 新增 `desktopName`，由 electron-builder 自动同步 .desktop 文件名与 `StartupWMClass`，保证 Linux 桌面环境能正确关联窗口（任务栏图标与名称）
 - **渲染兜底开关按平台拆分**：原先无条件关闭硬件加速 + `disable-gpu-compositing` + `CalculateNativeWinOcclusion`，这是 Windows 特有黑屏 bug 的补丁，照抄到 Linux 会让内置浏览器面板的视频与滚动明显卡顿。现在 Windows 维持原行为（可用 `OMNI_GPU=1` 强开），**Linux 默认保留硬件加速**，真遇到黑屏用 `OMNI_GPU=0` 退回软件渲染
 - **版本号三处对齐**：修正 v1.0.6 ~ v1.0.11 期间遗留的版本号漂移——`package.json` / `package-lock.json` 停在 1.0.5（tag 已到 v1.0.11），设置面板显示的 `APP_VERSION` 停在 v1.0.9。现统一为 v1.0.12
 
@@ -22,6 +24,7 @@
 
 - **`beforePack` 钩子接入 Linux**：`PLATFORMS` 增加 linux 映射；原本散落两处的「mac 才 chmod」判断收成 `NEEDS_CHMOD` 集合——Linux 与 macOS 同样缺少可执行位时主进程 spawn 会被系统拒绝
 - **`extraResources` 过滤规则**增加 `!omni-linux-*`，防止交叉编译备料被打进安装包
+- **`ajv` / `js-yaml` 显式声明为 devDependencies**（此前只是传递依赖被 hoist，改动 package.json 时容易被依赖树变动打断）
 
 ### 📝 说明
 
