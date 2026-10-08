@@ -19,6 +19,11 @@
   ① `webui/desktop/package.json` 的 version；② `webui/desktop/package-lock.json` 的 `version` **与** `packages[""].version`（两处）；③ `webui/frontend/src/components/SettingsDialog.tsx` 的 `const APP_VERSION`（设置面板显示用）。
   改了 ③ 必须 `npm run build` 重出 dist（go:embed 进内核）再 `go build -o omni.exe .`。
   本地 `omni.exe --version` 显示 `main.go` 默认值 `0.2.0`，**不是 tag 号**（CI 用 `-ldflags -X main.version=${TAG}` 注入），别误判版本错。
+- **改 `webui/desktop/electron-builder.yml` 后必跑 `npm run check:config`**（脚本 `scripts/validate-builder-config.cjs`，用 electron-builder 自带 `node_modules/app-builder-lib/scheme.json` + ajv 校验，已接进 CI 三个 job 的 electron-builder 之前）。**非法字段会让 electron-builder 起步就抛 "Invalid configuration object"，本地 Windows 又打不出 AppImage，不校验就只能等 CI 白跑一轮**（v1.0.12 就这么炸的）。
+  - 查字段是否合法的命令：`node -e "const s=require('./node_modules/app-builder-lib/scheme.json'); console.log(Object.keys(s.definitions.LinuxConfiguration.properties))"`
+  - **坑：`linux.desktop` 只接受 `desktopActions` / `entry` 两个键**（`LinuxDesktopFile.additionalProperties = false`），平铺第三个键直接炸。
+  - Linux 窗口关联（任务栏图标/名）**不要手写 `desktop.entry.StartupWMClass`**：Electron 的 app_id 取自 `package.json` 的 `desktopName`，两者必须一致才对得上；官方做法是 `package.json` 写 `desktopName` + `linux.syncDesktopName: true` 让工具自动同步。源码注释还注明 `StartupWMClass` 对 unicode 无效，手填不可靠。
+  - 脚本要用的 `ajv` / `js-yaml` **必须显式写进 desktop 的 devDependencies**，别指望 hoist（CI 跑 `npm ci`，lock 与 package.json 不一致会直接失败）。改 package.json 后用 `npm install --package-lock-only` 同步 lock。
 
 ## 已有约定
 - 会话历史：webui `agentFor` 创建 Agent 时必须传 `History: t.Messages` 恢复持久化消息。

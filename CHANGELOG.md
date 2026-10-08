@@ -2,9 +2,11 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## v1.0.12 (2026-10-08)
+## v1.0.13 (2026-10-08)
 
 桌面端正式支持 Linux：打 tag 后 CI 在 Windows / macOS / Linux 三平台各出双架构安装包。
+
+> v1.0.12 曾因 `electron-builder.yml` 里一个非法字段导致 `build-linux` job 起步即失败（Linux 包未产出，Windows/macOS 不受影响）。该问题已在 v1.0.13 修复并加了配置校验防线。
 
 ### 🆕 Linux 发版
 
@@ -16,9 +18,10 @@
 
 ### 🐛 修复
 
-- **Linux 窗口关联改用官方机制**：`linux.syncDesktopName: true` + `package.json` 新增 `desktopName`，由 electron-builder 自动同步 .desktop 文件名与 `StartupWMClass`，保证 Linux 桌面环境能正确关联窗口（任务栏图标与名称）
+- **Linux 打包配置非法字段导致 CI 失败**（v1.0.12 首发即踩）：`configuration.linux.desktop should be one of these: null`。根因是 `linux.desktop` 只接受 `desktopActions` / `entry` 两个键（schema 中 `LinuxDesktopFile.additionalProperties = false`），却平铺了第三个键 `StartupWMClass`，导致 electron-builder 起步就抛 `Invalid configuration object`
+- **Linux 窗口关联改用官方机制**：`linux.syncDesktopName: true` + `package.json` 新增 `desktopName`，由 electron-builder 自动同步 .desktop 文件名与 `StartupWMClass`，保证 Linux 桌面环境能正确关联窗口（任务栏图标与名称）。不再手填 `StartupWMClass`——Electron 的 `app_id` 取自 `desktopName`，两者必须一致，且工具源码注明该字段对 unicode 无效
 - **渲染兜底开关按平台拆分**：原先无条件关闭硬件加速 + `disable-gpu-compositing` + `CalculateNativeWinOcclusion`，这是 Windows 特有黑屏 bug 的补丁，照抄到 Linux 会让内置浏览器面板的视频与滚动明显卡顿。现在 Windows 维持原行为（可用 `OMNI_GPU=1` 强开），**Linux 默认保留硬件加速**，真遇到黑屏用 `OMNI_GPU=0` 退回软件渲染
-- **版本号三处对齐**：修正 v1.0.6 ~ v1.0.11 期间遗留的版本号漂移——`package.json` / `package-lock.json` 停在 1.0.5（tag 已到 v1.0.11），设置面板显示的 `APP_VERSION` 停在 v1.0.9。现统一为 v1.0.12
+- **版本号三处对齐**：修正 v1.0.6 ~ v1.0.11 期间遗留的版本号漂移——`package.json` / `package-lock.json` 停在 1.0.5（tag 已到 v1.0.11），设置面板显示的 `APP_VERSION` 停在 v1.0.9。现统一为 v1.0.13
 
 ### 📦 其他
 
