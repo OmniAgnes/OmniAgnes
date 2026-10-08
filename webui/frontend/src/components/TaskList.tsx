@@ -3,26 +3,12 @@ import { ChevronDownIcon, Loader2Icon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/lib/i18n"
+import { relTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import type { TaskMeta } from "@/types"
 
 // 默认显示 5 条；「显示更多」每次再加载 5 条
 const VISIBLE = 5
-
-/** 相对时间文案：刚刚 / N 分钟前 / N 小时前 / N 天前；超过 30 天显示 MM-DD */
-function relTime(t: (k: string, v?: Record<string, string | number>) => string, iso: string): string {
-  const ts = new Date(iso).getTime()
-  if (!Number.isFinite(ts)) return ""
-  const min = Math.floor(Math.max(0, Date.now() - ts) / 60000)
-  if (min < 1) return t("s.agoNow")
-  if (min < 60) return t("s.agoMin", { n: min })
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return t("s.agoHour", { n: hr })
-  const day = Math.floor(hr / 24)
-  if (day < 30) return t("s.agoDay", { n: day })
-  const d = new Date(ts)
-  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-}
 
 interface TaskListProps {
   tasks: TaskMeta[]
@@ -50,8 +36,9 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
         <div
           key={task.id}
           className={cn(
-            // 13px：比默认 text-xs(12) 明显大一号，又不跟文件夹名的 text-sm(14) 抢视觉
-            "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-[13px]",
+            // 13px：比默认 text-xs(12) 明显大一号，又不跟文件夹名的 text-sm(14) 抢视觉。
+            // relative：删除按钮绝对定位覆盖在最右，不占位，让时间真正贴最右。
+            "group hover:bg-sidebar-accent relative flex items-center rounded-md px-2 py-1 text-[13px]",
             activeTaskId === task.id && "bg-sidebar-accent",
           )}
         >
@@ -64,7 +51,7 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
             {task.title}
           </button>
           {/* 运行中：转圈 + 状态文字（处理中/重试 n/10），切走任务后台也在跑也看得见；
-              空闲：默认显示相对时间（刚刚/N 天前），悬停时时间隐藏、切换为删除按钮 */}
+              空闲：时间常驻最右；悬停时时间淡出、删除图标在原位浮现 */}
           {running[task.id] ? (
             <span
               className="text-muted-foreground flex shrink-0 items-center gap-1 text-[11px]"
@@ -75,13 +62,13 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
             </span>
           ) : (
             <>
-              <span className="text-muted-foreground w-14 shrink-0 text-right text-[11px] tabular-nums group-hover:hidden">
+              <span className="text-muted-foreground w-14 shrink-0 text-right text-[11px] tabular-nums transition-opacity group-hover:opacity-0">
                 {relTime(t, task.updated_at)}
               </span>
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+                className="text-muted-foreground absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100"
                 onClick={(e) => {
                   e.stopPropagation()
                   onDelete(task.id, task.title)

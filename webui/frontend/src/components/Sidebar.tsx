@@ -4,6 +4,7 @@ import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, Folde
 import { TaskList } from "@/components/TaskList"
 import { MobilePanel } from "@/components/MobilePanel"
 import { isDesktop } from "@/lib/platform"
+import { relTime } from "@/lib/time"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -415,8 +416,9 @@ function ProjectGroup(props: {
           <div
             key={task.id}
             className={cn(
-              // 同 TaskList：13px，比 text-xs 大一号，与文件夹行的 text-sm 拉开层次
-              "group hover:bg-sidebar-accent flex items-center rounded-md px-2 py-1 text-[13px]",
+              // 同 TaskList：13px，比 text-xs 大一号，与文件夹行的 text-sm 拉开层次；
+              // relative：删除按钮绝对定位覆盖最右，不占位，时间真正贴最右（用户要求）。
+              "group hover:bg-sidebar-accent relative flex items-center rounded-md px-2 py-1 text-[13px]",
               activeTaskId === task.id && "bg-sidebar-accent",
             )}
           >
@@ -428,22 +430,28 @@ function ProjectGroup(props: {
             >
               {task.title}
             </button>
-            {/* 运行中：常驻转圈动画（切走也在后台跑，让用户知道处理中）；否则悬停显示删除 */}
+            {/* 运行中：常驻转圈动画（切走也在后台跑，让用户知道处理中）；
+                空闲：时间常驻最右，悬停时时间淡出、删除图标在原位浮现（与「任务」TAB 一致） */}
             {running[task.id] ? (
               <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
             ) : (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onDeleteTask(task.id)
-                }}
-                title={t("s.deleteTask")}
-              >
-                <Trash2Icon />
-              </Button>
+              <>
+                <span className="text-muted-foreground w-14 shrink-0 text-right text-[11px] tabular-nums transition-opacity group-hover:opacity-0">
+                  {relTime(t, task.updated_at)}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteTask(task.id)
+                  }}
+                  title={t("s.deleteTask")}
+                >
+                  <Trash2Icon />
+                </Button>
+              </>
             )}
           </div>
         ))}
