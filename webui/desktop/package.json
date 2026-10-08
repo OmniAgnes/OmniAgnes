@@ -1,7 +1,7 @@
 {
     "name": "omni-desktop",
     "private": true,
-    "version": "1.0.5",
+    "version": "1.0.12",
     "productName": "OmniAgens",
     "description": "OmniAgens desktop",
     "author": "OmniAgens",
@@ -10,7 +10,8 @@
         "start": "electron .",
         "check:bin": "node check-bin.mjs",
         "dist": "npm run check:bin && electron-builder --win --publish never",
-        "dist:mac": "npm run check:bin && electron-builder --mac --publish never"
+        "dist:mac": "npm run check:bin && electron-builder --mac --publish never",
+        "dist:linux": "npm run check:bin && electron-builder --linux --publish never"
     },
     "devDependencies": {
         "electron": "^38.0.0",

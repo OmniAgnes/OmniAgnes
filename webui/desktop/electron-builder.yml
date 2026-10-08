@@ -32,6 +32,7 @@ extraResources:
     filter:
       - "!omni-windows-*"
       - "!omni-darwin-*"
+      - "!omni-linux-*"
       - "!mcp-*"
 win:
   # 应用图标：build/icon.ico（由 make_icon.py 生成，源图为 build/icon.svg）
@@ -48,6 +49,22 @@ mac:
     - dmg
   artifactName: omni-Setup-${arch}.${ext}
   category: public.app-category.developer-tools
+linux:
+  # Linux 出两种包：
+  #   AppImage —— 单文件、免安装，`chmod +x` 直接跑，是主推格式（分发最省事）
+  #   deb     —— 供 apt 或 Ubuntu 软件中心安装
+  # ⚠️ Linux 下 extraResources 落在 resources/ 而非 Contents/Resources/，
+  #    内核路径仍是 resources/bin/omni（main.js 用 app.resourcesPath 拼，无需区分）。
+  # 图标直接用 build/icon.png（Linux 不认 ico；electron-builder 会生成各类尺寸）。
+  icon: build/icon.png
+  category: Development
+  synopsis: omni agent desktop
+  target:
+    - AppImage
+    - deb
+  artifactName: omni-Setup-${arch}.${ext}
+  desktop:
+    StartupWMClass: OmniAgens
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

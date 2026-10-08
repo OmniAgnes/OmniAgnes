@@ -217,17 +217,29 @@ async function runBrowserOp(op, args) {
 //    误判窗口被遮挡 → 停止绘制 → 整窗纯黑（页面其实已加载，浏览器打开同一地址正常）。
 //    这是 Electron 黑窗经典 bug（electron#39798），禁用该特性即可。
 // 3) 系统代理可能干扰 localhost → 强制直连。
-if (process.env.OMNI_GPU !== "1") {
+//
+// ⚠️ 以上都是 **Windows 特有**的病，Linux 不该照抄：
+//    Linux 桌面的 GPU 合成基本正常，强行 disable-gpu + disable-gpu-compositing
+//    只会让内置浏览器面板的视频/滚动明显卡。所以 Linux 默认**保留硬件加速**，
+//    真遇到黑屏/花屏再用 OMNI_GPU=0 退回软件渲染。
+const forceSoftwareGL = process.platform === "win32" ? process.env.OMNI_GPU !== "1" : process.env.OMNI_GPU === "0"
+if (forceSoftwareGL) {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch("disable-gpu")
   app.commandLine.appendSwitch("disable-gpu-sandbox")
 }
 // 渲染进程崩溃 0x80000003（STATUS_BREAKPOINT）：Windows 上 Chromium 渲染器沙箱
 // 与软件渲染组合易触发（尤其受限环境），关掉整体沙箱最稳。
+// Linux 上同样保留：AppImage 挂载 squashfs 带 nosuid，chrome-sandbox 不可用，
+// Chromium 本来就会降级到无沙箱；显式关掉可避免每次启动刷警告。
 app.commandLine.appendSwitch("no-sandbox")
-// GPU 进程崩时改用「进程内软件合成」，避免渲染器反复重建
-app.commandLine.appendSwitch("disable-gpu-compositing")
-app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion")
+if (forceSoftwareGL) {
+  // GPU 进程崩时改用「进程内软件合成」，避免渲染器反复重建
+  app.commandLine.appendSwitch("disable-gpu-compositing")
+}
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion")
+}
 app.commandLine.appendSwitch("no-proxy-server")
 
 let win = null

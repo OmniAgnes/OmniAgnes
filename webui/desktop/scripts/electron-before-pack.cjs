@@ -7,7 +7,7 @@
 //   自动下载，唯独 extraResources 里我们自己拷的内核不会换。
 //
 // 处理规则：
-//   · 只管 darwin / win32（linux 不发版），其他平台直接返回；
+//   · 只管 darwin / win32 / linux，其他平台直接返回；
 //   · **无条件**按目标架构从备料文件（bin/omni-<平台>-<架构>[.exe]，由 release.yml
 //     交叉编译产出）覆盖 bin/ 里的正式名内核，不做"本机架构短路"：
 //     双架构轮次的先后顺序没有保证——若本机架构轮短路不拷，交叉轮换掉 bin 后，
@@ -32,7 +32,11 @@ const ARCH_NAMES = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal
 const PLATFORMS = {
   win32: { pkg: "windows", kernel: "omni.exe" },
   darwin: { pkg: "darwin", kernel: "omni" },
+  linux: { pkg: "linux", kernel: "omni" },
 }
+
+/** 需要给可执行位的平台（Windows 不看权限位；mac/Linux 缺 x 位主进程 spawn 会被拒） */
+const NEEDS_CHMOD = new Set(["darwin", "linux"])
 
 module.exports = async function beforePack(context) {
   const platform = PLATFORMS[context.electronPlatformName]
@@ -59,8 +63,8 @@ module.exports = async function beforePack(context) {
   }
 
   copyFileSync(staging, target)
-  if (context.electronPlatformName === "darwin") {
-    // mac 必须带 x 位，否则主进程 spawn 会被系统拒绝（Windows 不看权限位）
+  if (NEEDS_CHMOD.has(context.electronPlatformName)) {
+    // mac/Linux 必须带 x 位，否则主进程 spawn 会被系统拒绝（Windows 不看权限位）
     chmodSync(target, 0o755)
   }
   console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} 内核：${staging} → ${target}`)
@@ -77,7 +81,7 @@ module.exports = async function beforePack(context) {
     const src = join(mcpStaging, name)
     if (!statSync(src).isFile()) continue
     copyFileSync(src, join(binDir, name))
-    if (context.electronPlatformName === "darwin") chmodSync(join(binDir, name), 0o755)
+    if (NEEDS_CHMOD.has(context.electronPlatformName)) chmodSync(join(binDir, name), 0o755)
   }
   console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} MCP 插件（${mcpStaging} → bin/）`)
 }

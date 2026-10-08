@@ -12,7 +12,7 @@
 3. 同步：`cp omni.exe webui/desktop/bin/omni.exe`
 4. 安装包：`cd webui/desktop && npm run dist`
 - 沙箱启动桌面：`cd webui/desktop && env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS npx electron . --disable-gpu --disable-gpu-sandbox`（ELECTRON_RUN_AS_NODE=1 会让 electron 退化成纯 Node；GPU 进程在沙箱内崩溃需禁 GPU）
-- 发版：打 tag v* → `.github/workflows/release.yml` 双架构出 Win NSIS + mac dmg；CI 交叉编译内核用**备料名**（omni-<平台>-<架构>[.exe]）放 bin/，beforePack 钩子无条件覆盖正式名（顺序无关、幂等）
+- 发版：打 tag v* → `.github/workflows/release.yml` **三平台**出包：Win NSIS（x64 固定名 omni-Setup.exe + arm64）、mac dmg（arm64/x64，未签名）、**Linux AppImage + deb（x64/arm64）**；mac 与 linux job 都是 `continue-on-error: true`（发版主体是 Windows）。CI 交叉编译内核用**备料名**（omni-<平台>-<架构>[.exe]）放 bin/，beforePack 钩子无条件覆盖正式名（顺序无关、幂等）。
 - **cp 到 `webui/desktop/bin/omni.exe` 报 `Device or resource busy`** = 旧 omni.exe 还在跑，先 `taskkill //F //IM omni.exe` 和 `taskkill //F //IM electron.exe` 再 cp（重启后后台任务显示 failed 是预期的，那是我自己杀的）。
 - **改内置技能必须改三份**：仓库源 `.omni/skills/` → `go run ./build/gen-builtin-skills` → `internal/skills/embedded/`；**全局 `~/.config/omni/skills/` 要手动 cp**——`SeedBuiltIn` 见目录已存在就跳过，永不覆盖（改了源文件全局旧副本不会更新）。
 

@@ -2,6 +2,34 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.12 (2026-10-08)
+
+桌面端正式支持 Linux：打 tag 后 CI 在 Windows / macOS / Linux 三平台各出双架构安装包。
+
+### 🆕 Linux 发版
+
+- **新增 AppImage + deb 双格式**：x64 与 arm64 各一份。AppImage 单文件免安装（`chmod +x` 直接跑），是最省事的分发形式；deb 供 apt 与 Ubuntu 软件中心安装
+- **新增 `build-linux` CI job**（`ubuntu-latest`，`continue-on-error: true` 与 macOS 同级）：交叉编译 linux amd64/arm64 内核与内置 MCP 插件进备料目录，`npx electron-builder --linux AppImage deb --x64 --arm64` 出包
+- **打包后强校验**：用 `file` 断言内核 ELF machine 匹配目标架构（`x86-64` / `aarch64`，防交叉轮忘换内核）、可执行位齐全、6 个 MCP 插件随包、4 个安装包产物齐全——任一不满足直接失败，不让错架构的包混上 Release
+- **新增 `npm run dist:linux`** 本地打包脚本
+
+### 🐛 修复
+
+- **渲染兜底开关按平台拆分**：原先无条件关闭硬件加速 + `disable-gpu-compositing` + `CalculateNativeWinOcclusion`，这是 Windows 特有黑屏 bug 的补丁，照抄到 Linux 会让内置浏览器面板的视频与滚动明显卡顿。现在 Windows 维持原行为（可用 `OMNI_GPU=1` 强开），**Linux 默认保留硬件加速**，真遇到黑屏用 `OMNI_GPU=0` 退回软件渲染
+- **版本号三处对齐**：修正 v1.0.6 ~ v1.0.11 期间遗留的版本号漂移——`package.json` / `package-lock.json` 停在 1.0.5（tag 已到 v1.0.11），设置面板显示的 `APP_VERSION` 停在 v1.0.9。现统一为 v1.0.12
+
+### 📦 其他
+
+- **`beforePack` 钩子接入 Linux**：`PLATFORMS` 增加 linux 映射；原本散落两处的「mac 才 chmod」判断收成 `NEEDS_CHMOD` 集合——Linux 与 macOS 同样缺少可执行位时主进程 spawn 会被系统拒绝
+- **`extraResources` 过滤规则**增加 `!omni-linux-*`，防止交叉编译备料被打进安装包
+
+### 📝 说明
+
+- Linux 版文档处理类技能（docx / xlsx）仍依赖用户自行安装 `python` + `openpyxl` + LibreOffice，AppImage 不自带这些运行时
+- 截图工具在 Linux 下依赖 `grim`（Wayland）或 `scrot` / `import`（X11）等系统命令，缺失时仅区域截图与读取本地图片可用
+
+---
+
 ## v1.0.11 (2026-10-08)
 
 任务列表与侧边栏的时间展示、删除交互统一对齐，构建产物同步重构。

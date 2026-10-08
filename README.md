@@ -175,7 +175,12 @@ go build -o webui/desktop/bin/omni.exe .   # 先编译内核
 cd webui/desktop
 npm install
 npm run dist        # 产出 NSIS 安装包（release/omni-Setup-x64.exe）
+npm run dist:mac    # 产出 macOS dmg（未签名；须在 mac 上跑）
+npm run dist:linux  # 产出 AppImage + deb（须在 Linux 上跑）
 ```
+
+正式发布走 `.github/workflows/release.yml`：打 `v*` tag 即在 Windows / macOS / Linux
+三平台各出双架构安装包（Windows NSIS、macOS dmg、Linux AppImage + deb）。
 
 后台（server/，独立 Go 模块 + shadcn/ui 前端，默认 http://127.0.0.1:9000）：
 
