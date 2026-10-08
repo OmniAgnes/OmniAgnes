@@ -189,6 +189,12 @@ func builtinTools() []*Tool {
 			},
 		},
 		screenshotTool(),
+		// git 只读监控：plan（只读）模式可直接放开。
+		makeGitTool("git", gitReadOnlyOps, true,
+			"支持 status/log/branch/remote/diff/diff_stat/staged/show —— 均为只读操作。"),
+		// git 可写操作：build 模式直接执行，plan 模式需用户审批。
+		makeGitTool("git_write", gitWriteOps, false,
+			"支持 add/commit/push/restore —— 均会改动仓库状态。commit 必须带 message。"),
 	}
 }
 
