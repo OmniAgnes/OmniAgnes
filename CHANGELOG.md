@@ -2,11 +2,11 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## v1.0.13 (2026-10-08)
+## v1.0.14 (2026-10-08)
 
 桌面端正式支持 Linux：打 tag 后 CI 在 Windows / macOS / Linux 三平台各出双架构安装包。
 
-> v1.0.12 曾因 `electron-builder.yml` 里一个非法字段导致 `build-linux` job 起步即失败（Linux 包未产出，Windows/macOS 不受影响）。该问题已在 v1.0.13 修复并加了配置校验防线。
+> v1.0.12 曾因 `electron-builder.yml` 里一个非法字段导致 `build-linux` job 起步即失败（Linux 包未产出，Windows/macOS 不受影响）。v1.0.13 修掉该问题后又暴露出 deb 的 maintainer 缺失与产物名写错两个问题，也已一并修复。该问题在 v1.0.14 彻底收尾。
 
 ### 🆕 Linux 发版
 
@@ -18,6 +18,8 @@
 
 ### 🐛 修复
 
+- **deb 打包失败：缺少 maintainer 与项目主页**（v1.0.13 首次跑 build-linux 即踩）：AppImage 已正常产出，但 deb 在 `FpmTarget.computeFpmMetaInfoOptions` 抛 `Please specify project homepage` + `Please specify author 'email'`。根因是 `package.json` 的 `author` 写成字符串 `"OmniAgens"`（无 email），且没有 `homepage`。现将 `author` 补成 `{ name, email }` 对象（用 GitHub noreply 邮箱，不暴露真实地址）并补上 `homepage`
+- **Linux 产物名写错导致上传失败**：`${arch}` 的展开名按扩展名不同（`builder-util/src/arch.ts` 的 `getArtifactArchName` 硬编码）——AppImage 的 x64 展开为 `x86_64`、deb 为 `amd64`，而上传步骤按 `x64` 找文件。修正为 `omni-Setup-x86_64.AppImage` / `omni-Setup-amd64.deb`。这个错误会触发 `fail_on_unmatched_files: true`，导致**已经打好的 AppImage 也传不上 Release**
 - **Linux 打包配置非法字段导致 CI 失败**（v1.0.12 首发即踩）：`configuration.linux.desktop should be one of these: null`。根因是 `linux.desktop` 只接受 `desktopActions` / `entry` 两个键（schema 中 `LinuxDesktopFile.additionalProperties = false`），却平铺了第三个键 `StartupWMClass`，导致 electron-builder 起步就抛 `Invalid configuration object`
 - **Linux 窗口关联改用官方机制**：`linux.syncDesktopName: true` + `package.json` 新增 `desktopName`，由 electron-builder 自动同步 .desktop 文件名与 `StartupWMClass`，保证 Linux 桌面环境能正确关联窗口（任务栏图标与名称）。不再手填 `StartupWMClass`——Electron 的 `app_id` 取自 `desktopName`，两者必须一致，且工具源码注明该字段对 unicode 无效
 - **渲染兜底开关按平台拆分**：原先无条件关闭硬件加速 + `disable-gpu-compositing` + `CalculateNativeWinOcclusion`，这是 Windows 特有黑屏 bug 的补丁，照抄到 Linux 会让内置浏览器面板的视频与滚动明显卡顿。现在 Windows 维持原行为（可用 `OMNI_GPU=1` 强开），**Linux 默认保留硬件加速**，真遇到黑屏用 `OMNI_GPU=0` 退回软件渲染

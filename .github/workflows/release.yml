@@ -22,7 +22,9 @@
 # 三个平台的附件名（由 electron-builder.yml 的 artifactName 决定，改一处即可）：
 #   · Windows：omni-Setup.exe（x64，固定名维持直链）+ omni-Setup-arm64.exe（ARM64）
 #   · macOS  ：omni-Setup-arm64.dmg + omni-Setup-x64.dmg（未签名，见 build-mac 注释）
-#   · Linux  ：omni-Setup-{x64,arm64}.AppImage（主推，免安装）+ 同名 .deb（apt/软件中心）
+#   · Linux  ：omni-Setup-x86_64.AppImage + omni-Setup-arm64.AppImage（主推，免安装）
+#              omni-Setup-amd64.deb + omni-Setup-arm64.deb（apt/软件中心）
+#              ⚠️ x64 架构在两种格式下的文件名不同（x86_64 vs amd64），见 build-linux 的注释
 #
 # ⚠️ 打包已验证的经验（别改回去）：
 #   1) electron-builder.yml 的 `publish: null` 是必需的。不写它时 electron-builder 会从
@@ -502,10 +504,16 @@ jobs:
             done
           done
           # AppImage 与 deb 都要产出（AppImage 是主推格式，deb 供 apt）
-          for f in webui/desktop/release/omni-Setup-x64.AppImage webui/desktop/release/omni-Setup-arm64.AppImage \
-                   webui/desktop/release/omni-Setup-x64.deb webui/desktop/release/omni-Setup-arm64.deb; do
+          #
+          # ⚠️ ${arch} 的展开名**按扩展名不同**（builder-util/src/arch.ts 的
+          #    getArtifactArchName 里硬编码），别想当然写成 x64：
+          #      AppImage → x86_64   deb → amd64   （arm64 两种格式都是 arm64）
+          #    v1.0.13 就是这里写错文件名，产物其实叫 omni-Setup-x86_64.AppImage /
+          #    omni-Setup-amd64.deb，被 fail_on_unmatched_files 拦下。
+          for f in webui/desktop/release/omni-Setup-x86_64.AppImage webui/desktop/release/omni-Setup-arm64.AppImage \
+                   webui/desktop/release/omni-Setup-amd64.deb webui/desktop/release/omni-Setup-arm64.deb; do
             if [ ! -f "$f" ]; then
-              echo "::error::未找到 $f——检查 electron-builder.yml 的 linux.target"
+              echo "::error::未找到 $f——检查 electron-builder.yml 的 linux.target 与 artifactName"
               ls -l webui/desktop/release
               exit 1
             fi
@@ -521,9 +529,9 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
-            webui/desktop/release/omni-Setup-x64.AppImage
+            webui/desktop/release/omni-Setup-x86_64.AppImage
             webui/desktop/release/omni-Setup-arm64.AppImage
-            webui/desktop/release/omni-Setup-x64.deb
+            webui/desktop/release/omni-Setup-amd64.deb
             webui/desktop/release/omni-Setup-arm64.deb
           fail_on_unmatched_files: true
           draft: false
