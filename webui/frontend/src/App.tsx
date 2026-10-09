@@ -50,9 +50,9 @@ interface ModelGroup {
  *  翻译单独放这里是因为分组名要参与 Map 的键，不能像普通文案那样现调 t()——
  *  t() 每次渲染都是新函数，会把整个分组结构重建掉。 */
 const OPENCODE_FREE_LABEL: Record<string, string> = {
-  "zh-Hans": "OpenCode 限免",
-  "zh-Hant": "OpenCode 限免",
-  en: "OpenCode Free",
+  "zh-Hans": "限免模型",
+  "zh-Hant": "限免模型",
+  en: "Free models",
 }
 
 /**

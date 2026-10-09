@@ -8,6 +8,7 @@ import {
   CircleAlertIcon,
   CoinsIcon,
   CpuIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   FolderOpenIcon,
   InfoIcon,
@@ -80,8 +81,8 @@ const PROVIDER_TYPES = [
   { value: "anthropic", key: "se.anthropic" },
   { value: "gemini", key: "se.gemini" },
   { value: "ollama", key: "se.ollama" },
-  // 手动添加时是网关付费档（需自备 key）；免费档由上面的开关自动注入，不走这里
-  { value: "opencode", key: "se.opencode" },
+  // opencode 不在手动添加之列：免费档由开关自动注入（builtin 虚拟条目），
+  // 付费档需要网关账号体系，暴露类型只会让用户建出不可用的配置
 ] as const
 
 const THEME_COLORS = [
@@ -267,6 +268,8 @@ export function SettingsDialog({
   // opencode 免费模型组开关（后端默认开启）
   const [freeModels, setFreeModels] = useState(true)
   const [freeSaving, setFreeSaving] = useState(false)
+  /** 免费组清单展开态：展开后显示网关下发的实时模型列表 */
+  const [freeExpanded, setFreeExpanded] = useState(false)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
@@ -612,24 +615,69 @@ export function SettingsDialog({
                   )}
 
                   {/* opencode 免费模型组：不是一条可编辑的供应商配置（清单由网关决定），
-                      单独一行开关；开关变化要通知外层刷新模型菜单 */}
-                  <div className="border-border flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-sm">
-                        <SparklesIcon className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                        <span className="truncate font-medium">{t("se.freeModels")}</span>
+                      一行开关 + 可展开的实时清单；开关变化要通知外层刷新模型菜单 */}
+                  <div className="border-border rounded-lg border px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <SparklesIcon className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                          <span className="truncate font-medium">{t("se.freeModels")}</span>
+                        </div>
+                        <p className="text-muted-foreground mt-0.5 text-xs">{t("se.freeModelsHint")}</p>
                       </div>
-                      <p className="text-muted-foreground mt-0.5 text-xs">{t("se.freeModelsHint")}</p>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {freeModels && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8"
+                            title={freeExpanded ? t("se.freeModelsHide") : t("se.freeModelsShow")}
+                            onClick={() => setFreeExpanded((v) => !v)}
+                          >
+                            <ChevronDownIcon className={cn("size-4 transition-transform", freeExpanded && "rotate-180")} />
+                          </Button>
+                        )}
+                        <Button
+                          variant={freeModels ? "secondary" : "outline"}
+                          size="sm"
+                          className="shrink-0"
+                          disabled={freeSaving}
+                          onClick={() => void toggleFreeModels(!freeModels)}
+                        >
+                          {freeModels ? t("se.disable") : t("se.enable")}
+                        </Button>
+                      </div>
                     </div>
-                    <Button
-                      variant={freeModels ? "secondary" : "outline"}
-                      size="sm"
-                      className="shrink-0"
-                      disabled={freeSaving}
-                      onClick={() => void toggleFreeModels(!freeModels)}
-                    >
-                      {freeModels ? t("se.disable") : t("se.enable")}
-                    </Button>
+                    {freeModels && freeExpanded && (
+                      <div className="border-border mt-2 border-t pt-2">
+                        {(() => {
+                          const freeList = (providers ?? []).find((p) => p.builtin)?.models ?? []
+                          if (freeList.length === 0) {
+                            return <p className="text-muted-foreground text-xs">{t("se.freeModelsEmpty")}</p>
+                          }
+                          return (
+                            <>
+                              <p className="text-muted-foreground mb-1.5 text-xs">
+                                {t("se.freeModelsCount").replace("%d", String(freeList.length))}
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {freeList.map((m) => (
+                                  <span
+                                    key={m}
+                                    className={cn(
+                                      "rounded px-1.5 py-0.5 font-mono text-xs",
+                                      m === state?.model ? "bg-primary/15 text-primary font-medium" : "bg-muted",
+                                    )}
+                                  >
+                                    {m}
+                                  </span>
+                                ))}
+                              </div>
+                            </>
+                          )
+                        })()}
+                      </div>
+                    )}
                   </div>
 
                   {(providers ?? []).length === 0 && (
