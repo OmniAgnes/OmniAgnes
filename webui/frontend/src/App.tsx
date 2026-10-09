@@ -626,7 +626,7 @@ export default function App() {
   }, [])
 
   // 点「任务」TAB：已有任务就选中最近的一条，没有则直接新建
-  // tasks 已由后端按 UpdatedAt 降序返回，第一条即最近
+  // tasks 已由后端按「最近回复完成时间（SortKey）」降序返回，第一条即最近
   const focusTasksTab = async () => {
     const list = tasks.filter((t) => !t.project_id)
     if (list.length > 0) await openTask(list[0].id)

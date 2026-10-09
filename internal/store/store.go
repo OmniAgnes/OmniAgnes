@@ -26,7 +26,19 @@ type Task struct {
 	Mode      string        `json:"mode,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
-	Messages  []llm.Message `json:"messages,omitempty"`
+	// LastReplyAt：最近一次整轮回复完成（落盘）的时间，作为列表排序键。
+	// 区别于 UpdatedAt（每次检查点落盘都会刷新）——用户刚发问、AI 还没答完时
+	// 不顶到最前，避免任务在等回复期间一直霸占列表顶部。
+	LastReplyAt *time.Time    `json:"last_reply_at,omitempty"`
+	Messages    []llm.Message `json:"messages,omitempty"`
+}
+
+// SortKey 列表排序键：优先最近一次回复完成时间，未回复过的任务回落到创建时间。
+func (t *Task) SortKey() time.Time {
+	if t.LastReplyAt != nil {
+		return *t.LastReplyAt
+	}
+	return t.CreatedAt
 }
 
 // Meta 返回不含消息内容的摘要，供列表展示。
@@ -152,7 +164,7 @@ func (s *Store) DeleteTask(id string) error {
 	return nil
 }
 
-// ListTasks 返回全部任务的摘要，按 UpdatedAt 倒序。
+// ListTasks 返回全部任务的摘要，按 SortKey（最近回复完成时间）倒序。
 func (s *Store) ListTasks() ([]*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,11 +190,11 @@ func (s *Store) ListTasks() ([]*Task, error) {
 		}
 		tasks = append(tasks, t.Meta())
 	}
-	sort.Slice(tasks, func(i, j int) bool { return tasks[i].UpdatedAt.After(tasks[j].UpdatedAt) })
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].SortKey().After(tasks[j].SortKey()) })
 	return tasks, nil
 }
 
-// ListTasksByProject 返回某项目的任务摘要，按 UpdatedAt 倒序。
+// ListTasksByProject 返回某项目的任务摘要，按 SortKey 倒序。
 func (s *Store) ListTasksByProject(projectID string) ([]*Task, error) {
 	all, err := s.ListTasks()
 	if err != nil {

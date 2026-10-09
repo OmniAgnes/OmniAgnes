@@ -115,6 +115,9 @@ func (s *server) runScheduledTask(st *store.ScheduledTask) {
 		s.mu.Unlock()
 		return
 	}
+	// 记录本轮回复完成时间：任务列表据此按最近回复排序（见 store.Task.LastReplyAt）
+	ck := time.Now()
+	t.LastReplyAt = &ck
 	_ = s.store.SaveTask(t)
 	st.LastRun = time.Now()
 	_ = s.store.UpdateSchedule(st)

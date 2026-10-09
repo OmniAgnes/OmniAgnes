@@ -63,7 +63,7 @@ export function TaskList({ tasks, activeTaskId, running, onOpen, onDelete, empty
           ) : (
             <>
               <span className="text-muted-foreground w-14 shrink-0 text-right text-[11px] tabular-nums transition-opacity group-hover:opacity-0">
-                {relTime(t, task.updated_at)}
+                {relTime(t, task.last_reply_at ?? task.created_at)}
               </span>
               <Button
                 variant="ghost"

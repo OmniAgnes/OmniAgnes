@@ -232,7 +232,7 @@ func (s *server) handleProjectsList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// 按"最后对话时间"倒序：项目取其中任务的最新 UpdatedAt，
+	// 按"最后回复完成时间"倒序：项目取其中任务最新的 SortKey，
 	// 没有任务的项目回落到自身创建时间——新添加的文件夹因此排在最前。
 	tasks, _ := s.store.ListTasks()
 	lastActive := map[string]time.Time{}
@@ -240,8 +240,8 @@ func (s *server) handleProjectsList(w http.ResponseWriter, r *http.Request) {
 		if t.ProjectID == "" {
 			continue
 		}
-		if ts, ok := lastActive[t.ProjectID]; !ok || t.UpdatedAt.After(ts) {
-			lastActive[t.ProjectID] = t.UpdatedAt
+		if ts, ok := lastActive[t.ProjectID]; !ok || t.SortKey().After(ts) {
+			lastActive[t.ProjectID] = t.SortKey()
 		}
 	}
 	sort.Slice(projects, func(i, j int) bool {
@@ -874,6 +874,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.hub.broadcast()
 		return
 	}
+	// 记录本轮回复完成时间：作为列表排序键——用户发问、AI 还没答完前不顶到最前
+	ck := time.Now()
+	t.LastReplyAt = &ck
 	_ = s.store.SaveTask(t)
 	// 整轮结束再广播一次：其它客户端把最后一段补齐并退出「处理中」状态
 	s.hub.broadcast()

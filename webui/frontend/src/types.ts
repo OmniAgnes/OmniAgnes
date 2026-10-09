@@ -8,6 +8,8 @@ export interface TaskMeta {
   mode?: string
   created_at: string
   updated_at: string
+  /** 最近一次整轮回复完成时间；列表排序键。未回复过的任务后端不下发，前端回落到 created_at */
+  last_reply_at?: string
   /** 后台无人值守执行中（计划任务轮次），任务 TAB 显示「处理中」 */
   running?: boolean
 }

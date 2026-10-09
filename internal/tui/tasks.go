@@ -47,7 +47,7 @@ func (m *Model) listTasks() {
 		if m.task != nil && t.ID == m.task.ID {
 			mark = "*"
 		}
-		fmt.Fprintf(&b, " %s%d. %s（%s）\n", mark, i+1, t.Title, t.UpdatedAt.Format("01-02 15:04"))
+		fmt.Fprintf(&b, " %s%d. %s（%s）\n", mark, i+1, t.Title, t.SortKey().Format("01-02 15:04"))
 	}
 	if len(tasks) > shown {
 		fmt.Fprintf(&b, " …另有 %d 个更早的任务\n", len(tasks)-shown)
