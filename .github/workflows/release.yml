@@ -7,6 +7,8 @@
 # 用法：
 #   1. 改 webui/desktop/package.json 的 version（如 0.3.0）——必须先改再打 tag，
 #      安装包名里的版本号（CI 注入）与包内 package.json 要对得上。
+#      ⚠️ 这是全仓库唯一的版本号来源：界面「版本号」由内核从本文件读出
+#      （main.go 的 go:embed + internal/webui 的 /api/state），没有第二处常量要同步。
 #   2. git commit && git push
 #   3. git tag -a v0.3.0 -m "release v0.3.0" && git push origin v0.3.0
 #      → 本工作流自动跑：Windows / macOS / Linux 上分别构建安装包，上传到对应 Release 的附件。

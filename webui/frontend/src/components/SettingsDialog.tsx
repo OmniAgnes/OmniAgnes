@@ -69,9 +69,6 @@ const SECTIONS = [
   { id: "version", key: "se.version", icon: InfoIcon },
 ] as const
 
-/** 应用版本号：发版（CHANGELOG/tag）时同步更新 */
-const APP_VERSION = "v1.0.14"
-
 /** 新添加模型时自动填入的默认上下文/输出上限 */
 const DEFAULT_CONTEXT_WINDOW = 1_000_000
 const DEFAULT_MAX_OUTPUT_TOKENS = 128_000
@@ -1053,7 +1050,11 @@ export function SettingsDialog({
               {section === "version" && (
                 <div className="flex items-center justify-between">
                   <Label>{t("se.currentVersion")}</Label>
-                  <span className="text-muted-foreground text-sm tabular-nums">{APP_VERSION}</span>
+                  {/* 版本号来自内核自报（/api/state），内核读的是桌面端 package.json，
+                      发版只改那一个文件，不再有第二处常量对不上 */}
+                  <span className="text-muted-foreground text-sm tabular-nums">
+                    {versionLabel(state?.version)}
+                  </span>
                 </div>
               )}
 
@@ -1072,8 +1073,15 @@ export function SettingsDialog({
   )
 }
 
-/**
- * 后台可达但未登录：账号页签只给一个登录入口。
+/** 版本号展示：统一加 v 前缀（内核报的是 package.json 里的裸版本号 1.0.x）；
+ *  没拿到（接口未回 / 开发构建）时留空而不是显示 undefined。 */
+function versionLabel(v?: string): string {
+  const s = (v ?? "").trim()
+  if (!s || s === "dev") return "—"
+  return s.startsWith("v") ? s : `v${s}`
+}
+
+/** 后台可达但未登录：账号页签只给一个登录入口。
  * 登录成功后 App 的 serverUser 有了值，这里会换成 AccountPanel。
  */
 function LoginPrompt({ onLogin }: { onLogin?: () => void }) {

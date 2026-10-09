@@ -2,6 +2,36 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.15 (2026-10-09)
+
+默认接入 opencode 限免模型（无需 API Key），并把版本号收敛到单一来源。
+
+### 🆕 opencode 限免模型（默认开启）
+
+- **新增限免模型组**：`opencode.ai/zen` 网关的限免档（模型 id 以 `-free` 结尾）无需 API Key 即可调用。新增 `internal/llm/opencode.go` 注册 `opencode` provider——协议与 OpenAI 完全一致，内嵌 `OpenAIProvider` 复用其流式解析、500/429/502/503/504 重试、空 200 重发、`reasoning`/`reasoning_content` 思考参数等全部逻辑，只改类型名与模型清单过滤。`ListModels` 只返回限免档：网关清单里付费模型占绝大多数（实测 87 个里仅 12 个限免），混进来「限免」这层筛选就没有意义了，且未配 key 时点付费模型必然调用失败
+- **新增配置项 `opencode_free`（缺省即开启）**：用 `*bool` 而非 `bool`，因为 Go 的零值 `false` 会让「没写」和「显式关闭」无法区分。只有显式写 `false` 才关闭，老配置不用改
+- **虚拟供应商机制**：限免组以 `builtin: true` 标记的虚拟供应商注入 `providers`，`Save` 时整条剔除不落盘。网关注册表会上下架，写进配置很快就过期；重启后按开关注入
+- **菜单位置**：模型选择器里限免模型单独一行，钉在一级列表末尾、「配置模型」之上；没有限免模型时整行不渲染。点击展开的二级就是限免清单。计划任务页的下拉仍按普通分组铺在最前
+- **离线兜底**：`Load` 时用内置种子清单占位（`Load` 不联网），启动后异步拉网关注册表替换（缓存 6 小时）。拉取失败保留上次结果 / 兜底种子——限免组本就是无网也能选的通道，不能因为网关抽风就把菜单清空
+
+### 🐛 修复
+
+- **「是否需要 API Key」的判断会误判无鉴权网关**：`internal/llm/resolve.go` 与 `internal/tui/modelpicker.go` 各自散落着 `Type == "ollama" || strings.Contains(BaseURL, "localhost")` 的判断，漏掉了 opencode 限免档（公网地址但允许匿名调用），会报「缺少 API Key」。现收敛为 `ProviderConfig.NoAuth()` 一处判定
+- **关闭限免组后当前模型悬空**：`cfg.Provider` 可能仍指向被移除的组内模型，运行时会报「未找到供应商」。`DropOpenCodeFree` 现在会回落到第一个仍可用的模型
+
+### 🔧 内部
+
+- **版本号收敛到单一来源**（本条修的是发版流程本身的隐患）：原先版本号散在 `main.go`（`var version = "0.2.0"`）、`SettingsDialog.tsx`（`APP_VERSION` 常量）、`webui/desktop/package.json` 三处，每轮发版都要人工对齐——v1.0.14 的 CHANGELOG 里就专门记过一次「v1.0.6 ~ v1.0.11 期间遗留的版本号漂移」。现改为 `main.go` 用 `go:embed` 读入 `webui/desktop/package.json`（electron-builder 唯一认的来源），经 `/api/state` 传给界面；前端删掉硬编码常量，改读 `state.version`。`package.json` 是唯一需要改的文件。CI 的 `-X main.version=${TAG}` 注入保持最高优先级，两者本来就应一致
+- **`PUT /api/providers` 会把虚拟条目的模型清单存成僵尸配置**：前端整体回传 providers 时会带上后端注入的限免条目，保存后它就固化成了一条会被网关下架的死配置。现于该接口丢弃 `builtin` 条目并按开关注入重新生成
+- **新增测试**：限免组的注入/移除/幂等性、虚拟条目不落盘、关闭时的当前模型回落、`/api/models` 的 `opencode_free` 标记、开关往返、`PUT /api/providers` 保留限免组
+
+### 📝 说明
+
+- 限免模型的可用性与配额由 opencode 网关决定，本项目不代理、不缓存、不保证长期可用；付费档需要用户在设置里自行添加 `opencode` 类型供应商并填写 API Key
+- `internal/docparse` 的 `TestExtractSamples` 与 `internal/tools` 的 `TestBashTool`/`TestBashTimeout` 在 Windows 开发机上仍失败（样例 PDF 与 WSL/bash 环境所致），与本次改动无关
+
+---
+
 ## v1.0.14 (2026-10-08)
 
 桌面端正式支持 Linux：打 tag 后 CI 在 Windows / macOS / Linux 三平台各出双架构安装包。

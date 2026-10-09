@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -24,7 +26,27 @@ import (
 	"omni/internal/webui"
 )
 
-var version = "0.2.0"
+// 桌面端 package.json 是版本号的唯一来源：electron-builder 按它命名安装包，
+// 内核也直接从这里读，避免「改了 package.json 忘了同步别处」。
+//go:embed webui/desktop/package.json
+var desktopPkgJSON []byte
+
+// version 供构建期覆盖（-ldflags "-X main.version=..."）；空则读 package.json。
+var version string
+
+// appVersion 返回应用版本号：构建期注入 > 桌面端 package.json > dev。
+func appVersion() string {
+	if v := strings.TrimSpace(version); v != "" {
+		return v
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(desktopPkgJSON, &pkg); err == nil && pkg.Version != "" {
+		return pkg.Version
+	}
+	return "dev"
+}
 
 func main() {
 	var (
@@ -42,6 +64,7 @@ func main() {
 	)
 	flag.Parse()
 
+	version = appVersion()
 	if *flagVersion {
 		fmt.Printf("omni %s\n", version)
 		return
