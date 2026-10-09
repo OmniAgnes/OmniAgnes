@@ -2,6 +2,28 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.16 (2026-10-09)
+
+修复 opencode 限免模型的网关 403 门禁，限免清单收敛为标准协议可用模型，设置面板去 OpenCode 类型并新增可展开清单。
+
+### 🐛 修复
+
+- **限免模型全部报 `403: OpenCode's free tier can only be used from within OpenCode`**：zen 网关 2026-09-16 起对免费档强校验「真实 opencode 客户端」设备指纹，缺失即 403 `FreeTierError`（旧科普里「加个 `x-opencode-session` 任意串即可」已过期，错误类型已从 `MissingSessionID` 升级）。实测门禁共四关，缺一不可：① User-Agent 以 `opencode/` 开头；② `x-opencode-session` 为规范格式 `ses_<12位小写hex><14位字母数字>`；③ `x-opencode-request-id`（`msg_` 前缀同格式，每请求新）+ `x-opencode-client: cli` + `x-opencode-project`；④ 请求体 `stream: true` 且 `tools` 数组含名为 `bash` 与 `read` 的函数工具。另注：**配 API Key 无效**——免费档是匿名路由（键为字面量 `public`），网关卡的是请求形态而非身份
+- **实现方式**：`OpenAIProvider` 新增 `extraHeaders` / `transformBody` 两个可选钩子（`nil` 安全，不影响其他 OpenAI 兼容供应商）；`OpenCodeProvider` 构造时注入完整指纹——每实例一个稳定 `ses_` 会话 id、每请求一个新 `msg_` 请求 id，请求体自动补齐 `bash`/`read` 占位工具并兜底 `tool_choice: "none"`。`max_tokens` 钳位重试路径会重放 `transformBody`，避免注入的工具被二次序列化丢掉。实测 `step-5-preview-free`、`mimo-v2.6-flash-free` 均正常回复
+
+### 🔧 内部
+
+- **限免清单只保留标准 `/chat/completions` 模型**：免费池里 `muse-spark-*` 走 OpenAI Responses API（`/v1/responses`）、`jev-*` 走 verdict 专用协议（`/v1/systemone`），omni 不适配私有协议——`FreeModel()` 现按前缀排除这两类，动态拉取的清单自动只含真正可调用的模型（如 `step-5-preview-free`、`mimo-v2.6-flash-free`、`ling-*`、`nemotron-*` 等），免费池轮换无需改代码
+- **设置面板不再出现 opencode 类型**：新增供应商的类型下拉移除 `opencode`（免费档由开关自动注入 builtin 虚拟条目，付费档依赖网关账号体系，手动建只会建出不可用配置）；界面文案去掉「OpenCode」字样（「OpenCode 免费模型」→「限免模型」，模型选择器分组同步），i18n 三语言更新
+- **设置 → 模型里限免组可展开查看清单**：开关旁新增展开箭头，展开后显示网关实时下发的模型标签（当前选中模型高亮），数据复用 providers 里的 builtin 条目，随 6 小时缓存自动刷新
+
+### 📝 说明
+
+- 限免模型的可用性与配额仍由 opencode 网关决定；上游部分免费模型会间歇性 429（上游渠道波动），重试机制照常兜底
+- `jev-1.13-free` 属 verdict 判定类模型（非对话模型），已从限免清单排除
+
+---
+
 ## v1.0.15 (2026-10-09)
 
 默认接入 opencode 限免模型（无需 API Key），并把版本号收敛到单一来源。
