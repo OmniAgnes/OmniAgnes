@@ -17,6 +17,7 @@ import {
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
+  SparklesIcon,
   SunMoonIcon,
   Trash2Icon,
   UserIcon,
@@ -82,6 +83,8 @@ const PROVIDER_TYPES = [
   { value: "anthropic", key: "se.anthropic" },
   { value: "gemini", key: "se.gemini" },
   { value: "ollama", key: "se.ollama" },
+  // 手动添加时是网关付费档（需自备 key）；免费档由上面的开关自动注入，不走这里
+  { value: "opencode", key: "se.opencode" },
 ] as const
 
 const THEME_COLORS = [
@@ -264,6 +267,9 @@ export function SettingsDialog({
     setSection(initialSection as SectionId)
   }, [open, initialSection, serverUser, serverOnline])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
+  // opencode 免费模型组开关（后端默认开启）
+  const [freeModels, setFreeModels] = useState(true)
+  const [freeSaving, setFreeSaving] = useState(false)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
@@ -321,6 +327,7 @@ export function SettingsDialog({
     api.providers().then((r) => setProviders(r.providers)).catch(() => setProviders([]))
     api.settings().then((r) => {
       setPreset(deriveThemePreset(r.theme, r.theme_color))
+      setFreeModels(r.opencode_free)
     }).catch(() => {})
     api.memory().then((r) => setMemory(r.content)).catch(() => {})
     void refreshMcp()
@@ -360,6 +367,25 @@ export function SettingsDialog({
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
+    }
+  }
+
+  // 开关 opencode 免费模型组：开启时后端把网关的免费模型作为一组注入模型菜单，
+  // 关闭则移除（清单由后端管理，前端不碰供应商配置本身）
+  const toggleFreeModels = async (on: boolean) => {
+    setFreeSaving(true)
+    setErr("")
+    try {
+      const r = await api.saveSettings({ opencode_free: on })
+      setFreeModels(r.opencode_free)
+      if (state) onStateChange({ ...state, model: r.model })
+      // 模型菜单与供应商列表都要跟着变
+      onProvidersSaved?.()
+      api.providers().then((x) => setProviders(x.providers)).catch(() => {})
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setFreeSaving(false)
     }
   }
 
@@ -588,20 +614,45 @@ export function SettingsDialog({
                     </div>
                   )}
 
+                  {/* opencode 免费模型组：不是一条可编辑的供应商配置（清单由网关决定），
+                      单独一行开关；开关变化要通知外层刷新模型菜单 */}
+                  <div className="border-border flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-sm">
+                        <SparklesIcon className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        <span className="truncate font-medium">{t("se.freeModels")}</span>
+                      </div>
+                      <p className="text-muted-foreground mt-0.5 text-xs">{t("se.freeModelsHint")}</p>
+                    </div>
+                    <Button
+                      variant={freeModels ? "secondary" : "outline"}
+                      size="sm"
+                      className="shrink-0"
+                      disabled={freeSaving}
+                      onClick={() => void toggleFreeModels(!freeModels)}
+                    >
+                      {freeModels ? t("se.disable") : t("se.enable")}
+                    </Button>
+                  </div>
+
                   {(providers ?? []).length === 0 && (
                     <div className="text-muted-foreground text-sm">{t("se.noProviders")}</div>
                   )}
 
 
-                  {(providers ?? []).map((p, i) => (
-                    <ProviderCard
-                      key={i}
-                      provider={p}
-                      defaultOpen={i === newProviderIndex}
-                      onChange={(patch) => patchProvider(i, patch)}
-                      onRemove={() => removeProvider(i)}
-                    />
-                  ))}
+                  {/* builtin 条目（opencode 免费组）由后端注入、不可编辑：跳过渲染，
+                      但保留在数组里，否则 patchProvider 的下标会错位 */}
+                  {(providers ?? []).map((p, i) =>
+                    p.builtin ? null : (
+                      <ProviderCard
+                        key={i}
+                        provider={p}
+                        defaultOpen={i === newProviderIndex}
+                        onChange={(patch) => patchProvider(i, patch)}
+                        onRemove={() => removeProvider(i)}
+                      />
+                    ),
+                  )}
                 </div>
               )}
 

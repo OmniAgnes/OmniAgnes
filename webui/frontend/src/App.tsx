@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ShieldOffIcon } from "lucide-react"
 
 import { AddProjectDialog } from "@/components/AddProjectDialog"
@@ -44,6 +44,15 @@ function attachmentToInfo(a: RawAttachment): AttachmentInfo {
 interface ModelGroup {
   provider: string
   models: string[]
+}
+
+/** opencode 限免模型组在计划任务下拉里的分组名（模型选择器用 mp.freeModels 文案）。
+ *  翻译单独放这里是因为分组名要参与 Map 的键，不能像普通文案那样现调 t()——
+ *  t() 每次渲染都是新函数，会把整个分组结构重建掉。 */
+const OPENCODE_FREE_LABEL: Record<string, string> = {
+  "zh-Hans": "OpenCode 限免",
+  "zh-Hant": "OpenCode 限免",
+  en: "OpenCode Free",
 }
 
 /**
@@ -134,7 +143,7 @@ export default function App() {
   const [draftSeed, setDraftSeed] = useState<{ text: string; seq: number }>({ text: "", seq: 0 })
 
   // ---- 桌面工具条：界面缩放 / 登录(omni-server) ----
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   // 缩放倍数持久化（0.5~2）；桌面端经 IPC 走 Chromium 原生页面缩放
   const [zoom, setZoom] = useState(() => {
     const v = Number(localStorage.getItem("omni.zoom"))
@@ -407,14 +416,22 @@ export default function App() {
     }
   }, [state?.theme_color])
 
-  // 模型列表：按供应商分组（一级 = 供应商名，二级 = 模型名），聊天底部二级联动选择
+  // 模型列表：按供应商分组（一级 = 供应商名，二级 = 模型名），聊天底部二级联动选择。
+  // opencode 限免模型不进分组：模型选择器里单独钉在列表末尾（配置模型之上），
+  // 只有计划任务页的下拉把它当普通分组铺开。
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([])
+  const [freeModels, setFreeModels] = useState<string[]>([])
   const refreshModels = useCallback(async () => {
     try {
       const r = await api.models()
       const groups: ModelGroup[] = []
       const byName = new Map<string, ModelGroup>()
+      const free: string[] = []
       for (const m of r.models) {
+        if (m.opencode_free) {
+          free.push(m.model)
+          continue
+        }
         // 空供应商名保持空串，渲染侧统一回落到 i18n「其他」
         const provider = m.provider || ""
         let g = byName.get(provider)
@@ -426,13 +443,27 @@ export default function App() {
         g.models.push(m.model)
       }
       setModelGroups(groups)
+      setFreeModels(free)
     } catch {
       setModelGroups([])
+      setFreeModels([])
     }
   }, [])
   useEffect(() => {
     void refreshModels()
   }, [refreshModels, state?.model])
+
+  /** 计划任务页的下拉用：限免模型作为一组铺在最前面 */
+  const scheduleModelGroups = useMemo<ModelGroup[]>(
+    () =>
+      freeModels.length > 0
+        ? [
+            { provider: OPENCODE_FREE_LABEL[lang] ?? "OpenCode Free", models: freeModels },
+            ...modelGroups,
+          ]
+        : modelGroups,
+    [freeModels, modelGroups, lang],
+  )
 
   const changeModel = async (m: string) => {
     try {
@@ -1289,7 +1320,7 @@ export default function App() {
         />
         {view === "schedules" ? (
           <SchedulesPage
-            models={modelGroups}
+            models={scheduleModelGroups}
             projects={projects}
             onRan={() => {
               void refreshTasks()
@@ -1310,6 +1341,7 @@ export default function App() {
           queue={run?.queue ?? []}
           draftSeed={draftSeed}
           models={modelGroups}
+          freeModels={freeModels}
           model={state?.model ?? ""}
           skills={skills}
           focusSignal={focusSignal}

@@ -109,6 +109,8 @@ interface ChatProps {
   /** seq 递增即把 text 回填输入框（队列「编辑」） */
   draftSeed: { text: string; seq: number }
   models: ModelGroup[]
+  /** opencode 限免模型：模型选择器里单独一行，钉在列表末尾 */
+  freeModels?: string[]
   model: string
   /** 项目可用技能（供输入 / 时提示补全） */
   skills: SkillInfo[]
@@ -157,6 +159,7 @@ export function Chat({
   queue,
   draftSeed,
   models,
+  freeModels,
   model,
   skills,
   focusSignal,
@@ -726,8 +729,8 @@ export function Chat({
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
-              {(models.length > 0 || !!serverUser) && (
-                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} onConfigure={onConfigureModels} />
+              {(models.length > 0 || (freeModels?.length ?? 0) > 0 || !!serverUser) && (
+                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} freeModels={freeModels} onConfigure={onConfigureModels} />
               )}
               {streaming ? (
                 <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title={t("c.stop")}>

@@ -40,7 +40,7 @@ func (o ModelOptions) Empty() bool {
 // ProviderConfig 描述单个 LLM 提供方。
 type ProviderConfig struct {
 	Name    string   `json:"name,omitempty"`   // 显示名称
-	Type    string   `json:"type"`             // openai | anthropic | gemini | ollama
+	Type    string   `json:"type"`             // openai | anthropic | gemini | ollama | opencode
 	Model   string   `json:"model,omitempty"`  // 主模型（与 models[0] 同步）
 	Models  []string `json:"models,omitempty"` // 该供应商可用模型（首个为主模型）
 	BaseURL string   `json:"base_url,omitempty"`
@@ -56,6 +56,20 @@ type ProviderConfig struct {
 
 	// ModelOptions 按模型名覆盖上述默认值
 	ModelOptions map[string]ModelOptions `json:"model_options,omitempty"`
+
+	// Builtin 标记程序自动注入的虚拟供应商（目前只有 opencode 免费模型组）：
+	// 模型清单来自网关注册表、会上下架，不适合写进用户配置。Save 时整条剔除，
+	// 重启后由 SyncOpenCodeFree 按开关注入。
+	Builtin bool `json:"builtin,omitempty"`
+}
+
+// NoAuth 报告该通道是否无需 API Key：ollama、本机地址、以及 opencode 网关
+// （其免费档允许匿名调用）。解析通道时用它替代散落各处的「类型/地址」判断。
+func (p *ProviderConfig) NoAuth() bool {
+	base := strings.ToLower(p.BaseURL)
+	return p.Type == "ollama" || p.Type == OpenCodeProviderType ||
+		strings.Contains(base, "localhost") || strings.Contains(base, "127.0.0.1") ||
+		strings.Contains(base, "0.0.0.0") || strings.Contains(base, "[::1]")
 }
 
 // OptionsFor 返回指定模型的有效参数：模型级配置优先，缺项回落到供应商级默认值。
@@ -189,6 +203,100 @@ type Config struct {
 	MCPServers        map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 	DisabledSkills    []string                   `json:"disabled_skills,omitempty"` // 禁用的技能名，默认全部启用
 	ServerURL         string                     `json:"server_url,omitempty"`      // omni-server 后台地址（桌面端调用），缺省 http://127.0.0.1:9000
+	// OpenCodeFree 开关 opencode 免费模型组（模型选择里多一组免 Key 的模型）。
+	// 用指针而非 bool：缺省（未配置）= 开启，只有显式写成 false 才关。
+	OpenCodeFree *bool `json:"opencode_free,omitempty"`
+}
+
+// OpenCodeFreeEnabled 报告是否启用 opencode 免费模型组。缺省（未配置）= 开启。
+func (c *Config) OpenCodeFreeEnabled() bool {
+	return c.OpenCodeFree == nil || *c.OpenCodeFree
+}
+
+// SetOpenCodeFree 写入开关值。
+func (c *Config) SetOpenCodeFree(on bool) { c.OpenCodeFree = &on }
+
+const (
+	// OpenCodeProviderType / OpenCodeProviderName / OpenCodeBaseURL 描述注入的
+	// 虚拟供应商：类型用于 llm 路由与识别，名字是模型选择一级菜单的显示名
+	// （前端会按界面语言覆盖，见 webui/frontend 的 OPENCODE_FREE_LABEL）。
+	OpenCodeProviderType = "opencode"
+	OpenCodeProviderName = "OpenCode"
+	OpenCodeBaseURL      = "https://opencode.ai/zen/v1"
+)
+
+// seedOpenCodeFreeModels 是拉取失败（离线/网关不可达）时的兜底清单，
+// 保证菜单里始终有可选的免费模型。拉到实时清单后会被整体替换。
+var seedOpenCodeFreeModels = []string{
+	"space-bunny-free",
+	"muse-spark-1.3-contributor-free",
+	"mimo-v2.6-flash-free",
+	"exo-free",
+	"step-5-preview-free",
+	"nemotron-3.5-lightning-free",
+	"longcat-2.5-preview-free",
+	"jev-1.13-free",
+}
+
+// SyncOpenCodeFree 按开关注入/移除 opencode 免费模型组。
+// models 为空时用内置兜底清单（离线可用）；开关关闭时只移除该组。
+// 重复调用安全：先把旧的虚拟条目剔掉再注入，不会越堆越多。
+func (c *Config) SyncOpenCodeFree(models []string) {
+	keep := make([]ProviderConfig, 0, len(c.Providers)+1)
+	for _, p := range c.Providers {
+		if p.Builtin && p.Type == OpenCodeProviderType {
+			continue
+		}
+		keep = append(keep, p)
+	}
+	c.Providers = keep
+	if !c.OpenCodeFreeEnabled() {
+		return
+	}
+	if len(models) == 0 {
+		models = seedOpenCodeFreeModels
+	}
+	p := ProviderConfig{
+		Name:    OpenCodeProviderName,
+		Type:    OpenCodeProviderType,
+		Models:  append([]string(nil), models...),
+		BaseURL: OpenCodeBaseURL,
+		Builtin: true,
+	}
+	p.Model = p.Models[0]
+	c.Providers = append(c.Providers, p)
+}
+
+// HasOpenCodeFree 报告免费模型组当前是否已注入供应商列表（开关开 + 条目在）。
+// 运行时据此判断要不要去网关刷新清单：没注入就不该发起网络请求。
+func (c *Config) HasOpenCodeFree() bool {
+	if !c.OpenCodeFreeEnabled() {
+		return false
+	}
+	for _, p := range c.Providers {
+		if p.Builtin && p.Type == OpenCodeProviderType {
+			return true
+		}
+	}
+	return false
+}
+
+// DropOpenCodeFree 关闭免费模型组并移除该虚拟条目。
+// 当前选中的模型正好在被移除的组里时回落到第一个可用模型——
+// 否则 cfg.Provider 会指向一个已不存在的模型，运行时才会报「未找到供应商」。
+func (c *Config) DropOpenCodeFree() {
+	c.SetOpenCodeFree(false)
+	c.SyncOpenCodeFree(nil)
+	if c.Provider == "" || c.ProviderForModel(c.Provider) != nil {
+		return
+	}
+	for _, p := range c.Providers {
+		if p.Model != "" {
+			c.Provider = p.Model
+			return
+		}
+	}
+	c.Provider = ""
 }
 
 // DefaultPath 返回默认配置文件路径。
@@ -371,6 +479,9 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	cfg.BuiltinMCPServers()
+	// opencode 免费模型组：默认开启。此处只用兜底清单占位（Load 不联网），
+	// 网页端启动后会异步拉网关清单替换掉。
+	cfg.SyncOpenCodeFree(nil)
 	return cfg, nil
 }
 
@@ -382,6 +493,17 @@ func (c *Config) Save(path string) error {
 		}
 	}
 	out := *c
+	// 虚拟供应商（opencode 免费模型组）由程序按开关注入，清单来自网关、不落盘：
+	// 写进配置会随网关上下架迅速过期，重启后 SyncOpenCodeFree 会重新注入。
+	if len(c.Providers) > 0 {
+		out.Providers = make([]ProviderConfig, 0, len(c.Providers))
+		for _, p := range c.Providers {
+			if p.Builtin {
+				continue
+			}
+			out.Providers = append(out.Providers, p)
+		}
+	}
 	if c.MCPServers != nil {
 		out.MCPServers = make(map[string]MCPServerConfig, len(c.MCPServers))
 		for name, srv := range c.MCPServers {
@@ -440,6 +562,7 @@ func ExampleConfig() string {
     { "type": "anthropic","model": "claude-sonnet-4-20250514", "env_key": "ANTHROPIC_API_KEY" },
     { "type": "gemini",   "model": "gemini-2.5-pro", "env_key": "GEMINI_API_KEY" }
   ],
+  "opencode_free": true,
   "max_tool_output": 4000,
   "bash_timeout_seconds": 10
 }

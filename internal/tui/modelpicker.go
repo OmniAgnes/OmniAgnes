@@ -148,7 +148,7 @@ func (m *Model) switchModel(name string, provIdx int) {
 	}
 	if p != nil {
 		apiKey := p.ResolveAPIKey()
-		if apiKey == "" && p.Type != "ollama" && !strings.Contains(p.BaseURL, "localhost") {
+		if apiKey == "" && !p.NoAuth() {
 			m.addSystemMsg(fmt.Sprintf("供应商 %s（%s）缺少 API Key，无法切换到 %s；请用 /config 补全", p.Type, p.Model, name))
 			return
 		}

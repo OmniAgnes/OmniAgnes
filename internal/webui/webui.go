@@ -3,6 +3,7 @@
 package webui
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -88,6 +89,11 @@ func Start(opts Options) (string, error) {
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
 	s.startScheduler()
+	// 后台预热 opencode 免费模型清单：启动时顺手拉一次，等用户点开模型菜单时
+	// 通常已经是最新清单（拉不到也不阻塞启动，菜单用兜底种子）。
+	if cfg.OpenCodeFreeEnabled() {
+		go s.refreshOpenCodeFree(context.Background())
+	}
 	// 移动端访问开关是记住的：上次是开的就自动把局域网监听拉起来，
 	// 省得每次重启都要重新点一次开关（二维码里的 token 不变，扫码照旧）。
 	if mob.persistEnabled {

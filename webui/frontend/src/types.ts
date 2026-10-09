@@ -172,6 +172,8 @@ export interface ProviderConfig {
   reasoning?: string
   /** 按模型名覆盖供应商级默认值 */
   model_options?: Record<string, ModelOptions>
+  /** 程序自动注入的虚拟供应商（opencode 免费模型组）：不可编辑、不落盘 */
+  builtin?: boolean
 }
 
 export interface StateInfo {

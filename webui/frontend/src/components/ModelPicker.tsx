@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, SettingsIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, SettingsIcon, SparklesIcon } from "lucide-react"
 
 import type { ModelGroup } from "@/components/Chat"
 import { useI18n } from "@/lib/i18n"
@@ -14,6 +14,8 @@ interface ModelPickerProps {
   onChange: (model: string) => void
   /** 登录后台用户：有值时在列表最上方展示后台「内置模型」组 */
   serverUser?: ServerUser | null
+  /** opencode 限免模型：钉在列表最下方（配置模型之上），为空则整行不渲染 */
+  freeModels?: string[]
   /** 底部「配置模型」：打开设置并直达「模型」页签 */
   onConfigure?: () => void
 }
@@ -25,6 +27,8 @@ const PANEL_GAP = 6
 const PANEL_H = 288
 /** 内置模型组的特殊一级 key（不与任何供应商名冲突） */
 const BUILTIN = "__builtin__"
+/** 限免模型组的特殊一级 key：钉在一级列表末尾，位置与「配置模型」之上 */
+const FREE = "__free__"
 /** 内置模型选中 key 的前缀：与用户自配的同名模型区分「选的是哪一个」 */
 const BUILTIN_PREFIX = "server:"
 
@@ -62,7 +66,7 @@ function rateLabel(m: ServerModel) {
  * 自实现弹层而不引 Radix Popover：项目没装对应依赖，需求简单（受控开合 +
  * 点外部/Esc 关闭 + 边界避让）。
  */
-export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }: ModelPickerProps) {
+export function ModelPicker({ groups, model, onChange, serverUser, freeModels, onConfigure }: ModelPickerProps) {
   const { t } = useI18n()
   // 内置模型选中 key 带前缀（server:xxx）：与用户自配的同名模型区分「选的是哪一个」。
   // plainModel 是去掉前缀的真名，供界面显示和内置组高亮用。
@@ -158,6 +162,8 @@ export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }
   const models = active?.models ?? []
   // 内置组选中的行：二级显示后台模型（带倍率）
   const showBuiltin = hoverProvider === BUILTIN
+  // 限免组：opencode 网关的免费档，钉在一级列表末尾
+  const free = freeModels ?? []
 
   const pick = (m: string) => {
     // 内置组的选择带上前缀保存：后端据此区分来源，不与本地同名模型混串
@@ -224,12 +230,21 @@ export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }
             )}
           >
             <div ref={scrollRef} className="omni-scroll max-h-72 overflow-y-auto p-1">
-              {builtin.length === 0 && groups.length === 0 && !serverUser ? (
+              {builtin.length === 0 && groups.length === 0 && free.length === 0 && !serverUser ? (
                 <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noProvider")}</div>
               ) : (
                 <>
                   {builtin.length > 0 && renderRow(BUILTIN, t("mp.builtin"))}
                   {groups.map((g) => renderRow(g.provider || t("a.other"), g.provider || t("a.other")))}
+                  {/* 限免组钉在最后：紧随其下就是「配置模型」，一眼能扫到 */}
+                  {free.length > 0 &&
+                    renderRow(
+                      FREE,
+                      <span className="flex min-w-0 items-center gap-1">
+                        <SparklesIcon className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        <span className="truncate">{t("mp.freeModels")}</span>
+                      </span>,
+                    )}
                 </>
               )}
             </div>
@@ -252,7 +267,7 @@ export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }
           {/* 二级：absolute 钉在一级左侧，垂直方向锚定到一级当前选中行的中心 */}
           {hoverProvider && (
             <Flyout
-              models={showBuiltin ? builtin.map((b) => b.key) : models}
+              models={showBuiltin ? builtin.map((b) => b.key) : hoverProvider === FREE ? free : models}
               // 选中态按来源比：内置组比去前缀真名，本地组比原 key，
               // 同名模型各自只高亮用户真正选的那一个
               model={showBuiltin ? plainModel : model}

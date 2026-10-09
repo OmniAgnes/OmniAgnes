@@ -23,13 +23,20 @@ func TestSaveProviderConfigAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Providers) != 2 {
-		t.Fatalf("期望保留原 provider 并追加 1 个，实际 %d 个", len(cfg.Providers))
+	// Load 会额外注入 opencode 免费组（虚拟条目），这里只看用户自己配的
+	var user []ProviderConfig
+	for _, p := range cfg.Providers {
+		if !p.Builtin {
+			user = append(user, p)
+		}
 	}
-	if cfg.Providers[0].Model != "gpt-4o" {
-		t.Fatalf("原 provider 被破坏: %+v", cfg.Providers[0])
+	if len(user) != 2 {
+		t.Fatalf("期望保留原 provider 并追加 1 个，实际 %d 个", len(user))
 	}
-	got := cfg.Providers[1]
+	if user[0].Model != "gpt-4o" {
+		t.Fatalf("原 provider 被破坏: %+v", user[0])
+	}
+	got := user[1]
 	if got.Type != "ollama" || got.BaseURL != "http://localhost:11434/v1" || !got.Default {
 		t.Fatalf("追加的 provider 不正确: %+v", got)
 	}
