@@ -49,3 +49,4 @@ NUL
 server/server.db
 server/server.db-shm
 server/server.db-wal
+/.workbuddy
