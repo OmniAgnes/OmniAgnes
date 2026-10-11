@@ -123,9 +123,15 @@ func randomToken(n int, charset string) string {
 }
 
 // ensureZenGateTools 保证请求体 tools 数组里存在网关要求的 bash 与 read
-// 函数工具。已存在则不重复注入。用 tool_choice 兜底为 "none" 防止网关因此
-// 回调工具（我们只需它识别出 opencode 客户端形态，并非真要它调工具）。
-// 若调用方未传任何工具（纯文本对话），也照常注入占位工具。
+// 函数工具。已存在则不重复注入。
+//
+// tool_choice 处理：
+//   - 调用方没带任何工具（纯文本对话）时注入占位工具，并把 tool_choice 钳为
+//     "none"——占位工具只为过网关指纹校验，不能让模型真的调走。
+//   - 调用方自带工具（agent 的真实工具集必含 bash/read）时保持 tool_choice
+//     缺省：网关在 tool_choice=none 下会把工具从模型视野里整个拿掉，模型只能
+//     把工具调用以文本 XML 吐出来，还会被网关洗成 <]minimax[> 之类的坏字节
+//     泄漏进回复（space-bunny-free 实测，2026-10）。
 func ensureZenGateTools(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -139,6 +145,7 @@ func ensureZenGateTools(body []byte) ([]byte, error) {
 			}
 		}
 	}
+	noTools := len(tools) == 0
 	// 已有同名工具则不再追加
 	has := func(name string) bool {
 		for _, t := range tools {
@@ -160,7 +167,7 @@ func ensureZenGateTools(body []byte) ([]byte, error) {
 	if len(tools) > 0 {
 		payload["tools"] = tools
 	}
-	if _, ok := payload["tool_choice"]; !ok {
+	if _, ok := payload["tool_choice"]; !ok && noTools {
 		payload["tool_choice"] = "none"
 	}
 	return json.Marshal(payload)

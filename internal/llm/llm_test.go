@@ -262,6 +262,49 @@ func TestGeminiStreamToolCall(t *testing.T) {
 	}
 }
 
+// zen 网关指纹注入的 tool_choice 语义：
+//   - 调用方自带工具（agent 场景）→ 不动 tool_choice，否则网关会把工具从模型
+//     视野里拿掉，模型只能以文本 XML 吐工具调用并被网关洗成坏字节；
+//   - 调用方无工具（纯聊天）→ 注入占位 bash/read 并钳 tool_choice=none，
+//     防止模型真的调走占位工具。
+func TestEnsureZenGateToolsToolChoice(t *testing.T) {
+	withTools := []byte(`{"model":"m","messages":[],"tools":[{"type":"function","function":{"name":"bash","description":"x","parameters":{"type":"object","properties":{}}}}]}`)
+	out, err := ensureZenGateTools(withTools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "tool_choice") {
+		t.Fatalf("调用方自带工具时不应设置 tool_choice: %s", out)
+	}
+
+	noTools := []byte(`{"model":"m","messages":[]}`)
+	out, err = ensureZenGateTools(noTools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["tool_choice"] != "none" {
+		t.Fatalf("无工具时应钳 tool_choice=none, got %v", payload["tool_choice"])
+	}
+	tools, _ := payload["tools"].([]any)
+	if len(tools) != len(zenGateToolDefs) {
+		t.Fatalf("无工具时应注入 %d 个占位工具, got %d", len(zenGateToolDefs), len(tools))
+	}
+
+	// 调用方显式传了 tool_choice 时永远尊重，不覆盖
+	explicit := []byte(`{"model":"m","messages":[],"tool_choice":"required"}`)
+	out, err = ensureZenGateTools(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"tool_choice":"required"`) {
+		t.Fatalf("显式 tool_choice 被覆盖: %s", out)
+	}
+}
+
 // 网关对 max_tokens 有上限（如 GLM 系 [1, 65536]），超限报 400。钳位重试前先准确识别这类错。
 func TestClampMaxTokens(t *testing.T) {
 	body := []byte(`{"model":"glm-4","max_tokens":200000,"messages":[{"role":"user","content":"hi"}]}`)
