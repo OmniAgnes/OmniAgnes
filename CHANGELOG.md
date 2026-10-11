@@ -2,6 +2,22 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.18 (2026-10-11)
+
+修复 opencode 限免模型工具调用全部失效、以乱码文本泄漏进回复的问题。
+
+### 🐛 修复
+
+- **限免模型回复出现 `]<]minimax[>[<tool_call>` 乱码、工具从不真正执行**：`ensureZenGateTools` 为过 zen 网关指纹校验，给**每个**请求强塞 `tool_choice: "none"`（v1.0.16 引入，本意是防止模型调走注入的占位工具）。实测该网关在 `tool_choice=none` 下会把 tools **从模型视野里整个拿掉**——agent 的真实工具全部失效；模型（如 `space-bunny-free`/MiniMax）想调工具只能按 MiniMax 原生 `<minimax:tool_call>` XML **以纯文本**吐出，再被网关洗成 `]<]minimax[>[` 坏字节原样落盘进回复。同一请求对照重放：`none` → 模型思考流里明说「没有提供任何函数定义」、纯文本拒绝；`auto` → 返回标准 OpenAI `tool_calls` 增量（`finish_reason: tool_calls`），干净无乱码
+- **修复方式**：`tool_choice` 改为仅当调用方**本来就没带任何工具**（纯聊天，此时才需要注入占位 bash/read）时才钳 `none`；调用方自带工具（agent 工具集必含 bash/read）时保持缺省 auto，标准工具调用通路恢复。新增回归测试 `TestEnsureZenGateToolsToolChoice`，覆盖三种形态（自带工具不设 / 无工具注入占位并钳 none / 显式传入时尊重不覆盖）
+
+### 📝 说明
+
+- 已损坏的历史会话里坏消息仍在存盘中，继续旧会话可能被模型模仿输出坏格式，建议新开任务
+- 限免模型的可用性与配额仍由 opencode 网关决定
+
+---
+
 ## v1.0.17 (2026-10-10)
 
 任务/项目列表的排序键从「用户发送时间」改为「最近一次回复完成时间」，等待回复期间不再霸占列表顶部。
