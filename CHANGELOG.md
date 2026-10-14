@@ -2,6 +2,51 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.21 (2026-10-14)
+
+账号体系统一为邮箱协议（BREAKING），桌面端登录改「打开网页授权」，服务端品牌清理为 OmniAgnes。
+
+### ⚠ BREAKING CHANGE
+
+- **手机号登录（desk 协议）整体下线**：删除 `server_cloudflare/src/desk.ts`，账号/积分/令牌从
+  `desk_users`/`desk_tokens`/`desk_credit_records` 迁到 `users`/`personal_access_tokens`/`point_logs`/`ai_usages`。
+  线上部署后需清空旧表并重新注册超管（`scripts/init-admin.mjs`，随机密码打印在输出里）
+
+### ✨ 新功能
+
+- **桌面端打开授权登录**：Electron 壳注册 `omni://` 自定义协议（单实例锁 + second-instance/open-url/冷启动三路回调）；
+  点「登录」→ 系统浏览器打开后台授权页（`/#/ide/login`）→ 网页登录后生成一次性授权码（10 分钟、一次有效）→
+  跳 `omni://auth?code=` 回桌面端自动换长期 token。浏览器端退回手动粘贴授权码
+- **授权页**：后台 web 新增 `#/ide/login`（登录 → `/api/ide/pair` 拿码 → 唤起桌面端），登录方式
+  邮箱验证码 / 密码双轨，默认方式跟随「邮件是否已配置」自动切换
+- **邮箱版会员接口**：`GET /api/me`、`/api/me/points`（point_logs 流水）、`/api/me/usages`（ai_usages）、
+  `GET /api/models`、`POST /api/usage`（事后上报计费：写 `ai_usages` + 扣 `users.points` + 记 `point_logs`，
+  管理员免扣、积分不足回 402）
+- **邮件免验证模式**：未配置 SMTP 时验证码任意通过（全新部署引导期可用），配好后自动恢复真发信真校验；
+  开关收敛在 `mail/index.ts` 一层
+
+### 🔧 内部
+
+- **后台 web 前端整体对齐邮箱协议**：`api.ts` 重写（管理端路由 `/admin/members`、`/admin/ai-upstreams`、
+  `/admin/ai-models/*`）；AdminPanel/MemberPanel 重写（会员/用量/上游/模型/邮件设置五页签）；
+  修改手机号弹窗改为修改邮箱
+- **品牌清理**：青鸟/qingniao → OmniAgnes/omni（`/api/health` 的 service 名、User-Agent、邮件文案、
+  授权协议 `qingniao://` → `omni://`、本地库路径 `~/.omni-server`、环境变量 `OMNI_DB`、package name）；
+  README 重写过时段落并新增「初始账号与密码」小节
+- **后台地址复用更新域名**：删除账号页里的后台地址输入框，地址优先级改为
+  版本号页签配置的更新域名（`omniDesktop.update.getDomain()`）> 内核 `config.json` 的 `server_url` > 缺省；
+  版本号页签保存域名后即时重探活
+- **账号入口恢复在线门控**：后台探活不通时（纯本地版）不渲染账号页签/侧栏账号按钮/工具条登录行，
+  免得点了报错
+
+### 🐛 修复
+
+- **设置 → 账号页签先闪「保存中」再出内容**：打开设置即置 loading，实际只是刷新余额。
+  改为仅首次加载（无已缓存资料）时置 loading，并给登出分支补复位
+- **长回复排版可读性**：正文限宽 68ch（宽屏下一行上百汉字是「全是字看着累」的主因）、段距与行高加大、
+  列表按层级换符号、表格隔行淡底且横向可滚、h2 加下边线切章节、正文字号 14→15px；
+  系统提示词补第 11 条——长回复必须用 Markdown 分段，短回答直接给结论
+
 ## v1.0.20 (2026-10-14)
 
 修复 v1.0.19 装机后桌面端启动即崩（自动更新模块没进安装包），README 补许可与免责声明。
