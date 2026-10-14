@@ -2,6 +2,34 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.19 (2026-10-14)
+
+桌面端接入自动更新（检查 → 下载 → 静默升级重启），后台服务端统一到 `server_cloudflare/`（Cloudflare Workers + D1）并删掉 Go 版 `server/`，同时下线 opencode zen 限免通道。
+
+### ✨ 新功能
+
+- **桌面端自动更新**：新增 `webui/desktop/updater.js`——优先查 `{更新域名}/api/upgrade`（服务端在 Cloudflare 出口代拉 GitHub，绕开国内访问 `api.github.com` 被墙/限流），回落 GitHub `releases/latest`；按平台+架构挑出 `omni-Setup*.exe/.dmg/.AppImage/.deb`，semver 比较防降级。流式下载进 `userData/updates`，带进度、可取消、半截包清理与大小校验；Windows 用 NSIS 静默原地升级并重启，macOS/Linux 打开安装包手动安装。启动 20 秒后首检、之后每 4 小时一次，下载与安装都需用户点击
+- **更新界面**：标题栏应用名旁新增「更新」胶囊（有新版本 / 下载中 / 就绪时点亮），新增 `UpgradeDialog`（版本号 → 进度 → 下载完成自动安装 → Release 页跳转）；设置 → 版本页新增更新域名输入与「检查更新」按钮，域名存 `userData/update.json`（留空直连 GitHub）
+- **回复末尾统计**：每条回复末行显示「模型名 · N Token/s · 耗时」；最终答复轮次持久化 `reply_model` / `output_tokens`，顶部标签只保留生成中的「工作中 N 秒」
+
+### 🔧 内部
+
+- **服务端只留 `server_cloudflare/`**：删除独立 Go 后台 `server/`（含 `cmd/server`、`internal/{store,auth,api,config,web}`），其后台前端迁到 `server_cloudflare/web/`（产物 `dist/` 由 Worker assets 服务）。线上部署为 Worker `omni-server` + D1 `omni_server`，与青鸟原 worker/库互不影响
+- **Worker 补桌面端协议兼容层 `src/desk.ts`**：桌面端说的仍是手机号那套契约（`/api/state`、`/api/auth/{send-code,login,logout}`、`/api/me`、`/api/claim`、`/api/models`、`/api/usage`，错误体 `{"error": …}`），与后台的邮箱契约（`{"message": …}`）共存；按请求体是否带 `phone` 分流，未命中的一律 `next()` 交回邮箱路由。积分走 `desk_credit_records` 账本（每笔带到期时间与剩余量，FEFO 扣减，到期自动清扫，余额不足 402 不透支）
+- **`/api/*` 补 CORS 层**：桌面端跨 origin 带 `Authorization` 访问 Worker，缺 `Access-Control-Allow-Origin` 时连 `probeServer()` 都失败，整个账号 UI 不渲染（表现为「填了平台地址没反应」）。现统一回 CORS 头并处理 OPTIONS 预检
+- **不内置任何账号**：去掉 `desk_users` 的种子管理员（原 `10000`），`desk_users` 为空时第一个手机号验证码登录的账号自动成为超管，之后注册的均为 member；线上部署无需账号初始化步骤
+
+### 🐛 修复
+
+- **下线 opencode zen 限免通道**：删除 `internal/llm/opencode.go`、`internal/webui/opencode.go` 与配置项 `opencode_free`（匿名指纹注入 + 占位工具的免 Key 通道），`OpenAIProvider` 顺带去掉仅供该网关使用的 `extraHeaders` / `transformBody` 钩子。免 Key 使用的唯一路径回归 omni-server「内置模型」
+- **旧配置悬空模型导致启动报错**：配置里选中已下架的 `*-free` 模型时，`config.Load` 现在一次性把 `current` 回落到第一个可用供应商，不再运行到调用才报「未找到供应商」（新增 `TestLoadResetsDanglingCurrentModel`）
+
+### 📝 说明
+
+- 手机号验证码目前仍是**测试模式**（固定 `111111`，`/api/auth/send-code` 会回显），接短信通道后不变协议、只换实现
+- 历史会话里被限免网关洗坏的消息字节仍在存盘中，建议新开任务
+
+
 ## v1.0.18 (2026-10-11)
 
 修复 opencode 限免模型工具调用全部失效、以乱码文本泄漏进回复的问题。
