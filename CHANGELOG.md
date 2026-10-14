@@ -2,6 +2,19 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.20 (2026-10-14)
+
+修复 v1.0.19 装机后桌面端启动即崩（自动更新模块没进安装包），README 补许可与免责声明。
+
+### 🐛 修复
+
+- **安装后启动报 `Cannot find module ./updater`**：`webui/desktop/electron-builder.yml` 的 `files` 是逐个点名的白名单（`main.js`/`preload.js`/`package.json`），v1.0.19 新增的 `updater.js` 没登记，因此没被打进 `app.asar`，主进程 `main.js` 的 `require("./updater")` 直接抛模块找不到。开发态 `electron .` 直接读源码目录所以不复现，只有安装包装机才炸，且崩溃发生在建窗口之前——表现为装完双击没界面。白名单改为 `- "*.js"` + `package.json`（只匹配根这一层，`scripts/*.cjs`、`*.mjs`、`*.py`、`*.yml` 不会被带进包），以后新增主进程文件不必再同步登记。已用 electron-builder 自身的 `getFileMatchers(...).createFilter()` 核对匹配结果：`main.js`/`preload.js`/`updater.js`/`package.json` 入包，其余不入
+
+### 📝 说明
+
+- **README 新增「许可」章节**：MIT 版权声明（与 `LICENSE` 一致）+ 实验性产品免责声明——不保证生产可用、`build` 模式可写文件与执行命令、`--unsafe` 可越出工作目录，误删改不可回退，模型回复与 API 费用由使用者自担。本项目应用内暂无《免责声明与使用条款》页面，声明只落在 README
+
+
 ## v1.0.19 (2026-10-14)
 
 桌面端接入自动更新（检查 → 下载 → 静默升级重启），后台服务端统一到 `server_cloudflare/`（Cloudflare Workers + D1）并删掉 Go 版 `server/`，同时下线 opencode zen 限免通道。
