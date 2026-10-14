@@ -87,8 +87,11 @@ export interface ViewItem {
   thinkingActive?: boolean
   /** LLM 迭代轮次：一次提问会跑多轮，每轮 = 一段文本 + 若干工具调用 */
   round?: number
-  /** 本轮从用户发出到回复完成的工作耗时（毫秒）；仅当轮会话内存，不持久化 */
+  /** 本轮从用户发出到回复完成的工作耗时（毫秒）；持久化，重开后仍显示 */
   elapsedMs?: number
+  /** 最终答复的产出模型与输出 token（回复末行「模型名 · Token速度 · 耗时」用） */
+  replyModel?: string
+  outTokens?: number
 }
 
 interface ChatProps {
@@ -109,8 +112,6 @@ interface ChatProps {
   /** seq 递增即把 text 回填输入框（队列「编辑」） */
   draftSeed: { text: string; seq: number }
   models: ModelGroup[]
-  /** opencode 限免模型：模型选择器里单独一行，钉在列表末尾 */
-  freeModels?: string[]
   model: string
   /** 项目可用技能（供输入 / 时提示补全） */
   skills: SkillInfo[]
@@ -159,7 +160,6 @@ export function Chat({
   queue,
   draftSeed,
   models,
-  freeModels,
   model,
   skills,
   focusSignal,
@@ -385,10 +385,12 @@ export function Chat({
       // 必须同时满足 streaming——切到已完成/不活动的任务时不会误显示「工作中」。
       const live = streaming && workSince != null && bi === blocks.length - 1
       let elapsedMs: number | undefined
+      let statItem: ViewItem | undefined
       if (!live) {
         for (let i = b.replies.length - 1; i >= 0; i--) {
           if (b.replies[i].elapsedMs != null) {
             elapsedMs = b.replies[i].elapsedMs
+            statItem = b.replies[i]
             break
           }
         }
@@ -412,10 +414,8 @@ export function Chat({
               若也渲染成 div，每个都会吃一个 gap，多轮时空白越叠越大。 */}
           {(b.tools.length > 0 || b.replies.some((r) => r.text || r.thinking || r.thinkingActive)) && (
             <div className="flex flex-col gap-1.5">
-              {/* 耗时标签固定在本段 AI 回复的最上方：下方内容流式更新/追加时它始终在最顶 */}
-              {(live || elapsedMs != null) && (
-                <ElapsedLabel live={live} liveSince={workSince} now={now} elapsedMs={elapsedMs} />
-              )}
+              {/* 生成中：顶部固定动态「工作中 N 秒」；结束后改在末行显示「模型名 · Token速度 · 耗时」 */}
+              {live && <ElapsedLabel liveSince={workSince} now={now} />}
               {(thinkParts.length > 0 || thinkingActive) && (
                 <ThinkingBlock text={thinkParts.join("\n\n")} active={thinkingActive} />
               )}
@@ -454,6 +454,16 @@ export function Chat({
                     {/* 错误浮在输入框上方横幅显示，消息流内不再重复 */}
                   </div>
                 ))}
+              {/* 回复完成后的末行统计：模型名 · 输出 Token 速度 · 耗时 */}
+              {!live && statItem && elapsedMs != null && (
+                <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-0.5 text-xs">
+                  {statItem.replyModel && <span className="font-mono">{statItem.replyModel}</span>}
+                  {!!statItem.outTokens && (
+                    <span>{Math.max(1, Math.round(statItem.outTokens / (elapsedMs / 1000)))} Token/s</span>
+                  )}
+                  <span>{t("c.took", { d: fmtElapsed(elapsedMs, t) })}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -729,8 +739,8 @@ export function Chat({
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
-              {(models.length > 0 || (freeModels?.length ?? 0) > 0 || !!serverUser) && (
-                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} freeModels={freeModels} onConfigure={onConfigureModels} />
+              {(models.length > 0 || !!serverUser) && (
+                <ModelPicker groups={models} model={model} onChange={onModelChange} serverUser={serverUser} onConfigure={onConfigureModels} />
               )}
               {streaming ? (
                 <Button variant="secondary" size="icon" className="rounded-full" onClick={onStop} title={t("c.stop")}>
@@ -789,32 +799,20 @@ function fmtElapsed(ms: number, t: (k: string, v?: Record<string, string | numbe
   return t("d.s", { s: sec })
 }
 
-/** 回复上方的耗时标签：live 时为生成中的动态「工作中 N 秒」（每秒跳变），否则显示定格的「已工作 N 秒」。 */
+/** 生成中的动态耗时标签（回复结束后由末行统计接替）：每秒跳变「工作中 N 秒」。 */
 function ElapsedLabel({
-  live,
   liveSince,
   now,
-  elapsedMs,
 }: {
-  live: boolean
   liveSince?: number
   now: number
-  elapsedMs?: number
 }) {
   const { t } = useI18n()
-  if (live && liveSince != null) {
+  if (liveSince != null) {
     return (
       <div className="text-muted-foreground flex items-center gap-1 pt-1 text-xs">
         <ClockIcon className="size-3.5 shrink-0" />
         <span>{t("c.working", { d: fmtElapsed(Math.max(0, now - liveSince), t) })}</span>
-      </div>
-    )
-  }
-  if (elapsedMs != null) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-1 pt-1 text-xs">
-        <ClockIcon className="size-3.5 shrink-0" />
-        <span>{t("c.worked", { d: fmtElapsed(elapsedMs, t) })}</span>
       </div>
     )
   }

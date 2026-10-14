@@ -54,8 +54,6 @@ export const api = {
           type: string
           provider?: string
           default: boolean
-          /** 来自 opencode 免费模型组：显示名由前端按语言给出 */
-          opencode_free?: boolean
         }[]
         current: string
       }>(r),
@@ -138,21 +136,20 @@ export const api = {
 
   settings: () =>
     fetch("/api/settings").then((r) =>
-      json<{ model: string; theme: Theme; theme_color: ThemeColor; opencode_free: boolean }>(r),
+      json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r),
     ),
 
   saveSettings: (payload: {
     model?: string
     theme?: Theme
     theme_color?: ThemeColor
-    opencode_free?: boolean
   }) =>
     fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }).then((r) =>
-      json<{ model: string; theme: Theme; theme_color: ThemeColor; opencode_free: boolean }>(r),
+      json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r),
     ),
 
   memory: () =>

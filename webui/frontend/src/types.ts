@@ -43,8 +43,11 @@ export interface ChatMessage {
   text?: string
   tool_calls?: ToolCallMsg[]
   tool_result?: ToolResultMsg
-  /** assistant 最终答复的工作耗时（毫秒）；持久化，重开会话后回复上仍显示「已工作」 */
+  /** assistant 最终答复的工作耗时（毫秒）；持久化，重开会话后回复上仍显示耗时 */
   elapsed_ms?: number
+  /** 最终答复的产出模型与输出 token 总数；持久化，回复末行显示「模型名 · Token速度 · 耗时」 */
+  reply_model?: string
+  output_tokens?: number
 }
 
 export interface TaskFull extends TaskMeta {
@@ -174,8 +177,6 @@ export interface ProviderConfig {
   reasoning?: string
   /** 按模型名覆盖供应商级默认值 */
   model_options?: Record<string, ModelOptions>
-  /** 程序自动注入的虚拟供应商（opencode 免费模型组）：不可编辑、不落盘 */
-  builtin?: boolean
 }
 
 export interface StateInfo {

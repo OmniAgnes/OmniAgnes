@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { ShieldOffIcon } from "lucide-react"
 
 import { AddProjectDialog } from "@/components/AddProjectDialog"
@@ -10,6 +10,7 @@ import { SettingsDialog } from "@/components/SettingsDialog"
 import { Titlebar } from "@/components/Titlebar"
 import { OmniToolbar } from "@/components/OmniToolbar"
 import { ServerLoginDialog } from "@/components/ServerLoginDialog"
+import { UpgradeDialog } from "@/components/UpgradeDialog"
 import { Button } from "@/components/ui/button"
 import { api, HttpError, streamChat } from "@/lib/api"
 import { setHljsTheme } from "@/lib/hljs"
@@ -44,15 +45,6 @@ function attachmentToInfo(a: RawAttachment): AttachmentInfo {
 interface ModelGroup {
   provider: string
   models: string[]
-}
-
-/** opencode 限免模型组在计划任务下拉里的分组名（模型选择器用 mp.freeModels 文案）。
- *  翻译单独放这里是因为分组名要参与 Map 的键，不能像普通文案那样现调 t()——
- *  t() 每次渲染都是新函数，会把整个分组结构重建掉。 */
-const OPENCODE_FREE_LABEL: Record<string, string> = {
-  "zh-Hans": "限免模型",
-  "zh-Hant": "限免模型",
-  en: "Free models",
 }
 
 /**
@@ -120,7 +112,20 @@ export default function App() {
   // 内置浏览器面板显隐（入口在输入框底部「完全访问」后的地球图标）
   const [browserOpen, setBrowserOpen] = useState(false)
   const [loadErr, setLoadErr] = useState("")
-  // 移动端换发 token 后，旧 Cookie 立刻失效。此时页面外壳还活着（HTML/JS 已在内存里），
+  // 桌面更新：状态快照全在主进程（updater.js），界面只读 + 订阅，左上角「更新」入口靠它点亮
+  const [updateSt, setUpdateSt] = useState<OmniUpdateState | null>(null)
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  useEffect(() => {
+    const upd = window.omniDesktop?.update
+    if (!upd) return
+    let alive = true
+    void upd.get().then((s) => alive && setUpdateSt(s)).catch(() => {})
+    const off = upd.onChanged((s) => alive && setUpdateSt(s))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])  // 移动端换发 token 后，旧 Cookie 立刻失效。此时页面外壳还活着（HTML/JS 已在内存里），
   // 但每个接口都 401，结果就是「列表全空 + 一条红条」，用户完全不知道发生了什么。
   // 401 单独拎出来，整屏提示重新扫码。
   const [unauth, setUnauth] = useState(false)
@@ -143,7 +148,7 @@ export default function App() {
   const [draftSeed, setDraftSeed] = useState<{ text: string; seq: number }>({ text: "", seq: 0 })
 
   // ---- 桌面工具条：界面缩放 / 登录(omni-server) ----
-  const { t, lang } = useI18n()
+  const { t } = useI18n()
   // 缩放倍数持久化（0.5~2）；桌面端经 IPC 走 Chromium 原生页面缩放
   const [zoom, setZoom] = useState(() => {
     const v = Number(localStorage.getItem("omni.zoom"))
@@ -417,21 +422,13 @@ export default function App() {
   }, [state?.theme_color])
 
   // 模型列表：按供应商分组（一级 = 供应商名，二级 = 模型名），聊天底部二级联动选择。
-  // opencode 限免模型不进分组：模型选择器里单独钉在列表末尾（配置模型之上），
-  // 只有计划任务页的下拉把它当普通分组铺开。
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([])
-  const [freeModels, setFreeModels] = useState<string[]>([])
   const refreshModels = useCallback(async () => {
     try {
       const r = await api.models()
       const groups: ModelGroup[] = []
       const byName = new Map<string, ModelGroup>()
-      const free: string[] = []
       for (const m of r.models) {
-        if (m.opencode_free) {
-          free.push(m.model)
-          continue
-        }
         // 空供应商名保持空串，渲染侧统一回落到 i18n「其他」
         const provider = m.provider || ""
         let g = byName.get(provider)
@@ -443,27 +440,13 @@ export default function App() {
         g.models.push(m.model)
       }
       setModelGroups(groups)
-      setFreeModels(free)
     } catch {
       setModelGroups([])
-      setFreeModels([])
     }
   }, [])
   useEffect(() => {
     void refreshModels()
   }, [refreshModels, state?.model])
-
-  /** 计划任务页的下拉用：限免模型作为一组铺在最前面 */
-  const scheduleModelGroups = useMemo<ModelGroup[]>(
-    () =>
-      freeModels.length > 0
-        ? [
-            { provider: OPENCODE_FREE_LABEL[lang] ?? "OpenCode Free", models: freeModels },
-            ...modelGroups,
-          ]
-        : modelGroups,
-    [freeModels, modelGroups, lang],
-  )
 
   const changeModel = async (m: string) => {
     try {
@@ -537,8 +520,10 @@ export default function App() {
         out.push(cur)
       } else if (m.role === "assistant") {
         cur = { id: nextId(), role: "assistant", text: m.text ?? "", tools: [], round: round++ }
-        // 历史里 persisted 的整轮工作耗时：重开软件后回复上仍显示「已工作」
+        // 历史里 persisted 的整轮工作耗时/模型/输出 token：重开软件后回复末行仍显示统计
         if (m.elapsed_ms != null) cur.elapsedMs = m.elapsed_ms
+        if (m.reply_model) cur.replyModel = m.reply_model
+        if (m.output_tokens) cur.outTokens = m.output_tokens
         for (const tc of m.tool_calls ?? []) {
           cur.tools.push({
             id: tc.id,
@@ -908,6 +893,17 @@ export default function App() {
         // 登录了 omni-server：本次问答的 token 用量上报后台，按模型倍率扣积分并留痕；仅内置模型
         if (serverToken() && builtin && (ev.input_tokens || ev.output_tokens)) {
           reportServerUsage(ev.model || builtin, ev.input_tokens ?? 0, ev.output_tokens ?? 0)
+        }
+        // 把产出模型与输出 token 挂到本轮最后一条回复：回复末行「模型名 · Token速度 · 耗时」
+        {
+          const items = [...r.items]
+          for (let i = items.length - 1; i >= 0; i--) {
+            if (items[i].role === "assistant") {
+              items[i] = { ...items[i], replyModel: ev.model, outTokens: ev.output_tokens ?? 0 }
+              break
+            }
+          }
+          r.items = items
         }
         break
     }
@@ -1297,7 +1293,24 @@ export default function App() {
           </Button>
         </div>
       )}
-      {isDesktop && <Titlebar source={chatSource} title={chatTitle} browserOpen={browserOpen} />}
+      {isDesktop && (
+        <Titlebar
+          source={chatSource}
+          title={chatTitle}
+          browserOpen={browserOpen}
+          hasUpdate={!!updateSt && (!!updateSt.latest || !!updateSt.progress || updateSt.canInstall)}
+          updateStateText={
+            updateSt?.canInstall
+              ? t("ud.ready")
+              : updateSt?.progress
+                ? t("ud.downloading")
+                : updateSt?.latest
+                  ? t("ud.found", { v: updateSt.latest.version })
+                  : undefined
+          }
+          onUpdateClick={() => setUpgradeOpen(true)}
+        />
+      )}
       <div className="flex min-h-0 flex-1">
         <Sidebar
           tasks={standaloneTasks}
@@ -1320,7 +1333,7 @@ export default function App() {
         />
         {view === "schedules" ? (
           <SchedulesPage
-            models={scheduleModelGroups}
+            models={modelGroups}
             projects={projects}
             onRan={() => {
               void refreshTasks()
@@ -1341,7 +1354,6 @@ export default function App() {
           queue={run?.queue ?? []}
           draftSeed={draftSeed}
           models={modelGroups}
-          freeModels={freeModels}
           model={state?.model ?? ""}
           skills={skills}
           focusSignal={focusSignal}
@@ -1395,6 +1407,9 @@ export default function App() {
         onAdded={() => void refreshProjects()}
       />
       <ServerLoginDialog open={loginOpen} onOpenChange={setLoginOpen} onLoggedIn={setServerUser} />
+      {upgradeOpen && updateSt && updateSt.latest && (
+        <UpgradeDialog st={updateSt} onClose={() => setUpgradeOpen(false)} />
+      )}
       {/* 快捷工具悬浮球：侧边栏可见时显示（桌面端与宽屏浏览器常驻，H5 仅抽屉展开时）；
           侧边栏收起时它正好压住输入框左下角的附件按钮，所以不渲染。 */}
       {sidebarVisible && (

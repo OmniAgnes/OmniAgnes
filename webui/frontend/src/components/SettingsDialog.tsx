@@ -8,7 +8,6 @@ import {
   CircleAlertIcon,
   CoinsIcon,
   CpuIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   FolderOpenIcon,
   InfoIcon,
@@ -18,7 +17,6 @@ import {
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
-  SparklesIcon,
   SunMoonIcon,
   Trash2Icon,
   UserIcon,
@@ -81,8 +79,6 @@ const PROVIDER_TYPES = [
   { value: "anthropic", key: "se.anthropic" },
   { value: "gemini", key: "se.gemini" },
   { value: "ollama", key: "se.ollama" },
-  // opencode 不在手动添加之列：免费档由开关自动注入（builtin 虚拟条目），
-  // 付费档需要网关账号体系，暴露类型只会让用户建出不可用的配置
 ] as const
 
 const THEME_COLORS = [
@@ -265,11 +261,6 @@ export function SettingsDialog({
     setSection(initialSection as SectionId)
   }, [open, initialSection, serverUser, serverOnline])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
-  // opencode 免费模型组开关（后端默认开启）
-  const [freeModels, setFreeModels] = useState(true)
-  const [freeSaving, setFreeSaving] = useState(false)
-  /** 免费组清单展开态：展开后显示网关下发的实时模型列表 */
-  const [freeExpanded, setFreeExpanded] = useState(false)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
@@ -289,6 +280,21 @@ export function SettingsDialog({
   const [providersSaved, setProvidersSaved] = useState(false)
   /** 最近一次「添加」的供应商下标：新卡片据此自动展开并聚焦名称 */
   const [newProviderIndex, setNewProviderIndex] = useState(-1)
+  /** 桌面更新状态（快照存主进程 updater.js，这里只读 + 订阅）；域名编辑缓冲（null=还没从快照初始化） */
+  const [updSt, setUpdSt] = useState<OmniUpdateState | null>(null)
+  const [updDomain, setUpdDomain] = useState<string | null>(null)
+  useEffect(() => {
+    const upd = window.omniDesktop?.update
+    if (!upd) return
+    void upd
+      .get()
+      .then((s) => {
+        setUpdSt(s)
+        setUpdDomain((cur) => (cur === null ? s.domain : cur))
+      })
+      .catch(() => {})
+    return upd.onChanged((s) => setUpdSt(s))
+  }, [])
 
   const refreshSkills = async () => {
     try {
@@ -327,7 +333,6 @@ export function SettingsDialog({
     api.providers().then((r) => setProviders(r.providers)).catch(() => setProviders([]))
     api.settings().then((r) => {
       setPreset(deriveThemePreset(r.theme, r.theme_color))
-      setFreeModels(r.opencode_free)
     }).catch(() => {})
     api.memory().then((r) => setMemory(r.content)).catch(() => {})
     void refreshMcp()
@@ -367,25 +372,6 @@ export function SettingsDialog({
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
-    }
-  }
-
-  // 开关 opencode 免费模型组：开启时后端把网关的免费模型作为一组注入模型菜单，
-  // 关闭则移除（清单由后端管理，前端不碰供应商配置本身）
-  const toggleFreeModels = async (on: boolean) => {
-    setFreeSaving(true)
-    setErr("")
-    try {
-      const r = await api.saveSettings({ opencode_free: on })
-      setFreeModels(r.opencode_free)
-      if (state) onStateChange({ ...state, model: r.model })
-      // 模型菜单与供应商列表都要跟着变
-      onProvidersSaved?.()
-      api.providers().then((x) => setProviders(x.providers)).catch(() => {})
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-    } finally {
-      setFreeSaving(false)
     }
   }
 
@@ -614,90 +600,19 @@ export function SettingsDialog({
                     </div>
                   )}
 
-                  {/* opencode 免费模型组：不是一条可编辑的供应商配置（清单由网关决定），
-                      一行开关 + 可展开的实时清单；开关变化要通知外层刷新模型菜单 */}
-                  <div className="border-border rounded-lg border px-3 py-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-sm">
-                          <SparklesIcon className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                          <span className="truncate font-medium">{t("se.freeModels")}</span>
-                        </div>
-                        <p className="text-muted-foreground mt-0.5 text-xs">{t("se.freeModelsHint")}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {freeModels && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8"
-                            title={freeExpanded ? t("se.freeModelsHide") : t("se.freeModelsShow")}
-                            onClick={() => setFreeExpanded((v) => !v)}
-                          >
-                            <ChevronDownIcon className={cn("size-4 transition-transform", freeExpanded && "rotate-180")} />
-                          </Button>
-                        )}
-                        <Button
-                          variant={freeModels ? "secondary" : "outline"}
-                          size="sm"
-                          className="shrink-0"
-                          disabled={freeSaving}
-                          onClick={() => void toggleFreeModels(!freeModels)}
-                        >
-                          {freeModels ? t("se.disable") : t("se.enable")}
-                        </Button>
-                      </div>
-                    </div>
-                    {freeModels && freeExpanded && (
-                      <div className="border-border mt-2 border-t pt-2">
-                        {(() => {
-                          const freeList = (providers ?? []).find((p) => p.builtin)?.models ?? []
-                          if (freeList.length === 0) {
-                            return <p className="text-muted-foreground text-xs">{t("se.freeModelsEmpty")}</p>
-                          }
-                          return (
-                            <>
-                              <p className="text-muted-foreground mb-1.5 text-xs">
-                                {t("se.freeModelsCount").replace("%d", String(freeList.length))}
-                              </p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {freeList.map((m) => (
-                                  <span
-                                    key={m}
-                                    className={cn(
-                                      "rounded px-1.5 py-0.5 font-mono text-xs",
-                                      m === state?.model ? "bg-primary/15 text-primary font-medium" : "bg-muted",
-                                    )}
-                                  >
-                                    {m}
-                                  </span>
-                                ))}
-                              </div>
-                            </>
-                          )
-                        })()}
-                      </div>
-                    )}
-                  </div>
-
                   {(providers ?? []).length === 0 && (
                     <div className="text-muted-foreground text-sm">{t("se.noProviders")}</div>
                   )}
 
-
-                  {/* builtin 条目（opencode 免费组）由后端注入、不可编辑：跳过渲染，
-                      但保留在数组里，否则 patchProvider 的下标会错位 */}
-                  {(providers ?? []).map((p, i) =>
-                    p.builtin ? null : (
-                      <ProviderCard
-                        key={i}
-                        provider={p}
-                        defaultOpen={i === newProviderIndex}
-                        onChange={(patch) => patchProvider(i, patch)}
-                        onRemove={() => removeProvider(i)}
-                      />
-                    ),
-                  )}
+                  {(providers ?? []).map((p, i) => (
+                    <ProviderCard
+                      key={i}
+                      provider={p}
+                      defaultOpen={i === newProviderIndex}
+                      onChange={(patch) => patchProvider(i, patch)}
+                      onRemove={() => removeProvider(i)}
+                    />
+                  ))}
                 </div>
               )}
 
@@ -1096,13 +1011,75 @@ export function SettingsDialog({
               {section === "usage" && <UsagePanel key={usageSeq} />}
 
               {section === "version" && (
-                <div className="flex items-center justify-between">
-                  <Label>{t("se.currentVersion")}</Label>
-                  {/* 版本号来自内核自报（/api/state），内核读的是桌面端 package.json，
-                      发版只改那一个文件，不再有第二处常量对不上 */}
-                  <span className="text-muted-foreground text-sm tabular-nums">
-                    {versionLabel(state?.version)}
-                  </span>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label>{t("se.currentVersion")}</Label>
+                    {/* 版本号来自内核自报（/api/state），内核读的是桌面端 package.json，
+                        发版只改那一个文件，不再有第二处常量对不上 */}
+                    <span className="text-muted-foreground text-sm tabular-nums">
+                      {versionLabel(state?.version)}
+                    </span>
+                  </div>
+
+                  {/* 更新（仅桌面壳）：域名可配置、无默认值——留空直连 GitHub Releases；
+                      填了自建平台地址则优先走 {域名}/api/upgrade（服务端代拉，国内可达） */}
+                  {window.omniDesktop?.update && (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label>{t("se.updateDomain")}</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={updDomain ?? ""}
+                            onChange={(e) => setUpdDomain(e.target.value)}
+                            placeholder={t("se.updateDomainPh")}
+                            spellCheck={false}
+                            autoComplete="off"
+                            className="h-8 font-mono text-xs"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={updDomain === null || updDomain === (updSt?.domain ?? "")}
+                            onClick={() => {
+                              const upd = window.omniDesktop?.update
+                              if (!upd) return
+                              void upd
+                                .setDomain(updDomain ?? "")
+                                .then(() => upd.get())
+                                .then((s) => {
+                                  setUpdSt(s)
+                                  setUpdDomain(s.domain)
+                                })
+                                .catch(() => {})
+                            }}
+                          >
+                            {t("se.save")}
+                          </Button>
+                        </div>
+                        <p className="text-muted-foreground text-xs">{t("se.updateDomainHint")}</p>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground min-w-0 text-xs">
+                          {updSt?.checking
+                            ? t("se.checking")
+                            : updSt?.error
+                              ? updSt.error
+                              : updSt?.latest
+                                ? t("ud.found", { v: updSt.latest.version })
+                                : updSt && updSt.checkedAt > 0
+                                  ? t("se.upToDate")
+                                  : ""}
+                        </span>
+                        <Button
+                          size="sm"
+                          disabled={!!updSt?.checking}
+                          onClick={() => void window.omniDesktop?.update.check().then(setUpdSt).catch(() => {})}
+                        >
+                          {t("se.checkUpdate")}
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

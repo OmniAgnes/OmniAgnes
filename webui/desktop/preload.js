@@ -15,4 +15,20 @@ contextBridge.exposeInMainWorld("omniDesktop", {
   browserBounds: (b) => ipcRenderer.send("omni:browser-bounds", b),
   // 显示/隐藏原生视图（面板折叠时置 false，避免操作打到看不见的区域）
   browserVisible: (v) => ipcRenderer.send("omni:browser-visible", Boolean(v)),
+  // 应用更新：状态快照全在主进程，界面读快照 + 订阅变化
+  update: {
+    get: () => ipcRenderer.invoke("omni:update:get"),
+    check: () => ipcRenderer.invoke("omni:update:check"),
+    download: () => ipcRenderer.invoke("omni:update:download"),
+    cancel: () => ipcRenderer.invoke("omni:update:cancel"),
+    install: () => ipcRenderer.invoke("omni:update:install"),
+    openRelease: (tag) => ipcRenderer.invoke("omni:update:openRelease", tag),
+    getDomain: () => ipcRenderer.invoke("omni:update:getDomain"),
+    setDomain: (d) => ipcRenderer.invoke("omni:update:setDomain", d),
+    onChanged: (cb) => {
+      const handler = (_e, s) => cb(s)
+      ipcRenderer.on("omni:update", handler)
+      return () => ipcRenderer.removeListener("omni:update", handler)
+    },
+  },
 })

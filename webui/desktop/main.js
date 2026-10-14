@@ -12,6 +12,7 @@ const { spawn } = require("node:child_process")
 const { existsSync } = require("node:fs")
 const http = require("node:http")
 const path = require("node:path")
+const updater = require("./updater")
 
 // ---------- 内置浏览器 ----------
 // WebContentsView 悬浮在主窗口内容之上，位置大小由渲染层 BrowserPane 上报的矩形决定。
@@ -402,6 +403,19 @@ ipcMain.on("omni:browser-visible", (_e, visible) => {
   applyBrowserBounds()
 })
 
+// ---------- IPC：应用更新（逻辑在 updater.js，状态全部存主进程，界面只读快照） ----------
+updater.setUpdateSink((s) => {
+  if (win && !win.isDestroyed()) win.webContents.send("omni:update", s)
+})
+ipcMain.handle("omni:update:get", () => updater.state())
+ipcMain.handle("omni:update:check", () => updater.checkUpdate())
+ipcMain.handle("omni:update:download", () => updater.downloadUpdate())
+ipcMain.handle("omni:update:cancel", () => updater.cancelDownload())
+ipcMain.handle("omni:update:install", () => updater.installUpdate())
+ipcMain.handle("omni:update:openRelease", (_e, tag) => updater.openReleasePage(typeof tag === "string" ? tag : undefined))
+ipcMain.handle("omni:update:getDomain", () => updater.getDomain())
+ipcMain.handle("omni:update:setDomain", (_e, domain) => updater.setDomain(domain))
+
 async function createWindow() {
   omni = startOmni()
   if (!omni) return
@@ -497,6 +511,12 @@ app.whenReady().then(() => {
   app.on("activate", () => {
     if (!win) createWindow().catch((e) => fail(e.message))
   })
+  // 打包态：启动 20s 后自动查一次更新，之后每 4 小时一次（dev 版本恒等于源码，不自动比）
+  // 只做「发现」并把状态推给界面；下载与安装永远等用户点，绝不静默下载。
+  if (app.isPackaged) {
+    setTimeout(() => void updater.checkUpdate().catch(() => {}), 20_000)
+    setInterval(() => void updater.checkUpdate().catch(() => {}), 4 * 60 * 60 * 1000)
+  }
 })
 
 app.on("window-all-closed", () => {

@@ -1,4 +1,4 @@
-import { FolderIcon, MessageSquareIcon, MinusIcon, SquareIcon, XIcon } from "lucide-react"
+import { ArrowUpCircleIcon, FolderIcon, MessageSquareIcon, MinusIcon, SquareIcon, XIcon } from "lucide-react"
 
 import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
@@ -9,7 +9,24 @@ import { cn } from "@/lib/utils"
 //
 // browserOpen：内置浏览器展开时给右块补一条底边框。浏览器面板左侧有 border-l，
 // 若顶头没有横向分隔，那条竖线会悬空断在标题栏下沿，很不协调；补上后两者交成 T 形接点。
-export function Titlebar({ source, title, browserOpen }: { source: string; title: string; browserOpen?: boolean }) {
+//
+// hasUpdate：主进程查到新版本/下载中/已就绪时，左上角应用名旁内联一个「更新」入口，
+// 点击弹升级确认窗（不单独占一行，也不跳设置页）。
+export function Titlebar({
+  source,
+  title,
+  browserOpen,
+  hasUpdate,
+  updateStateText,
+  onUpdateClick,
+}: {
+  source: string
+  title: string
+  browserOpen?: boolean
+  hasUpdate?: boolean
+  updateStateText?: string
+  onUpdateClick?: () => void
+}) {
   const { t } = useI18n()
   const drag = { WebkitAppRegion: "drag" } as React.CSSProperties
   const noDrag = { WebkitAppRegion: "no-drag" } as React.CSSProperties
@@ -17,8 +34,20 @@ export function Titlebar({ source, title, browserOpen }: { source: string; title
   return (
     <div className="flex h-9 shrink-0 select-none" style={drag}>
       {/* 左块：对应下方侧边栏（宽度与 border-r 与侧边栏一致） */}
-      <div className="bg-sidebar hidden w-72 shrink-0 items-center border-r pl-3 md:flex">
+      <div className="bg-sidebar hidden w-72 shrink-0 items-center gap-2 border-r pl-3 md:flex">
         <span className="text-base font-semibold tracking-tight">OmniAgens</span>
+        {hasUpdate && (
+          <button
+            type="button"
+            title={updateStateText}
+            onClick={onUpdateClick}
+            style={noDrag}
+            className="text-primary bg-primary/10 hover:bg-primary/20 flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-colors"
+          >
+            <ArrowUpCircleIcon className="size-3.5" />
+            {t("tb.update")}
+          </button>
+        )}
       </div>
       {/* 右块：对应下方对话区。左边是当前任务来源/标题（字号加大，过长自动截断，悬停看全称），右边是窗口按钮 */}
       <div className={cn("bg-background flex min-w-0 flex-1 items-center", browserOpen && "border-b")}>
