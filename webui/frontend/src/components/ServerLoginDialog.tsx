@@ -72,7 +72,7 @@ export function ServerLoginDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("login.title")}</DialogTitle>
           <DialogDescription>{t("login.subtitle")}</DialogDescription>
