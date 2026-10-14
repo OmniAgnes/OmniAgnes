@@ -17,8 +17,12 @@ appId: com.omni.desktop
 directories:
   output: release
 files:
-  - main.js
-  - preload.js
+  # 主进程源码都在本目录根部（main.js / preload.js / updater.js），用 glob 而不是逐个点名。
+  # ⚠️ 历史上这里是逐个列文件，新增 updater.js 时漏登记，装机后 main.js 的
+  #    require("./updater") 直接抛 "Cannot find module ./updater"——白名单一旦点名，
+  #    每加一个主进程文件都必须同步，改 glob 就没这个坑。
+  #    `*.js` 只匹配根这一层，scripts/*.cjs、*.mjs、*.py 不会被带进包。
+  - "*.js"
   - package.json
 beforePack: scripts/electron-before-pack.cjs
 extraResources:
