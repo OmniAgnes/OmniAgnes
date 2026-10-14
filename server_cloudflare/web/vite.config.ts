@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
 
-// 构建产物输出到 server/dist，由 server 后端服务（SPA）。
+// 构建产物输出到 server_cloudflare/dist，由 Worker 的 assets（本地跑时由 src/local/main.ts）服务。
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {

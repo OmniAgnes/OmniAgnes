@@ -34,7 +34,7 @@
 - **多 Provider**：OpenAI 兼容 / Anthropic / Gemini / Ollama 等
 - **Agent 模式**：`build`（可写文件、执行命令）与 `plan`（只读）
 - **非交互模式**：`--print "问题"` 供脚本与 CI 使用
-- **omni-server 后台（可选）**：`server/` 目录的独立服务（端口 9000）——手机号验证码登录（测试模式 111111）、会员与积分、模型与供应商管理（倍率 / 限免 / 多供应商），界面基于 shadcn/ui
+- **omni-server 后台（可选）**：`server_cloudflare/` 的 Hono 服务（Cloudflare Workers + D1，也可 `npm start` 跑本地 Node+SQLite）——手机号验证码登录（测试模式 111111）、会员与积分、模型与供应商管理（倍率 / 限免 / 多供应商），界面基于 shadcn/ui
 
 ## 安装
 
@@ -182,14 +182,18 @@ npm run dist:linux  # 产出 AppImage + deb（须在 Linux 上跑）
 正式发布走 `.github/workflows/release.yml`：打 `v*` tag 即在 Windows / macOS / Linux
 三平台各出双架构安装包（Windows NSIS、macOS dmg、Linux AppImage + deb）。
 
-后台（server/，独立 Go 模块 + shadcn/ui 前端，默认 http://127.0.0.1:9000）：
+后台（`server_cloudflare/`，Hono + TypeScript，一套代码两种形态：Cloudflare Workers + D1，
+或本地 `npm start` 跑 Node + `node:sqlite`）：
 
 ```sh
-cd server
-go build -o bin/server.exe ./cmd/server
-cd web && npm install && npm run build   # 产物输出到 server/dist
-cd .. && bin\server.exe                  # 启动；测试模式验证码 111111，内置管理员 10000
+cd server_cloudflare
+npm install
+npm run build:web   # 后台前端产物 dist/（源码在 server_cloudflare/web/）
+npm start           # 本地形态，http://127.0.0.1:35000
 ```
+
+测试模式验证码 `111111`；不内置任何账号——`desk_users` 为空时第一个手机号验证码登录的即超管。
+云端部署见 `server_cloudflare/README.md`。
 
 ## 目录结构
 
@@ -213,8 +217,8 @@ cd .. && bin\server.exe                  # 启动；测试模式验证码 111111
 ├── webui/desktop/       桌面版 Electron 壳
 ├── dev/                 自研 MCP 服务器源码（agnes / mimo / docx / pptx / xlsx / pdf）
 ├── cmd/                 辅助命令（shot_test 等）
-└── server/              独立后台（Go + shadcn/ui，端口 9000）
-    ├── cmd/server/      入口
-    ├── internal/        store(SQLite) / auth / api / config / web
-    └── web/             后台前端源码（React + shadcn/ui）
+└── server_cloudflare/   独立后台（Hono + TypeScript：Workers+D1 或本地 Node+SQLite）
+    ├── src/             app.ts（路由）、desk.ts（桌面端手机号协议）、admin.ts（后台）、gateway.ts（网关计费）
+    ├── web/             后台前端源码（React + shadcn/ui，产物 dist/）
+    └── schema.sql       建表（含 desk_* 桌面端账号/积分账本）
 ```

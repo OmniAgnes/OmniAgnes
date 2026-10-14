@@ -1,6 +1,6 @@
 # omni Agent
 
-Go 内核 + React 前端 + Electron 桌面端 + 独立 Go 后台的单体仓库。
+Go 内核 + React 前端 + Electron 桌面端 + Cloudflare Workers 后台的单体仓库。
 本文件只记「可复用的结论与触点清单」，以代码为准，改动后同步。
 
 ## 目录
@@ -9,7 +9,9 @@ Go 内核 + React 前端 + Electron 桌面端 + 独立 Go 后台的单体仓库�
   `memory` `store`(持久化) `config` `webui`(HTTP/SSE) `docparse` `extras` `tui`
 - `webui/frontend/` React + Vite 前端（产物由 Go 内核 `internal/webui` 内嵌分发）
 - `webui/desktop/` Electron 壳；`bin/` 放内核副本与内置工具 exe（不入库）
-- `server/` 独立账号/积分后台（Go + SQLite），前端产物在 `server/dist`
+- `server_cloudflare/` 账号/积分后台（Hono + TS，worker 名 `omni-server`，D1 `omni_server`）；
+  后台前端源码在它的 `web/`，产物 `dist/` 由 wrangler assets 分发。桌面端说的手机号协议在
+  `src/desk.ts`，邮箱那套在 `src/admin.ts`，两套并存、路由注册顺序决定优先级（先 desk 后 admin）
 - `dev/` 自研 MCP 服务器源码（agnes/mimo/docx/pptx/xlsx），构建 exe 不入库
 
 ## 改前端必须走完四步

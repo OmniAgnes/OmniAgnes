@@ -43,10 +43,11 @@ dev/bin/
 /nul
 NUL
 
-# 编译产物与本地数据库：exe 与 server 的 SQLite 文件不入库
+# 编译产物与本地数据：exe 不入库
 *.exe
 *.exe~
-server/server.db
-server/server.db-shm
-server/server.db-wal
+# Worker 端依赖与 wrangler 缓存
+server_cloudflare/node_modules/
+server_cloudflare/web/node_modules/
+server_cloudflare/.wrangler/
 /.workbuddy
