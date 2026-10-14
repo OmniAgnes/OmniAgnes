@@ -2,6 +2,26 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.22 (2026-10-15)
+
+超管初始账号密码固定化，登录弹窗加宽。
+
+### ✨ 新功能
+
+- **初始超管账号密码固定**：`admin@omni.local` / `Omni@2026`（`scripts/init-admin.mjs` 默认值，
+  仍可用参数覆盖），README「初始账号与密码」同步。线上已有超管密码已直接重置为该值并验证登录通过
+
+### 🎨 界面
+
+- **登录弹窗加宽**：桌面端「登录」授权窗口 384px → 448px（`sm:max-w-sm` → `sm:max-w-md`）
+
+### 📝 说明
+
+- **Zen 免费模型调研结论（不做）**：实测 `https://opencode.ai/zen/v1` 的 `/models` 清单可免 KEY
+  拉取（11 个免费模型），但调用全部 403 `FreeTierError`——官方已封死所有非 opencode 客户端直连
+  （连青鸟文档 2026-10-09 实测能直连的 `space-bunny-free` 也被封，`x-opencode-session` 头无效）。
+  omni 的 Go 内核是直连架构、无 opencode 内核进程可经，该功能没有能工作的形态，放弃
+
 ## v1.0.21 (2026-10-14)
 
 账号体系统一为邮箱协议（BREAKING），桌面端登录改「打开网页授权」，服务端品牌清理为 OmniAgnes。
