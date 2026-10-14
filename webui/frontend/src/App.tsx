@@ -1306,8 +1306,6 @@ export default function App() {
           activeTaskId={activeTaskId ?? null}
           running={running}
           serverOnline={serverOnline}
-          user={serverUser}
-          onOpenAccount={openAccount}
           open={sidebarOpen}
           onOpenTask={(id) => void openTask(id)}
           onDeleteTask={(id) => void deleteTask(id)}

@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react"
-import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, UserIcon, XIcon } from "lucide-react"
+import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { TaskList } from "@/components/TaskList"
 import { MobilePanel } from "@/components/MobilePanel"
 import { isDesktop } from "@/lib/platform"
 import { relTime } from "@/lib/time"
-import type { ServerUser } from "@/lib/serverAuth"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -76,10 +75,6 @@ interface SidebarProps {
   running: Record<string, string>
   /** 后台（omni-server）可达：手机图标仅在线时显示，不通不出现 */
   serverOnline: boolean
-  /** 已登录用户（未登录为 null）：底部账号入口显示手机号/「登录」 */
-  user: ServerUser | null
-  /** 打开设置直达「账号」页签 */
-  onOpenAccount: () => void
   open: boolean
   onOpenTask: (id: string) => void
   onDeleteTask: (id: string) => void
@@ -104,8 +99,6 @@ export function Sidebar(props: SidebarProps) {
     activeTaskId,
     running,
     serverOnline,
-    user,
-    onOpenAccount,
     open,
     onOpenTask,
     onDeleteTask,
@@ -273,25 +266,9 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* 底部：账号入口（后台可达才显示）+ 移动端入口（仅桌面端且后台可达）
-            + 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
+        {/* 底部：移动端入口（仅桌面端且后台可达）+ 设置入口（不要分隔线，与自绘标题栏一致保持无边框）。
+            账号/登录入口不放这里——左下角 LOGO 球菜单里已有，重复 */}
         <div className="flex items-center justify-end gap-0.5 px-3 py-1.5">
-          {/* 后台不通时是「纯本地版」：不渲染任何账号入口，免得点了报错 */}
-          {(user || serverOnline) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onOpenAccount}
-              title={t("se.account")}
-              className="text-muted-foreground hover:text-foreground mr-auto gap-1.5 px-2"
-            >
-              <UserIcon className="size-5" />
-              {/* 已登录显示邮箱（@ 前部分），未登录显示「登录」 */}
-              <span className="max-w-32 truncate text-xs">
-                {user ? user.email.split("@")[0] : t("menu.login")}
-              </span>
-            </Button>
-          )}
           {isDesktop && serverOnline && <MobilePanel />}
           <Button
             variant="ghost"
