@@ -50,7 +50,7 @@ func ResolveProvider(cfg *config.Config) (Provider, string, error) {
 	}
 		p := *pick
 		apiKey := p.ResolveAPIKey()
-		// ollama/本地端点/opencode 免费档无需 key
+		// ollama/本地端点无需 key
 		needKey := apiKey == "" && !p.NoAuth()
 		if needKey {
 			return nil, "", fmt.Errorf("provider %s 缺少 API Key：请配置 providers[].api_key 或 env_key，或设置对应环境变量", p.Type)

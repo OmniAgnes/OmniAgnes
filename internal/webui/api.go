@@ -72,18 +72,10 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 		MaxOutputTokens int      `json:"max_output_tokens,omitempty"`
 		InputTypes      []string `json:"input_types,omitempty"`
 		Reasoning       string   `json:"reasoning,omitempty"`
-		// OpenCodeFree 标记该模型来自 opencode 免费组：前端按界面语言给这一组
-		// 换显示名（后端名是英文兜底，见前端 OPENCODE_FREE_LABEL）
-		OpenCodeFree bool `json:"opencode_free,omitempty"`
 	}
-	// 顺带保证免费清单是最新的：首屏要同步等一次，之后缓存 6 小时
-	s.ensureOpenCodeFree(r.Context())
-	openCodeFreeMu.Lock()
-	defer openCodeFreeMu.Unlock()
 	out := make([]modelInfo, 0)
 	for i := range s.cfg.Providers {
 		p := &s.cfg.Providers[i]
-		free := p.Builtin && p.Type == config.OpenCodeProviderType
 		for _, m := range p.Models {
 			opt := p.OptionsFor(m)
 			out = append(out, modelInfo{
@@ -93,7 +85,6 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 				MaxOutputTokens: opt.MaxOutputTokens,
 				InputTypes:      opt.InputTypes,
 				Reasoning:       opt.Reasoning,
-				OpenCodeFree:    free,
 			})
 		}
 	}
@@ -165,17 +156,6 @@ func (s *server) handleProvidersPut(w http.ResponseWriter, r *http.Request) {
 	if providers == nil {
 		providers = []config.ProviderConfig{}
 	}
-	// 虚拟供应商（opencode 免费模型组）由程序注入、不落盘：把前端带回来的
-	// builtin 条目丢掉，再按当前开关重新注入——否则用户改一次供应商配置，
-	// 免费组就会被保存成一条会被下架的僵尸配置。
-	kept := providers[:0:0]
-	for _, p := range providers {
-		if p.Builtin {
-			continue
-		}
-		kept = append(kept, p)
-	}
-	providers = kept
 	for i := range providers {
 		p := &providers[i]
 		p.Type = strings.TrimSpace(p.Type)
@@ -189,9 +169,7 @@ func (s *server) handleProvidersPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	openCodeFreeMu.Lock()
 	s.cfg.Providers = providers
-	s.cfg.SyncOpenCodeFree(openCodeFreeCache.models)
 	// 当前模型失效时回落到第一个可用模型
 	valid := false
 	for _, p := range s.cfg.Providers {
@@ -209,7 +187,6 @@ func (s *server) handleProvidersPut(w http.ResponseWriter, r *http.Request) {
 	}
 	providers = s.cfg.Providers
 	err = s.cfg.Save(s.opts.ConfigPath)
-	openCodeFreeMu.Unlock()
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -886,10 +863,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"model":         s.cfg.Provider,
-		"theme":         s.cfg.Theme,
-		"theme_color":   s.cfg.ThemeColor,
-		"opencode_free": s.cfg.OpenCodeFreeEnabled(),
+		"model":       s.cfg.Provider,
+		"theme":       s.cfg.Theme,
+		"theme_color": s.cfg.ThemeColor,
 	})
 }
 
@@ -898,8 +874,6 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 		Model      string `json:"model"`
 		Theme      string `json:"theme"`
 		ThemeColor string `json:"theme_color"`
-		// 指针：不传 = 不改这个开关（前端别的设置项也会走同一个接口）
-		OpenCodeFree *bool `json:"opencode_free"`
 	}](r)
 	if err != nil {
 		writeErr(w, `请求体需为 {"model":..., "theme":..., "theme_color":...}`, http.StatusBadRequest)
@@ -931,27 +905,16 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "未知主题配色: "+req.ThemeColor, http.StatusBadRequest)
 		return
 	}
-	// 免费模型组开关：开启后菜单里多一组免 Key 的模型。改动只落在内存里的
-	// 供应商列表（虚拟条目不落盘），落盘的只有开关本身。
-	if req.OpenCodeFree != nil && s.cfg.OpenCodeFreeEnabled() != *req.OpenCodeFree {
-		s.setOpenCodeFree(*req.OpenCodeFree)
-		changed = true
-	}
 	if changed {
 		if err := s.cfg.Save(s.opts.ConfigPath); err != nil {
 			writeErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-	if req.OpenCodeFree != nil && *req.OpenCodeFree {
-		// 刚开启：立刻用网关注册表替换兜底种子（失败也不影响已注入的种子清单）
-		go s.refreshOpenCodeFree(context.Background())
-	}
 	writeJSON(w, map[string]any{
-		"model":         s.cfg.Provider,
-		"theme":         s.cfg.Theme,
-		"theme_color":   s.cfg.ThemeColor,
-		"opencode_free": s.cfg.OpenCodeFreeEnabled(),
+		"model":       s.cfg.Provider,
+		"theme":       s.cfg.Theme,
+		"theme_color": s.cfg.ThemeColor,
 	})
 }
 

@@ -35,12 +35,6 @@ type OpenAIProvider struct {
 	apiKey  string
 	model   string
 	client  *http.Client
-	// extraHeaders 可选：为每个 /chat/completions 请求注入自定义头
-	// （如 opencode 网关要求会话指纹头）。为 nil 时不注入。
-	extraHeaders func(req *http.Request)
-	// transformBody 可选：在发送前改写请求体（如 opencode 网关要求
-	// tools 里必须带 bash/read）。为 nil 时不改写。
-	transformBody func(body []byte) ([]byte, error)
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }
@@ -306,11 +300,6 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 	if err != nil {
 		return nil, err
 	}
-	if p.transformBody != nil {
-		if body, err = p.transformBody(body); err != nil {
-			return nil, err
-		}
-	}
 
 	// 带重试地发起请求（瞬时故障最多重试 10 次、每次间隔 5 秒）。
 	// 为什么要重试：中转网关/免费模型（如 openrouter 的 :free 档、agnes）渠道池浅，
@@ -331,11 +320,6 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 			return nil, err
 		}
 		body = fixed
-		if p.transformBody != nil {
-			if body, err = p.transformBody(body); err != nil {
-				return nil, err
-			}
-		}
 		resp, err = p.doWithRetry(ctx, body, onEvent)
 		if err != nil {
 			return nil, err
@@ -466,9 +450,6 @@ func (p *OpenAIProvider) doOnce(ctx context.Context, body []byte) (*http.Respons
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	if p.extraHeaders != nil {
-		p.extraHeaders(httpReq)
-	}
 	return p.httpClient().Do(httpReq)
 }
 

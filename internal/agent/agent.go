@@ -376,13 +376,19 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			emit(Event{Type: EventError, Err: err, Round: round})
 			return err
 		}
-		a.history = append(a.history, llm.Message{
+		msg := llm.Message{
 			Role:      llm.RoleAssistant,
 			Text:      resp.Content,
 			ToolCalls: resp.ToolCalls,
 			// 最终答复（无工具调用）记录整轮工作耗时，持久化后重启仍可显示「已工作」
 			ElapsedMs: elapsedMs(resp.ToolCalls, turnStart),
-		})
+		}
+		if len(resp.ToolCalls) == 0 {
+			// 最终答复随耗时一起记录模型与输出 token：回复末行显示「模型名 · Token速度 · 耗时」
+			msg.ReplyModel = a.model
+			msg.OutputTokens = totalUsage.OutputTokens
+		}
+		a.history = append(a.history, msg)
 
 		if len(resp.ToolCalls) == 0 {
 			// 回答结束：把本次提问所有媒体附件统一落盘（内联的写到 .omni/media/），

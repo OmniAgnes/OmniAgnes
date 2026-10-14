@@ -129,6 +129,10 @@ type Message struct {
 	// ElapsedMs 是这一轮（最终回答）的工作耗时（毫秒），仅 assistant 最终答复上有值；
 	// 持久化后重启会话仍能在回复上显示「已工作」，不为 0 时省略。
 	ElapsedMs int64 `json:"elapsed_ms,omitempty"`
+	// ReplyModel / OutputTokens 记录最终答复由哪个模型产出、输出多少 token，
+	// 与 ElapsedMs 一起供回复末行显示「模型名 · Token速度 · 耗时」；仅最终答复有值。
+	ReplyModel   string `json:"reply_model,omitempty"`
+	OutputTokens int    `json:"output_tokens,omitempty"`
 }
 
 // NewTextMessage 便捷构造。

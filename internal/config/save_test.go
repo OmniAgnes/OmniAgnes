@@ -23,13 +23,8 @@ func TestSaveProviderConfigAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Load 会额外注入 opencode 免费组（虚拟条目），这里只看用户自己配的
-	var user []ProviderConfig
-	for _, p := range cfg.Providers {
-		if !p.Builtin {
-			user = append(user, p)
-		}
-	}
+	// 这里只看用户自己配的 provider
+	user := cfg.Providers
 	if len(user) != 2 {
 		t.Fatalf("期望保留原 provider 并追加 1 个，实际 %d 个", len(user))
 	}
