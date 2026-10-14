@@ -91,7 +91,7 @@ npx wrangler d1 execute omni_server --remote --file=./schema.sql
 
 ```bash
 node scripts/init-admin.mjs https://omni-server.<子域>.workers.dev
-# 输出里会打印随机生成的初始密码，务必抄下
+# 初始超管：admin@omni.local / Omni@2026（固定，见下方「初始账号与密码」）
 ```
 
 部署完成会输出形如 `https://omni-server.<你的子域>.workers.dev` 的地址。
@@ -107,12 +107,10 @@ curl https://omni-server.<子域>.workers.dev/api/health
 
 ### 初始账号与密码
 
-- **没有固定的初始密码**。网页注册时不设密码（之后走邮箱验证码登录）；想有密码兜底，用
-  `scripts/init-admin.mjs` 注册——不传密码参数时**随机生成并打印在输出里**，务必抄下。
-- 超管密码的用途：邮件还没配置时，验证码登录还没法用（配好 SMTP 前验证码是免验证放行，
-  但日常换邮箱等操作需要能收码的真实邮箱），密码登录是进后台配 SMTP 的入口。
-- ⚠ 后台当前没有「改密码」功能，密码（脚本输出或你注册时填的）务必保存；
-  丢了只能删掉 `users` 表里那行后重跑脚本。
+- **初始超管账号固定**：`admin@omni.local` / `Omni@2026`（`scripts/init-admin.mjs` 的默认值）。
+  密码登录是邮件没配好前进后台的唯一途径；上线后建议在后台右上角把邮箱换成真实邮箱，
+  并让脚本用自定义密码参数注册（`node scripts/init-admin.mjs <地址> <邮箱> <密码>`）。
+- ⚠ 后台当前没有「改密码」功能，密码丢了只能删掉 `users` 表里那行后重跑脚本。
 
 ## 邮件与验证码登录
 

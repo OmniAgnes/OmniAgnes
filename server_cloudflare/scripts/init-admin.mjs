@@ -11,17 +11,17 @@
  *   node scripts/init-admin.mjs <baseURL> [email] [password]
  *
  *   baseURL  必填，如 https://omni-server.xxx.workers.dev
- *   email    缺省 admin@example.local（假域名收不到验证码，配好邮件后记得在后台右上角换成真实邮箱）
- *   password 缺省随机生成（务必抄下输出）
+ *   email    缺省 admin@omni.local（假域名收不到验证码，配好邮件后记得在后台右上角换成真实邮箱）
+ *   password 缺省 Omni@2026（固定初始密码，上线后务必改成只有你知道的）
  *
  * 注意：后台当前没有「改密码」功能，密码丢了需要重建（先删 users 里那行再跑本脚本）。
  */
-const [base = '', email = 'admin@example.local', password = ''] = process.argv.slice(2)
+const [base = '', email = 'admin@omni.local', password = 'Omni@2026'] = process.argv.slice(2)
 if (!base) {
   console.error('用法: node scripts/init-admin.mjs <baseURL> [email] [password]')
   process.exit(1)
 }
-const pwd = password || 'Omni' + Math.random().toString(36).slice(2, 10) + '!7'
+const pwd = password || 'Omni@2026'
 
 const res = await fetch(base.replace(/\/+$/, '') + '/api/auth/register', {
   method: 'POST',
