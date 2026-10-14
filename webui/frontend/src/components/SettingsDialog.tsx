@@ -10,6 +10,7 @@ import {
   CpuIcon,
   ChevronRightIcon,
   FolderOpenIcon,
+  GlobeIcon,
   InfoIcon,
   Loader2Icon,
   LogInIcon,
@@ -45,7 +46,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
-import { server, type ServerCredit, type ServerUser } from "@/lib/serverAuth"
+import { server, savedServerUrl, saveServerUrl, probeServer, type ServerCredit, type ServerUser } from "@/lib/serverAuth"
 import type {
   MCPStatus,
   MCPServerConfig,
@@ -141,6 +142,8 @@ interface SettingsDialogProps {
   serverUser?: ServerUser | null
   /** 后台可达性：未登录但可达时「账号」页签也要出来（里面给登录入口） */
   serverOnline?: boolean
+  /** 用户改完后台地址后回调——外层据此重探活并刷新登录态 */
+  onServerUrlSaved?: () => void
   /** 退出登录（「账号」页签里用） */
   onLogout?: () => void
   /** 「账号」页签未登录时打开登录弹窗 */
@@ -244,6 +247,7 @@ export function SettingsDialog({
   onProvidersSaved,
   serverUser,
   serverOnline,
+  onServerUrlSaved,
   onLogout,
   onOpenLogin,
 }: SettingsDialogProps) {
@@ -254,12 +258,11 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) setUsageSeq((s) => s + 1)
   }, [open])
-  // 外层指定直达 section（使用统计、账号等）；后台不可达时「账号」页签不存在，回落到默认页签
+  // 外层指定直达 section（使用统计、账号等）
   useEffect(() => {
     if (!open || !initialSection) return
-    if (initialSection === "account" && !serverUser && !serverOnline) return
     setSection(initialSection as SectionId)
-  }, [open, initialSection, serverUser, serverOnline])
+  }, [open, initialSection])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
@@ -338,10 +341,12 @@ export function SettingsDialog({
     void refreshMcp()
     void refreshSkills()
     void loadDirs()
-    // 账号：有登录态才拉；未登录不显示该页签。
-    // 依赖带上 serverUser：在设置里当场登录成功时也要重拉，否则面板停在「后台暂不可达」
+    // 账号：有登录态才拉。
+    // 依赖带上 serverUser：在设置里当场登录成功时也要重拉，否则面板停在旧资料。
+    // 只在「首次加载」时才置 loading —— 否则每次打开设置都先闪一下「保存中」，
+    // 明明上一次已经拉过、这次只是刷新余额。
     if (serverUser) {
-      setCredLoading(true)
+      setCredLoading((prev) => prev || cred === null)
       server
         .me()
         .then((r) => setCred(r.user))
@@ -349,6 +354,7 @@ export function SettingsDialog({
         .finally(() => setCredLoading(false))
     } else {
       setCred(null)
+      setCredLoading(false)
     }
     setErr("")
     setToast("")
@@ -537,8 +543,9 @@ export function SettingsDialog({
                 该 grid item 的 min-width:auto 会被压成 0，不会再被 min-content 顶宽。
                 md 以上恢复竖排。 */}
             <div className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-              {/* 后台可达就显示「账号」页签：已登录看信息，未登录给登录入口 */}
-              {SECTIONS.filter((s) => s.id !== "account" || !!serverUser || serverOnline).map((s) => (
+              {/* 「账号」页签常显：后台不通时也要能进去填后台地址（填完才能登录），
+                  否则用户看不到入口、也无从得知该填什么 */}
+              {SECTIONS.map((s) => (
                 <button
                   key={s.id}
                   type="button"
@@ -1083,12 +1090,19 @@ export function SettingsDialog({
                 </div>
               )}
 
-              {section === "account" &&
-                (serverUser ? (
-                  <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />
-                ) : (
-                  <LoginPrompt onLogin={onOpenLogin} />
-                ))}
+              {section === "account" && (
+                <div className="flex flex-col gap-4">
+                  {/* 地址永远在最上面：离线时它是唯一能救的入口 */}
+                  <ServerUrlField onSaved={onServerUrlSaved} />
+                  {serverUser ? (
+                    <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />
+                  ) : serverOnline ? (
+                    <LoginPrompt onLogin={onOpenLogin} />
+                  ) : (
+                    <p className="text-muted-foreground text-sm">{t("se.accountOffline")}</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1104,6 +1118,58 @@ function versionLabel(v?: string): string {
   const s = (v ?? "").trim()
   if (!s || s === "dev") return "—"
   return s.startsWith("v") ? s : `v${s}`
+}
+
+/** 后台地址输入框：让用户自己填 omni-server 地址，不用去改 config.json。
+ *  保存后立刻重探活并刷新登录态——地址填错时这里直接显示连不上。
+ *  留空保存 = 清除，回退到内核配置里的 server_url（下次 initServerUrl 会读）。 */
+function ServerUrlField({ onSaved }: { onSaved?: () => void }) {
+  const { t } = useI18n()
+  const [draft, setDraft] = useState(() => savedServerUrl())
+  const [msg, setMsg] = useState<"" | "saved" | "ok" | "fail">("")
+  const [busy, setBusy] = useState(false)
+
+  const apply = async () => {
+    setBusy(true)
+    setMsg("")
+    saveServerUrl(draft)
+    setDraft(savedServerUrl())
+    // 保存后现探一次：通了才算真的能用
+    const ok = await probeServer()
+    setMsg(ok ? "ok" : "fail")
+    setBusy(false)
+    onSaved?.()
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-4">
+      <div className="flex items-center gap-2">
+        <GlobeIcon className="size-4 shrink-0" />
+        <span className="font-medium">{t("se.serverUrl")}</span>
+      </div>
+      <div className="flex gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setMsg("")
+          }}
+          placeholder="https://omni.example.com"
+          spellCheck={false}
+          className="font-mono text-sm"
+        />
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => void apply()}>
+          {t("se.save")}
+        </Button>
+      </div>
+      <div className="text-muted-foreground text-xs">
+        {t("se.serverUrlHint")}
+        {msg === "saved" && <span className="ml-2">{t("se.serverUrlSaved")}</span>}
+        {msg === "ok" && <span className="ml-2 text-emerald-500">{t("se.serverUrlTestOk")}</span>}
+        {msg === "fail" && <span className="text-destructive ml-2">{t("se.serverUrlTestFail")}</span>}
+      </div>
+    </div>
+  )
 }
 
 /** 后台可达但未登录：账号页签只给一个登录入口。

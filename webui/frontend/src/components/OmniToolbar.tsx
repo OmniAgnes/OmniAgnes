@@ -209,10 +209,10 @@ export function OmniToolbar({
               <CalendarClockIcon className="size-4" />
               <span className="flex-1">{t("menu.usage")}</span>
             </button>
-            {/* 只有下面那行（积分 / 登录）真的渲染出来时才画分隔线。
-                手机端后台不可达时是「纯本地版」：既没有积分也没有登录，
-                无条件渲染的话菜单底部会留一条没有下文的孤线。 */}
-            {(user || serverOnline) && <SeparatorLight />}
+            {/* 账号入口下面恒有一行，所以这条线无条件渲染 */}
+            <SeparatorLight />
+            {/* 账号入口常显：后台不通时用户正是要靠它进去填地址。
+                未登录且不可达时点击也进「账号」页签（里面有地址输入框），不进登录弹窗。 */}
             {user ? (
               /* 积分行：与「使用统计」同款左对齐样式；余额为 0 时不显示数字；点击进设置「账号」页签。
                  退出登录也在「账号」页签里（帐号显示右侧），这里不再放 */
@@ -228,17 +228,26 @@ export function OmniToolbar({
                   {user.balance > 0 ? user.balance : null}
                 </span>
               </button>
+            ) : serverOnline ? (
+              <button
+                type="button"
+                onClick={() => { onOpenLogin(); setOpen(false) }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent cursor-pointer"
+              >
+                <LogInIcon className="size-4" />
+                {t("menu.login")}
+              </button>
             ) : (
-              serverOnline && (
-                <button
-                  type="button"
-                  onClick={() => { onOpenLogin(); setOpen(false) }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent cursor-pointer"
-                >
-                  <LogInIcon className="size-4" />
-                  {t("menu.login")}
-                </button>
-              )
+              /* 离线：不假装能登录，直接把用户送到「账号」页签去填后台地址 */
+              <button
+                type="button"
+                onClick={() => { onOpenAccount(); setOpen(false) }}
+                title={t("se.serverUrl")}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent cursor-pointer"
+              >
+                <LogInIcon className="size-4" />
+                {t("se.account")}
+              </button>
             )}
           </div>
         )}

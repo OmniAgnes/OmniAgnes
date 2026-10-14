@@ -1,12 +1,49 @@
-// 桌面端调用 omni-server（9000）进行登录/积分；token 存 localStorage。
-// 服务器地址固定在内核配置文件（config.json 的 server_url）里，前端启动时经
-// /api/server-url 读取，不用 localStorage。
+// 桌面端调用 omni-server 进行登录/积分。
+//
+// 后台地址的取值优先级（用户自己填的优先，不要他去改配置文件）：
+//   1. localStorage 里用户填的地址（设置 → 账号 → 后台地址）
+//   2. 内核配置文件 config.json 的 server_url（经 /api/server-url 读，给运维/预置用）
+//   3. 缺省 http://127.0.0.1:9000
+// token 也存 localStorage。
 const TOKEN_KEY = "omni.server_token"
+const URL_KEY = "omni.server_url"
 
 let serverBase = "http://127.0.0.1:9000"
 
-/** 启动时从内核读取配置的后台地址；拿不到时保留缺省值 */
+/** 归一化用户填的地址：去空白、补协议头、去掉尾部斜杠。
+ *  空串表示「不覆盖」，交回内核配置那条路。 */
+export function normalizeServerUrl(raw: string): string {
+  let u = raw.trim()
+  if (!u) return ""
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u
+  return u.replace(/\/+$/, "")
+}
+
+/** 用户填的后台地址（localStorage）；空串=没填 */
+export function savedServerUrl(): string {
+  return localStorage.getItem(URL_KEY) ?? ""
+}
+
+/** 保存用户填的后台地址；空串=清除，回退到内核配置。
+ *  返回归一化后的最终地址，供调用方直接拿去探活。 */
+export function saveServerUrl(raw: string): string {
+  const u = normalizeServerUrl(raw)
+  if (u) {
+    localStorage.setItem(URL_KEY, u)
+    serverBase = u
+  } else {
+    localStorage.removeItem(URL_KEY)
+  }
+  return u
+}
+
+/** 启动时确定后台地址：用户填的优先，其次读内核配置。拿不到时保留缺省值 */
 export async function initServerUrl(): Promise<void> {
+  const mine = savedServerUrl()
+  if (mine) {
+    serverBase = mine
+    return
+  }
   try {
     const r = await fetch("/api/server-url")
     const d = await r.json()
@@ -42,7 +79,7 @@ export interface ServerModel {
   free: boolean
 }
 
-// 服务器地址只读：来自内核配置（initServerUrl 读取后的值）
+/** 当前生效的后台地址：用户填的（saveServerUrl 写入过）优先，否则是内核配置那条 */
 export function serverUrl(): string {
   return serverBase
 }

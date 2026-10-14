@@ -222,36 +222,61 @@ body {
   --sidebar-ring: oklch(0.62 calc(var(--t-c) * 0.7) var(--t-h));
 }
 
-/* ---- Markdown 输出（助手消息） ---- */
+/* ---- Markdown 输出（助手消息） ----
+   排版按「长文档可读性」调过一轮，重点三处：
+   1) 行宽上限 68ch（约 45 个汉字）。容器在宽屏下会被拉到 5xl≈1024px，
+      不限宽的话一行上百字，眼睛要横跨整屏找行尾——这是「全是字看着累」的主因。
+      只给正文元素限宽，代码块/表格保持原宽不受影响。
+   2) 段落间距从 0.35rem 拉到 0.75rem、行高 1.8：密集小段改成有呼吸的段落。
+   3) 长文里的结构靠 h2/hr 切段，标题上下留白加大，列表缩进更深好分辨层级。 */
 .md-output > :first-child {
   margin-top: 0;
 }
 .md-output > :last-child {
   margin-bottom: 0;
 }
+.md-output p,
+.md-output ul,
+.md-output ol,
+.md-output blockquote {
+  max-width: 68ch;
+}
 .md-output p {
-  margin: 0.35rem 0;
+  margin: 0.75rem 0;
+  line-height: 1.8;
 }
 .md-output h1,
 .md-output h2,
 .md-output h3,
 .md-output h4 {
   font-weight: 600;
-  margin: 1rem 0 0.5rem;
+  /* 标题给足上方留白：上一段正文与新章节之间要断开，否则整片糊在一起 */
+  margin: 1.75rem 0 0.65rem;
+  line-height: 1.4;
 }
 .md-output h1 {
-  font-size: 1.25rem;
+  font-size: 1.35rem;
 }
 .md-output h2 {
-  font-size: 1.125rem;
+  font-size: 1.2rem;
+}
+/* 二级标题是长文的主骨架：加一条下边线，章节切换一眼可见 */
+.md-output h2 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
 }
 .md-output h3 {
-  font-size: 1rem;
+  font-size: 1.05rem;
+}
+.md-output h4 {
+  font-size: 0.95rem;
+  color: var(--muted-foreground);
 }
 .md-output ul,
 .md-output ol {
-  margin: 0.35rem 0;
-  padding-left: 1.4rem;
+  margin: 0.75rem 0;
+  /* 缩进加深：嵌套两层以上还能看清归属哪一级 */
+  padding-left: 1.75rem;
 }
 .md-output ul {
   list-style: disc;
@@ -260,13 +285,29 @@ body {
   list-style: decimal;
 }
 .md-output li {
-  margin: 0.2rem 0;
+  margin: 0.35rem 0;
+  line-height: 1.75;
+}
+/* 二级列表换符号：一级实心圆、二级空心圆，视觉上分得开层级 */
+.md-output ul ul {
+  list-style: circle;
+}
+/* 列表项里的段落不重复吃段间距（否则一个列表项内部空一行） */
+.md-output li > p {
+  margin: 0.35rem 0;
+}
+/* 任务列表（GFM）复选框与文字对齐，并允许换行时不顶行 */
+.md-output input[type="checkbox"] {
+  margin-right: 0.45rem;
+  vertical-align: -0.1em;
 }
 .md-output code:not(.hljs) {
   background: var(--muted);
   border-radius: 0.25rem;
   padding: 0.1rem 0.35rem;
   font-size: 0.85em;
+  /* 长 URL / 路径 / 字段名要能断行，否则撑破行宽 */
+  overflow-wrap: anywhere;
 }
 .md-output pre {
   background: #f6f8fa;
@@ -290,21 +331,34 @@ body {
 }
 .md-output blockquote {
   border-left: 3px solid var(--border);
-  padding-left: 0.75rem;
+  padding-left: 0.9rem;
   color: var(--muted-foreground);
-  margin: 0.6rem 0;
+  margin: 0.85rem 0;
 }
+.md-output blockquote p {
+  margin: 0.5rem 0;
+}
+/* 表格：横向可滚（窄屏不会撑破布局），隔行淡底方便横向对位 */
 .md-output table {
   border-collapse: collapse;
-  margin: 0.6rem 0;
+  margin: 0.85rem 0;
   width: 100%;
   font-size: 0.85em;
+  display: block;
+  overflow-x: auto;
 }
 .md-output th,
 .md-output td {
   border: 1px solid var(--border);
-  padding: 0.35rem 0.6rem;
+  padding: 0.45rem 0.7rem;
   text-align: left;
+}
+.md-output th {
+  background: var(--muted);
+  font-weight: 600;
+}
+.md-output tbody tr:nth-child(even) {
+  background: var(--muted) / 40%;
 }
 .md-output a {
   color: oklch(0.6 0.15 250);

@@ -167,14 +167,17 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(""), 3000)
   }
   // 后台（omni-server）探活 + 登录态恢复。桌面端常在后台还没起来时就打开，
-  // 只在启动探一次会永远卡在「纯本地版」（没有登录入口、设置里没有账号页签），
-  // 所以点左下角 LOGO 球、点设置时都要现探：通了才渲染登录/账号入口，
+  // 只在启动探一次会永远卡在「纯本地版」，所以点左下角 LOGO 球、点设置时都要现探；
   // 已有 token 则顺手刷新资料。
+  // 地址来源见 lib/serverAuth：用户在设置里填的（localStorage）优先于内核配置。
   const checkServer = async () => {
-    // 先拿内核配置里的后台域名，再探活；后台没开时不发任何业务请求
+    // 先定下后台地址，再探活；后台没开时不发任何业务请求
     await initServerUrl()
-    if (!(await probeServer())) return
-    setServerOnline(true)
+    // 注意这里不能「探不通就 return」了事：用户可能刚把地址改成错的/换了个域，
+    // 必须把 serverOnline 打回 false，否则界面还按旧后台在线显示，登录必然失败。
+    const online = await probeServer()
+    setServerOnline(online)
+    if (!online) return
     if (!serverToken()) return
     try {
       const r = await server.me()
@@ -1319,6 +1322,8 @@ export default function App() {
           activeTaskId={activeTaskId ?? null}
           running={running}
           serverOnline={serverOnline}
+          user={serverUser}
+          onOpenAccount={openAccount}
           open={sidebarOpen}
           onOpenTask={(id) => void openTask(id)}
           onDeleteTask={(id) => void deleteTask(id)}
@@ -1398,6 +1403,7 @@ export default function App() {
         onProvidersSaved={() => void refreshModels()}
         serverUser={serverUser}
         serverOnline={serverOnline}
+        onServerUrlSaved={() => void checkServer()}
         onLogout={() => void logout()}
         onOpenLogin={() => setLoginOpen(true)}
       />

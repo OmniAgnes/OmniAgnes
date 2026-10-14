@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react"
-import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, XIcon } from "lucide-react"
+import { CalendarClockIcon, ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, Loader2Icon, MessageSquareIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon, UserIcon, XIcon } from "lucide-react"
 
 import { TaskList } from "@/components/TaskList"
 import { MobilePanel } from "@/components/MobilePanel"
 import { isDesktop } from "@/lib/platform"
 import { relTime } from "@/lib/time"
+import type { ServerUser } from "@/lib/serverAuth"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,6 +76,10 @@ interface SidebarProps {
   running: Record<string, string>
   /** 后台（omni-server）可达：手机图标仅在线时显示，不通不出现 */
   serverOnline: boolean
+  /** 已登录用户（未登录为 null）：底部账号入口显示手机号/「登录」 */
+  user: ServerUser | null
+  /** 打开设置直达「账号」页签 */
+  onOpenAccount: () => void
   open: boolean
   onOpenTask: (id: string) => void
   onDeleteTask: (id: string) => void
@@ -99,6 +104,8 @@ export function Sidebar(props: SidebarProps) {
     activeTaskId,
     running,
     serverOnline,
+    user,
+    onOpenAccount,
     open,
     onOpenTask,
     onDeleteTask,
@@ -266,8 +273,27 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* 底部：移动端入口（仅桌面端且后台可达）+ 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
+        {/* 底部：账号入口（常显，未登录显示「登录」）+ 移动端入口（仅桌面端且后台可达）
+            + 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
         <div className="flex items-center justify-end gap-0.5 px-3 py-1.5">
+          {/* 账号入口常显：后台不通时也要能点进去填地址（后端探活失败不该让用户无处可去） */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onOpenAccount}
+            title={t("se.account")}
+            className="text-muted-foreground hover:text-foreground mr-auto gap-1.5 px-2"
+          >
+            <UserIcon className="size-5" />
+            {/* 已登录显示手机号（脱敏），未登录显示「登录」；离线时提示去设置地址 */}
+            <span className="max-w-32 truncate text-xs">
+              {user
+                ? user.phone
+                : serverOnline
+                  ? t("menu.login")
+                  : t("se.account")}
+            </span>
+          </Button>
           {isDesktop && serverOnline && <MobilePanel />}
           <Button
             variant="ghost"
