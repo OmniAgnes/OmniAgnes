@@ -273,27 +273,25 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* 底部：账号入口（常显，未登录显示「登录」）+ 移动端入口（仅桌面端且后台可达）
+        {/* 底部：账号入口（后台可达才显示）+ 移动端入口（仅桌面端且后台可达）
             + 设置入口（不要分隔线，与自绘标题栏一致保持无边框） */}
         <div className="flex items-center justify-end gap-0.5 px-3 py-1.5">
-          {/* 账号入口常显：后台不通时也要能点进去填地址（后端探活失败不该让用户无处可去） */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onOpenAccount}
-            title={t("se.account")}
-            className="text-muted-foreground hover:text-foreground mr-auto gap-1.5 px-2"
-          >
-            <UserIcon className="size-5" />
-            {/* 已登录显示手机号（脱敏），未登录显示「登录」；离线时提示去设置地址 */}
-            <span className="max-w-32 truncate text-xs">
-              {user
-                ? user.phone
-                : serverOnline
-                  ? t("menu.login")
-                  : t("se.account")}
-            </span>
-          </Button>
+          {/* 后台不通时是「纯本地版」：不渲染任何账号入口，免得点了报错 */}
+          {(user || serverOnline) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenAccount}
+              title={t("se.account")}
+              className="text-muted-foreground hover:text-foreground mr-auto gap-1.5 px-2"
+            >
+              <UserIcon className="size-5" />
+              {/* 已登录显示邮箱（@ 前部分），未登录显示「登录」 */}
+              <span className="max-w-32 truncate text-xs">
+                {user ? user.email.split("@")[0] : t("menu.login")}
+              </span>
+            </Button>
+          )}
           {isDesktop && serverOnline && <MobilePanel />}
           <Button
             variant="ghost"

@@ -1,7 +1,7 @@
--- 青鸟平台服务端 · D1 建表。
+-- OmniAgnes 平台服务端 · D1 建表。
 -- 与 Go 版（server/internal/store/store.go 的 migrate）逐字段一致；多一张 ide_pairs
 -- （一次性授权码——Go 版存内存，Workers 无常驻内存，落库；取出即删保证一次性）。
--- 执行：wrangler d1 execute qingniao --remote --file=./schema.sql
+-- 执行：wrangler d1 execute omni_server --remote --file=./schema.sql
 
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS login_logs (
     created_at  TEXT NOT NULL
 );
 
--- 一台青鸟桌面端 = 一行。token 进二维码，secret 只给桌面端自己。
+-- 一台 omni 桌面端 = 一行。token 进二维码，secret 只给桌面端自己。
 CREATE TABLE IF NOT EXISTS ide_devices (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -221,8 +221,8 @@ CREATE TABLE IF NOT EXISTS mail_codes (
 
 -- ========== 桌面端兼容层（desk_*）==========
 -- omni 桌面端（webui/frontend）说的是 Go 版 server/ 的协议：手机号+验证码登录、
--- balance 计积分、积分按笔带到期时间与剩余量（FEFO 扣减）。与本文件上方青鸟那套
--- 「邮箱账号 + users.points + point_logs」语义不同，故独立建表，互不掺混：
+-- balance 计积分、积分按笔带到期时间与剩余量（FEFO 扣减）。与本文件上方「邮箱账号
+-- + users.points + point_logs」语义不同，故独立建表，互不掺混：
 -- 桌面端账号不会被后台的会员/积分逻辑读到，反之亦然。逐字段对齐 store.go 的 migrate()。
 -- 模型不另建表：GET /api/models 与计费倍率直接读后台已配的 ai_models（name→key、ratio→multiplier）。
 

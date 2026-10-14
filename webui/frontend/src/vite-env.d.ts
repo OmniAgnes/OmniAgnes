@@ -38,6 +38,11 @@ declare global {
     onChanged(cb: (s: OmniUpdateState) => void): () => void
   }
 
+  interface OmniAuthBridge {
+    open(url: string): void
+    onCode(cb: (code: string) => void): () => void
+  }
+
   interface Window {
     omniDesktop?: {
       platform: string
@@ -51,6 +56,7 @@ declare global {
       browserBounds(b: { x: number; y: number; width: number; height: number }): void
       browserVisible(v: boolean): void
       update: OmniUpdateBridge
+      auth: OmniAuthBridge
     }
   }
 }

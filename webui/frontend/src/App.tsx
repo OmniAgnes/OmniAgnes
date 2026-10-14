@@ -194,22 +194,6 @@ export default function App() {
     void checkServer()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // 登录态建立后自动领取每日积分（幂等：服务端当天已领则不发）
-  useEffect(() => {
-    if (!serverUser) return
-    server
-      .claim()
-      .then((r) => {
-        if (r.claimed) {
-          setServerUser((u) => (u ? { ...u, balance: r.balance } : u))
-          showToast(t("toast.claimed", { n: r.amount }))
-        }
-      })
-      .catch(() => {
-        /* 后台不可达时静默，不影响桌面端 */
-      })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverUser?.id])
   // 缩放落库 + 同步到原生页面缩放（网页端没有这个 IPC，浏览器自带缩放，
   // 页内 CSS zoom 会把 h-screen 撑破、弹窗大小不一致，故桌面端专用）
   useEffect(() => {
@@ -297,7 +281,7 @@ export default function App() {
   const reportServerUsage = (model: string, input: number, output: number, status?: string, error?: string) => {
     server
       .reportUsage({ model, input_tokens: input, output_tokens: output, status, error })
-      .then((r) => setServerUser((u) => (u ? { ...u, balance: r.balance } : u)))
+      .then((r) => setServerUser((u) => (u ? { ...u, points: r.balance } : u)))
       .catch((e) => {
         if (e instanceof Error && (e as { status?: number }).status === 402) {
           showToast(t("toast.noCredit"))
@@ -1403,7 +1387,7 @@ export default function App() {
         onProvidersSaved={() => void refreshModels()}
         serverUser={serverUser}
         serverOnline={serverOnline}
-        onServerUrlSaved={() => void checkServer()}
+        onDomainSaved={() => void checkServer()}
         onLogout={() => void logout()}
         onOpenLogin={() => setLoginOpen(true)}
       />

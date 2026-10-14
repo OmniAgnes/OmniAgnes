@@ -57,7 +57,7 @@ export function requireAdmin(c: Context<AppEnv>): UserRow {
 
 export const isAdmin = (u: UserRow): boolean => u.role === 'admin'
 
-/** 用户对外表示（契约 1.1 的 user 对象；role 是前端判断管理员要用的）。 */
+/** 用户对外表示（契约 1.1 的 user 对象；role 是前端判断管理员、points 是积分余额）。 */
 export function userPayload(u: UserRow): Record<string, unknown> {
-  return { id: u.id, name: u.name, email: u.email, role: u.role }
+  return { id: u.id, name: u.name, email: u.email, role: u.role, points: u.points }
 }

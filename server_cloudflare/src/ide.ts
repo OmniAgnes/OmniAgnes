@@ -67,7 +67,7 @@ ide.post('/pair', auth, async (c) => {
   return c.json({
     code,
     expires_in: PAIR_TTL_MS / 1000,
-    app_url: `qingniao://auth?code=${code}`,
+    app_url: `omni://auth?code=${code}`,
     user: userPayload(u)
   })
 })
@@ -92,11 +92,11 @@ ide.post('/token', async (c) => {
 
   let device = (req.device ?? '').trim()
   if (!device) device = (entry.device ?? '').trim()
-  if (!device) device = '青鸟'
+  if (!device) device = 'omni'
   device = trimLen(device, 80)
 
   const plain = await createToken(c, u.id, `ide:${device}`, Date.now() + TOKEN_YEARS_MS)
-  await addLoginLog(c, u.id, '青鸟 · ' + device)
+  await addLoginLog(c, u.id, 'omni · ' + device)
   return c.json({
     token: plain,
     expires_at: fmtISO(rfc(new Date(Date.now() + TOKEN_YEARS_MS))),
@@ -161,7 +161,7 @@ async function approved(c: Context<AppEnv>, req: Identity) {
   const u = userOf(c)
   const dev = req.device_id && req.secret ? await findDeviceByID(c.env.DB, req.device_id) : null
   if (!dev || dev.user_id !== u.id || !dev.enabled || dev.secret !== req.secret) {
-    throw fail(403, '设备身份校验失败，请重新登录青鸟')
+    throw fail(403, '设备身份校验失败，请重新登录 omni')
   }
   return dev
 }
@@ -316,7 +316,7 @@ ide.get('/device/:token', async (c) => {
 ide.post('/device/:token/rpc', async (c) => {
   const dev = await deviceByToken(c)
   await touchDeviceMobile(c.env.DB, dev.id)
-  if (!isOnline(dev)) throw fail(409, '电脑不在线：请确认青鸟已打开、账号已登录、且「移动端连接」已开启')
+  if (!isOnline(dev)) throw fail(409, '电脑不在线：请确认 omni 已打开、账号已登录、且「移动端连接」已开启')
   const req = await body<{ method?: string; params?: Record<string, unknown> }>(c)
   if (!RPC_METHODS.has(req.method ?? '')) throw fail(422, '不支持的指令：' + (req.method ?? ''))
   let params = ''

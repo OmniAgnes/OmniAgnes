@@ -1,7 +1,7 @@
 /**
- * 青鸟平台服务端 · 本地部署入口（Node ≥ 22.5 直接跑 TS，无需编译步骤）。
+ * OmniAgnes 平台服务端 · 本地部署入口（Node ≥ 22.5 直接跑 TS，无需编译步骤）。
  * 与 Workers 入口共用 app.ts 应用本体，差别只在运行时三件事：
- *   · 数据库：node:sqlite 适配成 D1 形状（库文件默认 ~/.qingniao-server/qingniao.db，首启自动建表）
+ *   · 数据库：node:sqlite 适配成 D1 形状（库文件默认 ~/.omni-server/omni.db，首启自动建表）
  *   · 静态资源：自己服务顶层 web/dist（Workers 上由平台 assets 处理）
  *   · 定时任务：setInterval 每分钟一轮健康采集（Workers 上是 cron trigger）
  * 启动：npm start；端口 PORT（默认 35000，与桌面端的本机发现约定一致）。
@@ -19,7 +19,7 @@ import type { AppEnv } from '../auth.ts'
 import { LocalD1 } from './d1.ts'
 
 const port = Number(process.env.PORT) || 35000
-const dbPath = process.env.QINGNIAO_DB || join(homedir(), '.qingniao-server', 'qingniao.db')
+const dbPath = process.env.OMNI_DB || join(homedir(), '.omni-server', 'omni.db')
 mkdirSync(dirname(dbPath), { recursive: true })
 const db = new DatabaseSync(dbPath)
 db.exec('PRAGMA journal_mode = WAL') // 服务端与运维脚本可能同时开库，WAL 读写不互斥
@@ -85,4 +85,4 @@ serve({
   }
 })
 
-console.log(`[qingniao-server] http://127.0.0.1:${port}   数据库 ${dbPath}`)
+console.log(`[omni-server] http://127.0.0.1:${port}   数据库 ${dbPath}`)

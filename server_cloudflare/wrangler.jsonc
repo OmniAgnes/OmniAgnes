@@ -1,5 +1,5 @@
 {
-	// omni 服务端 · Cloudflare Workers 版（ worker 名 omni-server，避免与青鸟原 worker 冲突）。
+	// OmniAgnes 服务端 · Cloudflare Workers 版（ worker 名 omni-server）。
 	// 对桌面端说手机号+验证码那套协议（src/desk.ts），对后台前端说邮箱那套（src/admin.ts）。
 	"name": "omni-server",
 	"main": "src/index.ts",
@@ -19,7 +19,7 @@
 		]
 	},
 	// 数据库：wrangler d1 create omni_server 后把返回的 database_id 填进来（见 README）。
-	// ⚠️ 这是 omni 专用新库，与青鸟原库（qingniao）互不影响，别改回去。
+	// ⚠️ 这是 OmniAgnes 专用库，别改 database_id。
 	"d1_databases": [
 		{
 			"binding": "DB",

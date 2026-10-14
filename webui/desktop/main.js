@@ -14,6 +14,17 @@ const http = require("node:http")
 const path = require("node:path")
 const updater = require("./updater")
 
+// ---------- 单实例锁（打开授权 omni:// 回调依赖它） ----------
+// 网页授权页登录成功会跳 omni://auth?code=xxx，系统按协议把 URL 交给「已注册的进程」。
+// Windows 上若已有一个 omni 在跑，URL 会以 second-instance 事件交给它——没有这层锁，
+// 第二个实例会各自拉起内核、端口冲突。所以必须单实例，把协议回调统一收敛到首个实例。
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  // 后续启动逻辑都在 whenReady / 事件回调里，这里只保留锁的持有标记。
+}
+
 // ---------- 内置浏览器 ----------
 // WebContentsView 悬浮在主窗口内容之上，位置大小由渲染层 BrowserPane 上报的矩形决定。
 // 操作链：内核 browser 工具 → /api/browser/next（前端长轮询）→ preload IPC → 这里执行。
@@ -376,6 +387,53 @@ ipcMain.on("omni:zoom", (_e, factor) => {
   win.webContents.setZoomFactor(Math.min(2, Math.max(0.5, factor)))
 })
 
+// ---------- IPC：打开授权登录 ----------
+// 桌面端「登录」不再是手机号验证码，而是「打开网页授权」：
+//   1. 渲染层点登录 → 主进程用系统浏览器打开 {后台}/#/ide/login（授权页）
+//   2. 网页用平台账号登录 → 调 /api/ide/pair 拿一次性授权码 → 跳 omni://auth?code=xxx
+//   3. 系统把 omni:// 交回本进程（下方 open-url / second-instance）→ 经 IPC 推给渲染层
+//   4. 渲染层拿 code 调 /api/ide/token 换长期 token（前端在 serverAuth 里做）
+// 授权页地址由渲染层传来（它知道自己配的后台地址），主进程只负责开浏览器。
+ipcMain.on("omni:auth-open", (_e, url) => {
+  const target = typeof url === "string" && /^https?:\/\//i.test(url) ? url : ""
+  if (target) shell.openExternal(target)
+})
+
+// 授权码回调：把 code 推给渲染层。可能来自 open-url（macOS）或 second-instance（Windows）。
+function deliverAuthCode(code) {
+  if (!win) return
+  win.webContents.send("omni:auth-code", code)
+  if (win.isMinimized()) win.restore()
+  win.focus()
+}
+
+// 从 omni://auth?code=xxx 里解出授权码；非本协议的 URL 返回 null。
+function parseAuthCode(url) {
+  if (typeof url !== "string") return null
+  let u
+  try {
+    u = new URL(url)
+  } catch {
+    return null
+  }
+  if (u.protocol !== "omni:") return null
+  return u.searchParams.get("code") || null
+}
+
+// 注册 omni:// 自定义协议：网页授权页登录成功后用它把授权码交回本机。
+// Windows 上协议唤起走 second-instance（argv 带 URL）；macOS 走 open-url。
+// 开发态（electron .）协议名可能被其它实例占用，但注册本身无害。
+function registerAuthProtocol() {
+  const scheme = "omni"
+  // 打包态才注册成系统默认处理器；开发态只监听协议事件（避免污染系统注册表）
+  if (app.isPackaged && process.defaultApp) {
+    app.setAsDefaultProtocolClient(scheme)
+  } else if (process.defaultApp) {
+    // 开发态：显式注册（win 上仍可收到 second-instance）
+    app.setAsDefaultProtocolClient(scheme, process.execPath, [path.resolve(process.argv[1] || "")])
+  }
+}
+
 ipcMain.handle("omni:pick-folder", async () => {
   const opts = { properties: ["openDirectory", "createDirectory"] }
   const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
@@ -507,6 +565,40 @@ async function createWindow() {
 
 app.whenReady().then(() => {
   ensureTaskbarShortcut()
+
+  // ---------- 打开授权：omni:// 协议回调 ----------
+  // 注册协议处理器（打包态让系统把 omni:// 交给本进程）。
+  registerAuthProtocol()
+
+  // Windows：第二个实例（已有一个 omni 在跑）收到协议 URL 时走这里。
+  // 注意 argv 里 URL 可能带引号或夹在其它参数里，逐段扫出 omni:// 开头的那个。
+  app.on("second-instance", (_e, argv) => {
+    if (!win) createWindow().catch((e) => fail(e.message))
+    for (const a of argv) {
+      const code = parseAuthCode(a)
+      if (code) {
+        deliverAuthCode(code)
+        break
+      }
+    }
+  })
+
+  // macOS：open-url 直接把 URL 送来。
+  app.on("open-url", (_e, url) => {
+    const code = parseAuthCode(url)
+    if (code) deliverAuthCode(code)
+  })
+
+  // 冷启动：进程是被 omni:// 协议拉起来的，URL 在 argv 里。
+  for (const a of process.argv) {
+    const code = parseAuthCode(a)
+    if (code) {
+      // 窗口还没起来，先记下，createWindow 完成后补发
+      setTimeout(() => deliverAuthCode(code), 1200)
+      break
+    }
+  }
+
   createWindow().catch((e) => fail(e.message))
   app.on("activate", () => {
     if (!win) createWindow().catch((e) => fail(e.message))

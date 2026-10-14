@@ -31,4 +31,13 @@ contextBridge.exposeInMainWorld("omniDesktop", {
       return () => ipcRenderer.removeListener("omni:update", handler)
     },
   },
+  // 打开授权：用系统浏览器打开后台授权页；授权码经 omni:// 协议回调由主进程推来
+  auth: {
+    open: (url) => ipcRenderer.send("omni:auth-open", url),
+    onCode: (cb) => {
+      const handler = (_e, code) => cb(code)
+      ipcRenderer.on("omni:auth-code", handler)
+      return () => ipcRenderer.removeListener("omni:auth-code", handler)
+    },
+  },
 })

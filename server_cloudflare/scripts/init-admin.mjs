@@ -1,26 +1,27 @@
 /**
  * 初始化超管账号（全新部署后跑一次）。
  *
- * 注册规则：users 表为空 = 初始化窗口——免邮件验证码、可设置密码；第一个注册的账号自动成为 admin。
- * 这个脚本帮你注册它并验证角色；已经注册过（409）会明确提示，不会覆盖任何东西。
+ * 注册规则：users 表为空 = 第一个注册的账号自动成为 admin。
+ * 没配邮件服务时验证码任意通过（免验证模式），脚本因此不需要真收码；
+ * 配好 SMTP 后验证码是真校验，届时请直接在网页上注册（或先把邮箱换成能收码的）。
  * 超管的密码是「管理员兜底登录」用的（邮件还没配置时，密码是进后台配 SMTP 的唯一方式）；
  * 配好邮件、在后台右上角把邮箱换成真实邮箱后，日常登录请改用邮箱验证码。
  *
  * 用法：
  *   node scripts/init-admin.mjs <baseURL> [email] [password]
  *
- *   baseURL  必填，如 https://qingniao-server.xxx.workers.dev
- *   email    缺省 admin@qingniao.local（假域名收不到验证码，配好邮件后记得在后台右上角换成真实邮箱）
+ *   baseURL  必填，如 https://omni-server.xxx.workers.dev
+ *   email    缺省 admin@example.local（假域名收不到验证码，配好邮件后记得在后台右上角换成真实邮箱）
  *   password 缺省随机生成（务必抄下输出）
  *
  * 注意：后台当前没有「改密码」功能，密码丢了需要重建（先删 users 里那行再跑本脚本）。
  */
-const [base = '', email = 'admin@qingniao.local', password = ''] = process.argv.slice(2)
+const [base = '', email = 'admin@example.local', password = ''] = process.argv.slice(2)
 if (!base) {
   console.error('用法: node scripts/init-admin.mjs <baseURL> [email] [password]')
   process.exit(1)
 }
-const pwd = password || 'QN' + Math.random().toString(36).slice(2, 10) + '!7'
+const pwd = password || 'Omni' + Math.random().toString(36).slice(2, 10) + '!7'
 
 const res = await fetch(base.replace(/\/+$/, '') + '/api/auth/register', {
   method: 'POST',
@@ -43,7 +44,7 @@ const me = await fetch(base.replace(/\/+$/, '') + '/api/auth/me', {
 }).then((r) => r.json())
 
 console.log('超管初始化成功')
-console.log('登录页: ' + base.replace(/\/+$/, '') + '/login')
+console.log('登录页: ' + base.replace(/\/+$/, '') + '/#/ide/login')
 console.log('邮箱:   ' + email)
 console.log('密码:   ' + pwd)
 console.log('角色:   ' + me.user.role + (me.user.role === 'admin' ? ' ✓' : ' ⚠ 不是管理员，检查是否为首个注册账号'))

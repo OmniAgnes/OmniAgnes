@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Input, Label } from "@/components/ui/controls"
 import { Dialog } from "@/components/ui/layout"
 
-/** 修改自己的手机号：新号先发验证码再确认（测试模式回显验证码）。 */
-export function ChangePhoneDialog({
+/** 修改自己的邮箱：新邮箱先收验证码再确认（后端 /admin/profile/email/code + /admin/profile/email）。
+ *  走「新邮箱收码」而不是旧邮箱——初始化用的超管邮箱往往是填出来的假地址，收不到信。 */
+export function ChangeEmailDialog({
   open,
   onOpenChange,
   user,
@@ -18,7 +19,7 @@ export function ChangePhoneDialog({
   /** 保存成功后回调（父级刷新 me） */
   onSaved: () => void
 }) {
-  const [phone, setPhone] = useState("")
+  const [email, setEmail] = useState("")
   const [code, setCode] = useState("")
   const [hint, setHint] = useState("")
   const [err, setErr] = useState("")
@@ -26,7 +27,7 @@ export function ChangePhoneDialog({
 
   useEffect(() => {
     if (open) {
-      setPhone("")
+      setEmail("")
       setCode("")
       setHint("")
       setErr("")
@@ -35,10 +36,12 @@ export function ChangePhoneDialog({
 
   const send = async () => {
     setErr("")
-    if (!/^\d{4,20}$/.test(phone.trim())) return setErr("请输入正确的手机号")
+    const v = email.trim()
+    // 粗判邮箱形状：后端也会校验（validEmail），这里先挡一次少一次往返
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setErr("请输入正确的邮箱")
     try {
-      const r = await api.sendCode(phone.trim())
-      if (r.hint) setHint(r.hint)
+      await api.sendProfileEmailCode(v)
+      setHint("验证码已发送，请查收新邮箱")
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }
@@ -46,10 +49,10 @@ export function ChangePhoneDialog({
 
   const submit = async () => {
     setErr("")
-    if (!/^\d{4,20}$/.test(phone.trim()) || !code.trim()) return setErr("请输入新手机号与验证码")
+    if (!email.trim() || !code.trim()) return setErr("请输入新邮箱与验证码")
     setBusy(true)
     try {
-      await api.mePhone(phone.trim(), code.trim())
+      await api.saveProfileEmail(email.trim(), code.trim())
       onSaved()
       onOpenChange(false)
     } catch (e) {
@@ -60,12 +63,12 @@ export function ChangePhoneDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={`修改手机号（当前 ${user.phone}）`}>
+    <Dialog open={open} onOpenChange={onOpenChange} title={`修改邮箱（当前 ${user.email}）`}>
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <Label>新手机号</Label>
+          <Label>新邮箱</Label>
           <div className="flex gap-2">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="请输入新手机号" />
+            <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入新邮箱" />
             <Button type="button" variant="secondary" onClick={() => void send()}>
               发送验证码
             </Button>

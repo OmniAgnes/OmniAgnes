@@ -105,7 +105,7 @@ export interface MailBody {
 /** 组 MIME 报文：头里 Subject 用 UTF-8 base64 词编码，正文整段 base64。 */
 function buildMime(from: string, to: string, mail: MailBody): string {
   const head = [
-    `From: =?UTF-8?B?${b64('青鸟平台')}?= <${from}>`,
+    `From: =?UTF-8?B?${b64('OmniAgnes')}?= <${from}>`,
     `To: <${to}>`,
     `Subject: =?UTF-8?B?${b64(mail.subject)}?=`,
     `Date: ${new Date().toUTCString()}`,

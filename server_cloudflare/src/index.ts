@@ -1,5 +1,5 @@
 /**
- * 青鸟平台服务端 · Cloudflare Workers 入口。
+ * OmniAgnes 平台服务端 · Cloudflare Workers 入口。
  * fetch = Hono app（/api/* 全集）；scheduled = 健康采集（每分钟，每上游探一个模型）。
  * 应用本体在 app.ts；本地部署入口在 local/main.ts。
  */

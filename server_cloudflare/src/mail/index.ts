@@ -63,7 +63,7 @@ function code6(): string {
 function codeMailHtml(purpose: CodePurpose, code: string): string {
   return [
     '<div style="max-width:480px;margin:0 auto;padding:24px;font-family:-apple-system,\'Segoe UI\',\'PingFang SC\',sans-serif;color:#1f2937;">',
-    '<h2 style="margin:0 0 12px;font-size:18px;">青鸟平台</h2>',
+    '<h2 style="margin:0 0 12px;font-size:18px;">OmniAgnes</h2>',
     `<p style="margin:0 0 16px;">你在进行 <b>${PURPOSE_LABEL[purpose]}</b> 操作，验证码为：</p>`,
     `<div style="font-size:30px;font-weight:700;letter-spacing:8px;padding:14px 20px;background:#f3f4f6;border-radius:10px;text-align:center;">${code}</div>`,
     '<p style="margin:16px 0 0;color:#6b7280;font-size:13px;">10 分钟内有效。如果不是你本人操作，请忽略这封邮件。</p>',
@@ -74,10 +74,14 @@ function codeMailHtml(purpose: CodePurpose, code: string): string {
 /**
  * 给邮箱发一个验证码。发码前检查：邮件已配置、同邮箱同用途 60 秒内没发过。
  * SMTP 发送失败按 502 透传原因（密码错 / 收件被拒等都得让管理员看见）。
+ *
+ * 未配置邮件服务时进入「免验证」模式：不真发邮件，也不再报错。
+ * 此时 verifyCode 对任意验证码直接放行（见下），让全新部署还没配 SMTP 时
+ * 也能正常注册/登录第一个账号。返回是否处于免验证模式，供上层决定提示语。
  */
-export async function sendCode(c: Context<AppEnv>, email: string, purpose: CodePurpose): Promise<void> {
+export async function sendCode(c: Context<AppEnv>, email: string, purpose: CodePurpose): Promise<{ skip: boolean }> {
   const cfg = await mailConfigOf(c)
-  if (!cfg) throw fail(422, '邮件服务未配置，请先在后台「邮件设置」里配置 SMTP')
+  if (!cfg) return { skip: true }
 
   const last = await c.env.DB
     .prepare(`SELECT created_at FROM mail_codes WHERE email = ? AND purpose = ?`)
@@ -99,19 +103,26 @@ export async function sendCode(c: Context<AppEnv>, email: string, purpose: CodeP
 
   try {
     await sendMail(cfg, email, {
-      subject: `青鸟验证码 ${code}`,
+      subject: `OmniAgnes 验证码 ${code}`,
       html: codeMailHtml(purpose, code)
     })
   } catch (e) {
     throw fail(502, `验证码邮件发送失败：${(e as Error).message}`)
   }
+  return { skip: false }
 }
 
 /**
  * 校验验证码，通过即删除（一次性）。错 5 次作废；过期作废。
  * 失败与成功都以中文 message 抛 ApiError，调用方无需再包。
+ *
+ * 未配置邮件服务时（免验证模式）任意验证码直接通过——此时 sendCode 没真发码、
+ * 库里也没有对应记录，不能走常规比对。这正是「配好邮件后才是真验证」的开关。
  */
 export async function verifyCode(c: Context<AppEnv>, email: string, purpose: CodePurpose, code: string): Promise<void> {
+  const cfg = await mailConfigOf(c)
+  if (!cfg) return
+
   const row = await c.env.DB
     .prepare(`SELECT code, attempts, expires_at FROM mail_codes WHERE email = ? AND purpose = ?`)
     .bind(email, purpose)

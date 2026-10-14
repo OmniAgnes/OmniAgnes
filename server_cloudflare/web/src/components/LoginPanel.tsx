@@ -10,9 +10,16 @@ import { Card, CardContent, CardHeader, CardTitle, Dialog } from "@/components/u
 const DEFAULT_AGREEMENT =
   "登录即代表您已阅读并同意平台服务条款与隐私政策。平台可能调整服务功能与计费规则，调整前将通过站内通知告知。"
 
+/**
+ * 登录面板：邮箱 + 密码 或 邮箱 + 验证码。
+ * 口径对齐后端 admin.post('/auth/login')——传 code 走验证码、传 password 走密码，
+ * 后端按请求体形状分流，两种方式共用这一个接口。
+ */
 export function LoginPanel({ site, onLogin }: { site: Site; onLogin: (u: User) => void }) {
-  const [phone, setPhone] = useState("")
+  const [email, setEmail] = useState("")
   const [code, setCode] = useState("")
+  const [password, setPassword] = useState("")
+  const [mode, setMode] = useState<"password" | "code">("password")
   const [agreed, setAgreed] = useState(false)
   const [agreementOpen, setAgreementOpen] = useState(false)
   const [testHint, setTestHint] = useState("")
@@ -21,8 +28,10 @@ export function LoginPanel({ site, onLogin }: { site: Site; onLogin: (u: User) =
 
   const send = async () => {
     setErr("")
+    if (!email) return setErr("请输入邮箱")
     try {
-      const r = await api.sendCode(phone)
+      const r = await api.sendCode(email, "login")
+      // 未配置邮件服务时后端会回显验证码（测试模式），原样提示出来便于自测
       if (r.hint) setTestHint(r.hint)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -31,11 +40,14 @@ export function LoginPanel({ site, onLogin }: { site: Site; onLogin: (u: User) =
 
   const login = async () => {
     setErr("")
-    if (!phone || !code) return setErr("请输入手机号与验证码")
+    if (!email) return setErr("请输入邮箱")
+    if (mode === "password" && !password) return setErr("请输入密码")
+    if (mode === "code" && !code) return setErr("请输入验证码")
     if (!agreed) return setErr("请先勾选并同意《用户协议》")
     setBusy(true)
     try {
-      const r = await api.login(phone, code, agreed)
+      // 只传当前模式的那个字段：两个都传时后端优先按验证码分支走
+      const r = await api.login(email, mode === "password" ? { password } : { code })
       setToken(r.token)
       onLogin(r.user)
     } catch (e) {
@@ -56,31 +68,63 @@ export function LoginPanel({ site, onLogin }: { site: Site; onLogin: (u: User) =
           </span>
           <CardTitle>{site.title || "omni server"}</CardTitle>
           <p className="text-muted-foreground text-sm">
-            手机号一键登录；未注册的手机号将自动注册。
+            {mode === "password" ? "使用邮箱与密码登录" : "使用邮箱验证码登录"}
           </p>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <Label>手机号</Label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="请输入手机号" />
+            <Label>邮箱</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="请输入邮箱"
+              autoComplete="username"
+            />
           </div>
-          <div className="flex flex-col gap-1">
-            <Label>验证码</Label>
-            <div className="flex gap-2">
-              <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="验证码" />
-              <Button type="button" variant="secondary" onClick={() => void send()}>
-                发送验证码
-              </Button>
-            </div>
-            {testHint && <p className="text-muted-foreground mt-1 text-xs">{testHint}</p>}
-          </div>
-          <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="accent-primary mt-0.5 size-4 cursor-pointer"
-                checked={agreed}
-                onChange={(e) => setAgreed(e.target.checked)}
+
+          {mode === "password" ? (
+            <div className="flex flex-col gap-1">
+              <Label>密码</Label>
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="请输入密码"
+                autoComplete="current-password"
               />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <Label>验证码</Label>
+              <div className="flex gap-2">
+                <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="验证码" />
+                <Button type="button" variant="secondary" onClick={() => void send()}>
+                  发送验证码
+                </Button>
+              </div>
+              {testHint && <p className="text-muted-foreground mt-1 text-xs">{testHint}</p>}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="text-primary self-start text-xs underline underline-offset-2"
+            onClick={() => {
+              setErr("")
+              setMode(mode === "password" ? "code" : "password")
+            }}
+          >
+            {mode === "password" ? "改用验证码登录" : "改用密码登录"}
+          </button>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-primary mt-0.5 size-4 cursor-pointer"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+            />
             <span>
               我已阅读并同意{" "}
               <button

@@ -7,6 +7,7 @@ import type { Context } from 'hono'
 import type { Env, UserRow } from './db.ts'
 import {
   body,
+  baseURL,
   checkPassword,
   clampPerPage,
   clientIP,
@@ -29,8 +30,12 @@ import { sendMail } from './mail/smtp.ts'
 import {
   adjustPoints,
   availableUpstreamModels,
+  costOf,
   effectiveRatio,
+  findModelByName,
   findUser,
+  listPointLogs,
+  listUsages,
   matchAllUpstreamModels,
   matchUpstreamModels,
   typeLabel,
@@ -47,9 +52,24 @@ export const admin = new Hono<AppEnv>()
 /** GET /api/settings — 后台界面要用的公开设置（站点名 + 邮件是否已配置，登录页据此选默认登录方式）。 */
 admin.get('/settings', async (c) => {
   return c.json({
-    mall_name: await settingOf(c, 'mall_name', '青鸟平台'),
+    mall_name: await settingOf(c, 'mall_name', 'OmniAgnes'),
     logo_url: await settingOf(c, 'logo_url', ''),
     mail_configured: await isMailConfigured(c)
+  })
+})
+
+/** GET /api/state — 桌面端探活就是打这个；返回 base_url/test_mode/now。 */
+admin.get('/state', async (c) => {
+  return c.json({ base_url: baseURL(c, c.env), test_mode: await isMailConfigured(c) === false, now: rfc() })
+})
+
+/** GET /api/site — 登录页的站点标题/页脚/协议文案。 */
+admin.get('/site', async (c) => {
+  return c.json({
+    title: await settingOf(c, 'site_title', ''),
+    footer: await settingOf(c, 'site_footer', ''),
+    agreement: await settingOf(c, 'site_agreement', ''),
+    test_mode: (await isMailConfigured(c)) === false
   })
 })
 
@@ -107,7 +127,7 @@ admin.get('/upgrade', async (c) => {
   if (hit) return new Response(await hit.text(), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } })
   try {
     const atom = await (await fetch(`https://github.com/${UPGRADE_REPO}/releases.atom`, {
-      headers: { 'User-Agent': 'qingniao-server' },
+      headers: { 'User-Agent': 'omni-server' },
       signal: AbortSignal.timeout(8000)
     })).text()
     // 首个「形如 vX.Y.Z」的 entry 标题即最新正式版本（跳过 feed 主标题与可能的预发布后缀）
@@ -139,7 +159,8 @@ admin.get('/upgrade', async (c) => {
   }
 })
 
-/** POST /api/auth/send-code — 发邮箱验证码（公开接口）。purpose：register=注册 / login=验证码登录。 */
+/** POST /api/auth/send-code — 发邮箱验证码（公开接口）。purpose：register=注册 / login=验证码登录。
+ *  未配邮件时返回 {skip:true}（免验证模式，前端据此提示「任意验证码可过」）。 */
 admin.post('/auth/send-code', async (c) => {
   const req = await body<{ email?: string; purpose?: string }>(c)
   const email = (req.email ?? '').trim().toLowerCase()
@@ -150,14 +171,14 @@ admin.post('/auth/send-code', async (c) => {
   } else if (!(await findUserByEmail(c.env.DB, email))) {
     throw fail(404, '该邮箱尚未注册')
   }
-  await sendCode(c, email, purpose)
-  return c.json({ message: '验证码已发送，请查收邮箱' })
+  const { skip } = await sendCode(c, email, purpose)
+  return c.json(skip ? { skip: true, message: '邮件未配置，验证码将任意通过' } : { message: '验证码已发送，请查收邮箱' })
 })
 
 /** POST /api/auth/register — 注册新账号（公开接口；建出来的都是 member，第一个账号自动 admin）。
  *  注册 = 邮箱 + 邮件验证码，不设密码（之后登录走验证码）；注册成功直接发 token（自动登录）。
- *  例外：users 空表 = 初始化窗口——免验证码、允许顺带设置管理员兜底密码
- *  （全新部署时邮件必然还没配，窗口不放开就没人能成为第一个管理员）。 */
+ *  验证码是否真校验由 mail/index.verifyCode 决定：未配置 SMTP 时任意码通过，
+ *  配置后走真发信、真校验——「配好邮件就是真验证」的开关落在那一层，这里不重复判断。 */
 admin.post('/auth/register', async (c) => {
   const req = await body<{ email?: string; name?: string; code?: string; password?: string }>(c)
   const email = (req.email ?? '').trim().toLowerCase()
@@ -165,10 +186,11 @@ admin.post('/auth/register', async (c) => {
   if (!validEmail(email)) throw fail(422, '邮箱格式不正确')
 
   const count = (await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>())?.n ?? 0
-  if (count > 0) await verifyCode(c, email, 'register', (req.code ?? '').trim())
+  await verifyCode(c, email, 'register', (req.code ?? '').trim())
 
+  // 兜底密码可选：第一个账号（admin）可以顺手设一个，供「邮件没配好时用密码登录」逃生。
   let hash = ''
-  if (count === 0 && (req.password ?? '').trim()) {
+  if ((req.password ?? '').trim()) {
     const pass = req.password!.trim()
     if (pass.length < 6 || pass.length > 72) throw fail(422, '密码长度需在 6~72 位之间')
     hash = await hashPassword(pass, pbkdf2Iters(c.env))
@@ -914,7 +936,7 @@ mgmt.post('/mail-config/test', async (c) => {
   if (!cfg) throw fail(422, '请先保存 SMTP 配置')
   try {
     await sendMail(cfg, to, {
-      subject: '青鸟邮件配置测试',
+      subject: 'OmniAgnes 邮件配置测试',
       html: '<p style="font-family:sans-serif;">这是一封测试邮件。收到它说明 SMTP 配置正确，验证码邮件可以正常发出了。</p>'
     })
   } catch (e) {
@@ -985,3 +1007,140 @@ mgmt.get('/dashboard', async (c) => {
 })
 
 admin.route('/admin', mgmt)
+
+// ---------- 会员侧（登录用户自助看自己的积分与用量） ----------
+// 挂在 admin 下但只走 auth、不 requireAdmin：登录会员也能访问。
+// 积分统一存 users.points，流水在 point_logs，AI 用量在 ai_usages——三处都以 users.id 为准。
+
+/** GET /api/me — 当前用户（含积分余额）。与 admin 的 /auth/me 等价，多带 points 明细来源。 */
+admin.get('/me', auth, async (c) => {
+  const u = userOf(c)
+  const fresh = (await findUser(c.env.DB, u.id)) ?? u
+  return c.json({ user: { ...userPayload(fresh), points: fresh.points } })
+})
+
+/** GET /api/me/points — 自己的积分流水（point_logs），type 可选 consume/grant/adjust。 */
+admin.get('/me/points', auth, async (c) => {
+  const u = userOf(c)
+  const typ = c.req.query('type') ?? ''
+  const page = queryInt(c, 'page', 1)
+  const per = clampPerPage(queryInt(c, 'per_page', 20))
+  const { items, total } = await listPointLogs(c.env.DB, u.id, typ, page, per)
+  return c.json(
+    pageEnvelope(
+      items.map((l) => ({
+        id: l.id,
+        change: l.change,
+        after: l.after,
+        type: l.type,
+        type_label: typeLabel(l.type),
+        remark: l.remark,
+        created_at: fmtMinute(l.created_at)
+      })),
+      total,
+      page,
+      per
+    )
+  )
+})
+
+/** GET /api/me/usages — 自己的 AI 用量（ai_usages）。 */
+admin.get('/me/usages', auth, async (c) => {
+  const u = userOf(c)
+  const page = queryInt(c, 'page', 1)
+  const per = clampPerPage(queryInt(c, 'per_page', 20))
+  const { items, total } = await listUsages(c.env.DB, u.id, page, per)
+  return c.json(
+    pageEnvelope(
+      items.map((x) => ({
+        id: x.id,
+        model: x.model,
+        prompt_tokens: x.prompt_tokens,
+        completion_tokens: x.completion_tokens,
+        total_tokens: x.total_tokens,
+        points: x.points,
+        created_at: fmtMinute(x.created_at)
+      })),
+      total,
+      page,
+      per
+    )
+  )
+})
+
+/** GET /api/models — 后台启用的内置模型组（桌面端登录后拉取，前端据此选模型与倍率）。 */
+admin.get('/models', auth, async (c) => {
+  const { results } = await c.env.DB
+    .prepare(`SELECT name AS key, builtin, ratio AS multiplier, free FROM ai_models WHERE enabled = 1 ORDER BY sort, id`)
+    .all<{ key: string; builtin: number; multiplier: number; free: number }>()
+  return c.json({ models: (results ?? []).map((m) => ({ ...m, builtin: m.builtin === 1, free: m.free === 1 })) })
+})
+
+/** POST /api/usage — 桌面端每轮问答后上报用量：按模型倍率扣分并留痕。
+ *  与 gateway 的「转发时计费」不同，这里是「事后上报」：AI 已在本机内核算完，
+ *  前端把 token 数 POST 上来。计费口径同 consumeUsage——写 ai_usages + 扣 users.points
+ *  + 记 point_logs，管理员不扣、积分不足时记录 insufficient。 */
+admin.post('/usage', auth, async (c) => {
+  const u = userOf(c)
+  const req = await body<{ model?: string; input_tokens?: number; output_tokens?: number; status?: string; error?: string }>(c)
+  const model = (req.model ?? '').trim()
+  if (!model) throw fail(422, 'model 必填')
+  const prompt = Math.max(0, Math.trunc(Number(req.input_tokens ?? 0)))
+  const completion = Math.max(0, Math.trunc(Number(req.output_tokens ?? 0)))
+  const total = prompt + completion
+  const status = req.status === 'error' ? 'error' : 'ok'
+
+  // 只对启用的内置模型计费；找不到模型或已禁用则只记一条不计费的 usage 痕迹
+  const m = await findModelByName(c.env.DB, model)
+  const ratio = m?.enabled ? effectiveRatio(m) : 0
+
+  if (status === 'error') {
+    // 上游失败：不计费，但记一条 error 痕迹（points=0），管理端可见失败请求
+    const now = rfc()
+    await c.env.DB
+      .prepare(
+        `INSERT INTO ai_usages (user_id, device_id, model, ratio, prompt_tokens, completion_tokens, total_tokens, points, source, created_at, updated_at)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, 0, 'desk', ?, ?)`
+      )
+      .bind(u.id, model, ratio, prompt, completion, total, now, now)
+      .run()
+    return c.json({ credits: 0, balance: u.points })
+  }
+
+  const cost = costOf(ratio, total)
+  let charged = 0
+  let balance = u.points
+  if (u.role !== 'admin' && cost > 0) {
+    const row = await c.env.DB.prepare(`SELECT points FROM users WHERE id = ?`).bind(u.id).first<{ points: number }>()
+    balance = row?.points ?? 0
+    charged = Math.min(cost, Math.max(0, balance))
+    const now = rfc()
+    if (charged > 0) {
+      await c.env.DB.batch([
+        c.env.DB
+          .prepare(`UPDATE users SET points = points - ?, updated_at = ? WHERE id = ? AND points >= ?`)
+          .bind(charged, now, u.id, charged),
+        c.env.DB
+          .prepare(
+            `INSERT INTO point_logs (user_id, change, after, type, remark, operator_id, created_at, updated_at)
+             VALUES (?, ?, ?, 'consume', ?, NULL, ?, ?)`
+          )
+          .bind(u.id, -charged, balance - charged, `${model} · ${total} token`, now, now)
+      ])
+      balance -= charged
+    }
+  }
+  const now = rfc()
+  await c.env.DB
+    .prepare(
+      `INSERT INTO ai_usages (user_id, device_id, model, ratio, prompt_tokens, completion_tokens, total_tokens, points, source, created_at, updated_at)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 'desk', ?, ?)`
+    )
+    .bind(u.id, model, ratio, prompt, completion, total, charged, now, now)
+    .run()
+
+  if (charged < cost && u.role !== 'admin' && cost > 0) {
+    return c.json({ credits: charged, balance }, 402)
+  }
+  return c.json({ credits: charged, balance })
+})

@@ -10,7 +10,6 @@ import {
   CpuIcon,
   ChevronRightIcon,
   FolderOpenIcon,
-  GlobeIcon,
   InfoIcon,
   Loader2Icon,
   LogInIcon,
@@ -46,7 +45,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
-import { server, savedServerUrl, saveServerUrl, probeServer, type ServerCredit, type ServerUser } from "@/lib/serverAuth"
+import { server, type ServerCredit, type ServerUser } from "@/lib/serverAuth"
 import type {
   MCPStatus,
   MCPServerConfig,
@@ -142,8 +141,8 @@ interface SettingsDialogProps {
   serverUser?: ServerUser | null
   /** 后台可达性：未登录但可达时「账号」页签也要出来（里面给登录入口） */
   serverOnline?: boolean
-  /** 用户改完后台地址后回调——外层据此重探活并刷新登录态 */
-  onServerUrlSaved?: () => void
+  /** 版本号页签里改完更新域名后回调——后台地址复用该域名，外层据此重探活并刷新登录态 */
+  onDomainSaved?: () => void
   /** 退出登录（「账号」页签里用） */
   onLogout?: () => void
   /** 「账号」页签未登录时打开登录弹窗 */
@@ -247,7 +246,7 @@ export function SettingsDialog({
   onProvidersSaved,
   serverUser,
   serverOnline,
-  onServerUrlSaved,
+  onDomainSaved,
   onLogout,
   onOpenLogin,
 }: SettingsDialogProps) {
@@ -258,11 +257,12 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) setUsageSeq((s) => s + 1)
   }, [open])
-  // 外层指定直达 section（使用统计、账号等）
+  // 外层指定直达 section（使用统计、账号等）；后台不可达时「账号」页签不存在，回落到默认页签
   useEffect(() => {
     if (!open || !initialSection) return
+    if (initialSection === "account" && !serverUser && !serverOnline) return
     setSection(initialSection as SectionId)
-  }, [open, initialSection])
+  }, [open, initialSection, serverUser, serverOnline])
   const [providers, setProviders] = useState<ProviderConfig[] | null>(null)
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
@@ -543,9 +543,9 @@ export function SettingsDialog({
                 该 grid item 的 min-width:auto 会被压成 0，不会再被 min-content 顶宽。
                 md 以上恢复竖排。 */}
             <div className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-              {/* 「账号」页签常显：后台不通时也要能进去填后台地址（填完才能登录），
-                  否则用户看不到入口、也无从得知该填什么 */}
-              {SECTIONS.map((s) => (
+              {/* 后台可达就显示「账号」页签：已登录看信息，未登录给登录入口。
+                  后台地址在「版本号」页签里配（更新域名），不通时无需账号入口 */}
+              {SECTIONS.filter((s) => s.id !== "account" || !!serverUser || serverOnline).map((s) => (
                 <button
                   key={s.id}
                   type="button"
@@ -1056,6 +1056,8 @@ export function SettingsDialog({
                                 .then((s) => {
                                   setUpdSt(s)
                                   setUpdDomain(s.domain)
+                                  // 后台地址复用这个域名：改完立刻重探活、刷新登录态
+                                  onDomainSaved?.()
                                 })
                                 .catch(() => {})
                             }}
@@ -1090,19 +1092,12 @@ export function SettingsDialog({
                 </div>
               )}
 
-              {section === "account" && (
-                <div className="flex flex-col gap-4">
-                  {/* 地址永远在最上面：离线时它是唯一能救的入口 */}
-                  <ServerUrlField onSaved={onServerUrlSaved} />
-                  {serverUser ? (
-                    <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />
-                  ) : serverOnline ? (
-                    <LoginPrompt onLogin={onOpenLogin} />
-                  ) : (
-                    <p className="text-muted-foreground text-sm">{t("se.accountOffline")}</p>
-                  )}
-                </div>
-              )}
+              {section === "account" &&
+                (serverUser ? (
+                  <AccountPanel cred={cred} loading={credLoading} onLogout={onLogout} />
+                ) : (
+                  <LoginPrompt onLogin={onOpenLogin} />
+                ))}
             </div>
           </div>
         </div>
@@ -1118,58 +1113,6 @@ function versionLabel(v?: string): string {
   const s = (v ?? "").trim()
   if (!s || s === "dev") return "—"
   return s.startsWith("v") ? s : `v${s}`
-}
-
-/** 后台地址输入框：让用户自己填 omni-server 地址，不用去改 config.json。
- *  保存后立刻重探活并刷新登录态——地址填错时这里直接显示连不上。
- *  留空保存 = 清除，回退到内核配置里的 server_url（下次 initServerUrl 会读）。 */
-function ServerUrlField({ onSaved }: { onSaved?: () => void }) {
-  const { t } = useI18n()
-  const [draft, setDraft] = useState(() => savedServerUrl())
-  const [msg, setMsg] = useState<"" | "saved" | "ok" | "fail">("")
-  const [busy, setBusy] = useState(false)
-
-  const apply = async () => {
-    setBusy(true)
-    setMsg("")
-    saveServerUrl(draft)
-    setDraft(savedServerUrl())
-    // 保存后现探一次：通了才算真的能用
-    const ok = await probeServer()
-    setMsg(ok ? "ok" : "fail")
-    setBusy(false)
-    onSaved?.()
-  }
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border p-4">
-      <div className="flex items-center gap-2">
-        <GlobeIcon className="size-4 shrink-0" />
-        <span className="font-medium">{t("se.serverUrl")}</span>
-      </div>
-      <div className="flex gap-2">
-        <Input
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value)
-            setMsg("")
-          }}
-          placeholder="https://omni.example.com"
-          spellCheck={false}
-          className="font-mono text-sm"
-        />
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void apply()}>
-          {t("se.save")}
-        </Button>
-      </div>
-      <div className="text-muted-foreground text-xs">
-        {t("se.serverUrlHint")}
-        {msg === "saved" && <span className="ml-2">{t("se.serverUrlSaved")}</span>}
-        {msg === "ok" && <span className="ml-2 text-emerald-500">{t("se.serverUrlTestOk")}</span>}
-        {msg === "fail" && <span className="text-destructive ml-2">{t("se.serverUrlTestFail")}</span>}
-      </div>
-    </div>
-  )
 }
 
 /** 后台可达但未登录：账号页签只给一个登录入口。
@@ -1188,8 +1131,9 @@ function LoginPrompt({ onLogin }: { onLogin?: () => void }) {
 }
 
 /**
- * 账号页签（登录用户可见）：账号信息（手机号/管理员/注册时间）+ 积分余额 + 流水。
+ * 账号页签（登录用户可见）：账号信息（邮箱/管理员）+ 积分余额 + 积分流水。
  * 未登录时的登录入口在 LoginPrompt（后台可达但没登录时渲染）。
+ * 积分流水走 point_logs：type = consume 消耗 / grant 发放 / adjust 调整。
  */
 function AccountPanel({
   cred,
@@ -1201,22 +1145,22 @@ function AccountPanel({
   onLogout?: () => void
 }) {
   const { t } = useI18n()
-  const [tab, setTab] = useState<"gain" | "spend">("gain")
+  // 流水筛选：全部 / 消耗 / 发放 / 调整（空=全部）
+  const [tab, setTab] = useState<"" | "consume" | "grant" | "adjust">("")
   const [page, setPage] = useState(1)
   const [rows, setRows] = useState<{ records: ServerCredit[]; total: number; page: number } | null>(null)
-  const kind = tab === "gain" ? "gain" : "spend"
 
   // 页签/翻页变化重新拉取该页流水（切页签回到第一页）
   useEffect(() => {
     let alive = true
     server
-      .me(kind, page, 20)
+      .points(tab, page, 20)
       .then((r) => alive && setRows({ records: r.records, total: r.total, page: r.page }))
       .catch(() => alive && setRows(null))
     return () => {
       alive = false
     }
-  }, [kind, page])
+  }, [tab, page])
 
   if (loading) {
     return <div className="text-muted-foreground text-sm">{t("se.saving")}</div>
@@ -1224,8 +1168,6 @@ function AccountPanel({
   if (!cred) {
     return <div className="text-muted-foreground text-sm">{t("se.accountOffline")}</div>
   }
-  const reasonLabel = (r: ServerCredit) =>
-    r.reason === "daily_claim" ? t("se.credDaily") : r.reason || t("se.credDaily")
   const list = rows?.records ?? []
   const total = rows?.total ?? 0
   const pages = Math.max(1, Math.ceil(total / 20))
@@ -1234,16 +1176,13 @@ function AccountPanel({
       <div className="rounded-lg border p-4">
         <div className="flex items-center gap-2">
           <UserIcon className="size-4 shrink-0" />
-          <span className="font-medium">{cred.phone}</span>
-          {cred.is_admin && <Badge variant="outline">{t("se.accountAdmin")}</Badge>}
+          <span className="font-medium">{cred.email}</span>
+          {cred.role === "admin" && <Badge variant="outline">{t("se.accountAdmin")}</Badge>}
           {onLogout && (
             <Button variant="outline" size="sm" className="ml-auto" onClick={onLogout}>
               <LogOutIcon /> {t("menu.logout")}
             </Button>
           )}
-        </div>
-        <div className="text-muted-foreground mt-1 text-xs">
-          {t("se.accountSince", { d: fmtDateTime(cred.created_at) })}
         </div>
       </div>
 
@@ -1252,26 +1191,33 @@ function AccountPanel({
           <CoinsIcon className="size-5 text-amber-500" />
           <div>
             <div className="text-muted-foreground text-xs">{t("se.creditsBalance")}</div>
-            <div className="text-2xl font-semibold tabular-nums">{cred.balance}</div>
+            <div className="text-2xl font-semibold tabular-nums">{cred.points}</div>
           </div>
         </div>
 
-        {/* 消耗 / 获得 两个页签 */}
+        {/* 流水筛选：全部 / 消耗 / 发放 / 调整 */}
         <div className="flex gap-1 border-b">
-          {(["gain", "spend"] as const).map((k) => (
+          {(
+            [
+              { id: "", label: t("se.credAll") },
+              { id: "consume", label: t("se.credSpend") },
+              { id: "grant", label: t("se.credGain") },
+              { id: "adjust", label: t("se.credAdjust") },
+            ] as const
+          ).map((k) => (
             <button
-              key={k}
+              key={k.id}
               type="button"
               onClick={() => {
-                setTab(k)
+                setTab(k.id)
                 setPage(1)
               }}
               className={cn(
                 "-mb-px cursor-pointer border-b-2 px-3 py-1.5 text-sm",
-                k === tab ? "border-primary text-foreground font-medium" : "text-muted-foreground hover:text-foreground border-transparent",
+                k.id === tab ? "border-primary text-foreground font-medium" : "text-muted-foreground hover:text-foreground border-transparent",
               )}
             >
-              {t(k === "gain" ? "se.credGain" : "se.credSpend")}
+              {k.label}
             </button>
           ))}
         </div>
@@ -1291,39 +1237,26 @@ function AccountPanel({
                 </tr>
               </thead>
               <tbody>
-                {list.map((r) => {
-                  // 已到期（到期时间已过）：整行置灰
-                  const expired = !!r.expires_at && new Date(r.expires_at).getTime() < Date.now()
-                  return (
-                    <tr key={r.id} className={cn("border-b last:border-b-0", expired && "text-muted-foreground/60")}>
-                      <td className="px-3 py-1.5">
-                        <span
-                          className="break-all"
-                          title={r.model ? `${reasonLabel(r)} · ${r.model}` : undefined}
-                        >
-                          {reasonLabel(r)}
-                        </span>
-                        {r.model ? <span className="text-muted-foreground ml-2 font-mono text-xs">{r.model}</span> : null}
-                        {r.expires_at ? (
-                          <span className={cn("ml-2 text-xs", expired ? "" : "text-muted-foreground")}>
-                            {t("se.credExpire")} {fmtDateTime(r.expires_at)}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td
-                        className={cn(
-                          "px-3 py-1.5 text-right font-medium tabular-nums",
-                          !expired && (r.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"),
-                        )}
-                      >
-                        {r.amount >= 0 ? `+${r.amount}` : r.amount}
-                      </td>
-                      <td className="text-muted-foreground px-3 py-1.5 text-right text-xs whitespace-nowrap tabular-nums">
-                        {fmtDateTime(r.created_at)}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {list.map((r) => (
+                  <tr key={r.id} className="border-b last:border-b-0">
+                    <td className="px-3 py-1.5">
+                      <span className="break-all" title={r.remark || undefined}>
+                        {r.remark || r.type_label || r.type}
+                      </span>
+                    </td>
+                    <td
+                      className={cn(
+                        "px-3 py-1.5 text-right font-medium tabular-nums",
+                        r.change >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive",
+                      )}
+                    >
+                      {r.change >= 0 ? `+${r.change}` : r.change}
+                    </td>
+                    <td className="text-muted-foreground px-3 py-1.5 text-right text-xs whitespace-nowrap tabular-nums">
+                      {fmtDateTime(r.created_at)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

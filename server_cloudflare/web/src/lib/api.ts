@@ -1,4 +1,8 @@
-// API 客户端：请求同源（server 前端与后端同 9000）。token 存 localStorage。
+// 后台前端 API 客户端。请求同源（前端与 Worker 同域），token 存 localStorage。
+//
+// ⚠️ 口径必须与 src/admin.ts 严格对齐：后端已从「手机号」协议整体迁到「邮箱」协议，
+//    路由也从 /admin/users、/admin/providers 换成了 /admin/members、/admin/ai-upstreams。
+//    改这里之前先看 admin.ts 的路由表，别按旧名字想当然。
 const TOKEN_KEY = "omni_server_token"
 
 export function getToken(): string {
@@ -9,92 +13,21 @@ export function setToken(t: string) {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
+/** 当前登录者（后端 auth.userPayload：id/name/email/role） */
 export interface User {
   id: number
-  phone: string
-  is_admin: boolean
-  balance: number
-  agreement: boolean
-  created_at: string
-}
-export interface CreditRecord {
-  id: number
-  user_id: number
-  amount: number
-  reason: string
-  model?: string
-  created_at: string
-  /** 到期时间（RFC3339）；空=永久。仅「获得」行有 */
-  expires_at?: string
-  remaining?: number
-}
-/** AI 请求记录（管理端返回额外带 phone） */
-export interface UsageLog {
-  id: number
-  user_id: number
-  model: string
-  input_tokens: number
-  output_tokens: number
-  credits: number
-  /** ok=已计费 / insufficient=积分不足未扣 / error=请求失败 */
-  status: string
-  error?: string
-  created_at: string
-  phone?: string
-}
-/** 会员使用量页数据：summary/credit 为汇总，items 按 list 分页 */
-export interface MemberUsage {
-  summary: { requests: number; input_tokens: number; output_tokens: number; credits: number }
-  credit: { got: number; spent: number }
-  /** ai=AI 请求记录 / spent=消耗记录 / got=获取记录 */
-  list: "ai" | "spent" | "got"
-  total: number
-  page: number
-  page_size: number
-  items: (UsageLog | CreditRecord)[]
-}
-/** 管理端使用量数据：overview 为总览，items 按 list 分页 */
-export interface AdminUsage {
-  overview: { users: number; granted: number; spent: number; today_requests: number; today_credits: number }
-  total: number
-  page: number
-  page_size: number
-  items: (UsageLog | (CreditRecord & { phone: string }))[]
-}
-export interface ProviderModel {
-  key: string
-  context_window?: number
-  max_output_tokens?: number
-  input_types?: string[]
-  reasoning?: string
-}
-export interface Provider {
-  id: number
   name: string
-  type: string
-  model?: string
-  models?: ProviderModel[]
-  base_url?: string
-  api_key?: string
-  enabled: boolean
-}
-export interface Model {
-  id: number
-  key: string
-  builtin: boolean
-  enabled: boolean
-  multiplier: number
-  free: boolean
+  email: string
+  /** admin | member；判管理员用这个 */
+  role: string
+  points: number
+  status: string
   created_at: string
 }
-export interface ModelProvider {
-  model_id: number
-  provider_id: number
-  enabled: boolean
-  priority: number
-}
+/** 是否管理员 */
+export const isAdmin = (u: User | null): boolean => !!u && u.role === "admin"
 
-/** 站点公开信息（管理端在后台设置） */
+/** 站点公开信息（desk.ts /api/site，登录页读 title/agreement/test_mode） */
 export interface Site {
   title: string
   footer: string
@@ -102,14 +35,107 @@ export interface Site {
   test_mode: boolean
 }
 
-/** 管理端系统设置 */
-export interface AdminSettings {
-  site_title: string
-  footer: string
-  agreement: string
-  daily_credit_enabled: boolean
-  daily_credit_amount: number
-  daily_credit_days: number
+/** 公开设置（admin.ts /api/settings） */
+export interface PublicSettings {
+  mall_name: string
+  logo_url: string
+  mail_configured: boolean
+}
+
+/** 后端分页信封（db.ts pageEnvelope） */
+export interface Page<T> {
+  items: T[]
+  total: number
+  page: number
+  per_page: number
+  pages: number
+}
+
+/** 会员行（admin.ts memberCols） */
+export interface Member {
+  id: number
+  name: string
+  email: string
+  role: string
+  points: number
+  status: string
+  created_at: string
+}
+
+/** 上游（admin.ts upstreamPayload） */
+export interface Upstream {
+  id: number
+  name: string
+  driver: string
+  base_url: string
+  enabled: boolean
+  sort: number
+  remark: string
+  models_synced_at: string
+  keys: {
+    id: number
+    name: string
+    enabled: boolean
+    status: string
+    latency_ms: number | null
+    last_error: string
+    last_checked_at: string
+    last_used_at: string
+  }[]
+  models: {
+    id: number
+    model_id: number
+    model: string
+    enabled: boolean
+    status: string
+    latency_ms: number | null
+    last_error: string
+    last_checked_at: string
+  }[]
+}
+
+/** AI 模型（admin.ts modelAdminPayload） */
+export interface AiModel {
+  id: number
+  name: string
+  builtin: boolean
+  ratio: number
+  enabled: boolean
+  remark: string
+  sort: number
+  free: boolean
+  discount: number | null
+  discount_label: string
+  effective_ratio: number
+  /** ok | unknown | error | unmatched */
+  health: string
+  upstreams: { name: string; model: string; status: string }[]
+}
+
+/** 管理端总览（admin.ts /admin/dashboard） */
+export interface Dashboard {
+  users: number
+  devices: number
+  online: number
+  upstreams: number
+  models: number
+  mail_configured: boolean
+  calls_today: number
+  tokens_today: number
+}
+
+/** 邮件配置（admin.ts /admin/mail-config） */
+export interface MailConfig {
+  host: string
+  port: number
+  user: string
+  from: string
+  /** ssl | starttls */
+  secure: string
+  /** 已设置密码（后端不回显密码本身） */
+  has_pass: boolean
+  /** 写接口专用：新密码（留空=保持原密码） */
+  pass?: string
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -127,70 +153,123 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   } catch {
     /* 空响应 */
   }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  // 后端错误体统一是 {message}（db.ts 的 fail → app.onError）。
+  // 只读 data.error 会把「未登录或授权已失效」这类中文提示丢掉、只剩裸 HTTP 401。
+  if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`)
   return data as T
 }
 
+/** 拉分页信封；后端部分列表接口直接返回数组（非分页），用 listOf 兜底 */
+function pageOf<T>(r: Page<T> | T[]): Page<T> {
+  if (Array.isArray(r)) return { items: r, total: r.length, page: 1, per_page: r.length, pages: 1 }
+  return r
+}
+
 export const api = {
-  state: () => req<any>("GET", "/api/state"),
+  // ---- 公开 ----
   site: () => req<Site>("GET", "/api/site"),
-  sendCode: (phone: string) => req<any>("POST", "/api/auth/send-code", { phone }),
-  login: (phone: string, code: string, agreement: boolean) =>
-    req<{ token: string; user: User; is_new: boolean }>("POST", "/api/auth/login", { phone, code, agreement }),
+  settings: () => req<PublicSettings>("GET", "/api/settings"),
+  /** 发邮箱验证码。purpose：login 验证码登录 / register 注册 */
+  sendCode: (email: string, purpose: "register" | "login" = "login") =>
+    req<{ hint?: string; cooldown?: number }>("POST", "/api/auth/send-code", { email, purpose }),
+  /**
+   * 登录（admin.ts /auth/login）。后端按请求体分流：
+   *   传 code     → 验证码登录（需先配好邮件服务）
+   *   传 password → 账号密码登录（管理员兜底）
+   * 两个都不传回 422「请输入密码或邮箱验证码」。
+   */
+  login: (email: string, v: { code?: string; password?: string }) =>
+    req<{ token: string; user: User; is_new?: boolean }>("POST", "/api/auth/login", {
+      email,
+      code: v.code,
+      password: v.password,
+    }),
+  register: (email: string, password: string, code: string, name?: string) =>
+    req<{ token: string; user: User }>("POST", "/api/auth/register", { email, password, code, name }),
+
+  // ---- 登录态 ----
   logout: () => req<any>("POST", "/api/auth/logout"),
-  me: async () => {
-    const r = await req<{ user: User }>("GET", "/api/me")
-    return r.user
-  },
-  /** 用户修改自己的手机号（新号需验证码） */
-  mePhone: (phone: string, code: string) =>
-    req<{ user: User }>("POST", "/api/me/phone", { phone, code }),
+  /** 当前登录者。注意是 /auth/me 不是 /me —— 统一走邮箱协议（admin.ts 提供 /me 给桌面端）。 */
+  me: async () => (await req<{ user: User }>("GET", "/api/auth/me")).user,
+  /** 生成一次性授权码（桌面端「打开授权」登录链路：登录后调它拿 code，再跳 omni://auth?code=xxx）。 */
+  pair: (device?: string) =>
+    req<{ code: string; expires_in: number; app_url: string; user: User }>("POST", "/api/ide/pair", { device }),
 
-  /** 会员使用量：汇总 + 按 list 分页的记录（ai=请求记录/spent=消耗/got=获取） */
-  usage: (list: "ai" | "spent" | "got", page = 1, pageSize = 20) =>
-    req<MemberUsage>("GET", `/api/usage?list=${list}&page=${page}&page_size=${pageSize}`),
-  /** 桌面端上报一次 AI 请求（按模型倍率扣积分；积分不足抛错） */
-  reportUsage: (v: { model: string; input_tokens: number; output_tokens: number; status?: string; error?: string }) =>
-    req<{ credits: number; balance: number }>("POST", "/api/usage", v),
+  // ---- 会员侧（登录用户自助看自己的积分与用量）----
+  /** 自己的积分流水（point_logs），type 可选 consume/grant/adjust */
+  myPoints: async (type = "", page = 1, perPage = 20) => {
+    const qs = new URLSearchParams({ page: String(page), per_page: String(perPage) })
+    if (type) qs.set("type", type)
+    return pageOf(await req<Page<any>>("GET", `/api/me/points?${qs}`))
+  },
+  /** 自己的 AI 用量（ai_usages） */
+  myUsages: async (page = 1, perPage = 20) =>
+    pageOf(await req<Page<any>>("GET", `/api/me/usages?page=${page}&per_page=${perPage}`)),
 
-  adminUsers: async (page = 1, pageSize = 20) => {
-    const r = await req<{ users: User[]; total: number }>("GET", `/api/admin/users?page=${page}&page_size=${pageSize}`)
-    return { users: r.users ?? [], total: r.total ?? 0 }
-  },
-  adminCredit: (id: number, amount: number, reason: string) =>
-    req<{ balance: number }>("POST", `/api/admin/users/${id}/credit`, { amount, reason }),
-  /** 管理端使用量：总览 + 按 list 分页的全体记录（ai=请求记录/credit=积分流水，phone 非空按手机号过滤） */
-  adminUsage: (v: { list?: "ai" | "credit"; page?: number; pageSize?: number; phone?: string } = {}) => {
-    const q = new URLSearchParams({
-      list: v.list ?? "ai",
-      page: String(v.page ?? 1),
-      page_size: String(v.pageSize ?? 20),
-    })
-    if (v.phone) q.set("phone", v.phone)
-    return req<AdminUsage>("GET", "/api/admin/usage?" + q.toString())
-  },
-  adminSettings: () => req<AdminSettings>("GET", "/api/admin/settings"),
-  saveAdminSettings: (v: Partial<AdminSettings>) =>
-    req<AdminSettings>("POST", "/api/admin/settings", v),
+  // ---- 管理端：总览 ----
+  dashboard: () => req<Dashboard>("GET", "/api/admin/dashboard"),
 
-  providers: async () => {
-    const r = await req<{ providers: Provider[] }>("GET", "/api/admin/providers")
-    return { providers: r.providers ?? [] }
+  // ---- 管理端：会员 ----
+  members: async (q = "", page = 1, perPage = 20) => {
+    const qs = new URLSearchParams({ page: String(page), per_page: String(perPage) })
+    if (q) qs.set("q", q)
+    return pageOf<Member>(await req<Page<Member>>("GET", `/api/admin/members?${qs}`))
   },
-  saveProvider: (p: Partial<Provider>) =>
-    req<{ provider: Provider }>(p.id ? "PUT" : "POST", p.id ? `/api/admin/providers/${p.id}` : "/api/admin/providers", p),
-  deleteProvider: (id: number) => req("DELETE", `/api/admin/providers/${id}`),
+  member: (id: number) => req<Member>("GET", `/api/admin/members/${id}`),
+  updateMember: (id: number, v: Partial<Pick<Member, "name" | "status" | "points">> & { remark?: string }) =>
+    req<Member>("PUT", `/api/admin/members/${id}`, v),
+  memberLogs: async (id: number, page = 1, perPage = 20) =>
+    pageOf(await req<Page<any>>("GET", `/api/admin/members/${id}/logs?page=${page}&per_page=${perPage}`)),
+  memberUsages: async (id: number, page = 1, perPage = 20) =>
+    pageOf(await req<Page<any>>("GET", `/api/admin/members/${id}/usages?page=${page}&per_page=${perPage}`)),
 
-  models: async () => {
-    const r = await req<{ models: Model[]; model_providers: ModelProvider[]; providers: Provider[] }>(
-      "GET",
-      "/api/admin/models",
-    )
-    return { models: r.models ?? [], model_providers: r.model_providers ?? [], providers: r.providers ?? [] }
-  },
-  saveModel: (m: Partial<Model> & { provider_id?: number }) =>
-    req<{ model: Model }>(m.id ? "PUT" : "POST", m.id ? `/api/admin/models/${m.id}` : "/api/admin/models", m),
-  deleteModel: (id: number) => req("DELETE", `/api/admin/models/${id}`),
-  toggleModelProvider: (model_id: number, provider_id: number, enabled: boolean) =>
-    req("POST", "/api/admin/model-providers/toggle", { model_id, provider_id, enabled }),
+  // ---- 管理端：上游 ----
+  /** 上游列表直接返回数组（非分页），pageOf 归一化成信封 */
+  upstreams: async () => pageOf<Upstream>(await req<Upstream[]>("GET", "/api/admin/ai-upstreams")),
+  upstream: (id: number) => req<Upstream>("GET", `/api/admin/ai-upstreams/${id}`),
+  createUpstream: (v: Partial<Upstream>) => req<Upstream>("POST", "/api/admin/ai-upstreams", v),
+  updateUpstream: (id: number, v: Partial<Upstream>) => req<Upstream>("PUT", `/api/admin/ai-upstreams/${id}`, v),
+  deleteUpstream: (id: number) => req<any>("DELETE", `/api/admin/ai-upstreams/${id}`),
+  /** 手动新增密钥到上游 */
+  addUpstreamKey: (id: number, v: { key?: string; name?: string }) =>
+    req<any>("POST", `/api/admin/ai-upstreams/${id}/keys`, v),
+  updateKey: (key: string, v: { enabled?: boolean; name?: string }) =>
+    req<any>("PUT", `/api/admin/ai-upstreams/keys/${encodeURIComponent(key)}`, v),
+  deleteKey: (key: string) => req<any>("DELETE", `/api/admin/ai-upstreams/keys/${encodeURIComponent(key)}`),
+  testKey: (key: string) => req<any>("POST", `/api/admin/ai-upstreams/keys/${encodeURIComponent(key)}/test`),
+  probeKey: (key: string) => req<any>("POST", `/api/admin/ai-upstreams/keys/${encodeURIComponent(key)}/probe`),
+  testUpstream: (id: number) => req<any>("POST", `/api/admin/ai-upstreams/${id}/test`),
+  syncUpstream: (id: number) => req<any>("POST", `/api/admin/ai-upstreams/${id}/sync`),
+  importUpstreamModels: (id: number) => req<any>("POST", `/api/admin/ai-upstreams/${id}/import-models`),
+  addUpstreamModel: (id: number, v: { model?: string; name?: string }) =>
+    req<any>("POST", `/api/admin/ai-upstreams/${id}/models`, v),
+  updateUpstreamModel: (model: string, v: Record<string, unknown>) =>
+    req<any>("PUT", `/api/admin/ai-upstreams/models/${encodeURIComponent(model)}`, v),
+  deleteUpstreamModel: (model: string) =>
+    req<any>("DELETE", `/api/admin/ai-upstreams/models/${encodeURIComponent(model)}`),
+
+  // ---- 管理端：AI 模型 ----
+  models: async () => pageOf<AiModel>(await req<AiModel[]>("GET", "/api/admin/ai-models/models")),
+  createModel: (v: Partial<AiModel>) => req<AiModel>("POST", "/api/admin/ai-models/models", v),
+  updateModel: (name: string, v: Partial<AiModel>) =>
+    req<AiModel>("PUT", `/api/admin/ai-models/models/${encodeURIComponent(name)}`, v),
+  deleteModel: (name: string) => req<any>("DELETE", `/api/admin/ai-models/models/${encodeURIComponent(name)}`),
+  testModel: (name: string) => req<any>("POST", `/api/admin/ai-models/models/${encodeURIComponent(name)}/test`),
+  rematchModels: () => req<any>("POST", "/api/admin/ai-models/re-match"),
+  modelHealth: () => req<Record<string, any>>("GET", "/api/admin/ai-models/health"),
+  modelHealthSeries: () => req<Record<string, any>>("GET", "/api/admin/ai-models/health/series"),
+
+  // ---- 管理端：用量 ----
+  usageOverview: () => req<Record<string, any>>("GET", "/api/admin/usage/overview"),
+  usageStats: () => req<Record<string, any>>("GET", "/api/admin/usage/stats"),
+
+  // ---- 管理端：邮件配置 ----
+  mailConfig: () => req<MailConfig>("GET", "/api/admin/mail-config"),
+  saveMailConfig: (v: Partial<MailConfig>) => req<MailConfig>("PUT", "/api/admin/mail-config", v),
+  testMail: () => req<any>("POST", "/api/admin/mail-config/test"),
+
+  // ---- 个人资料 ----
+  sendProfileEmailCode: (email: string) => req<any>("POST", "/api/admin/profile/email/code", { email }),
+  saveProfileEmail: (email: string, code: string) =>
+    req<any>("PUT", "/api/admin/profile/email", { email, code }),
 }

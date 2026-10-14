@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react"
 import { BotIcon, ChevronDownIcon } from "lucide-react"
 
 import { AdminPanel } from "@/components/AdminPanel"
-import { ChangePhoneDialog } from "@/components/ChangePhoneDialog"
+import { ChangeEmailDialog } from "@/components/ChangeEmailDialog"
+import { IdeLogin } from "@/components/IdeLogin"
 import { Landing } from "@/components/Landing"
 import { LoginPanel } from "@/components/LoginPanel"
 import { MemberPanel, type MemberSection } from "@/components/MemberPanel"
 import { Button } from "@/components/ui/button"
-import { api, getToken, setToken, type Site, type User } from "@/lib/api"
+import { api, getToken, isAdmin, setToken, type Site, type User } from "@/lib/api"
 
 /** hash 路由：#/ 推广首页、#/me、#/me/usage、#/admin、#/admin/members|usage|models|providers|settings。不同界面 URL 不同，可分享、刷新不 404。 */
 function useHashRoute(): string {
@@ -24,11 +25,11 @@ const nav = (h: string) => {
   location.hash = h
 }
 
-type AdminSection = "members" | "usage" | "models" | "providers" | "settings"
+type AdminSection = "members" | "usage" | "models" | "upstreams" | "mail"
 function sectionOf(route: string): AdminSection | null {
   if (!route.startsWith("/admin")) return null
   const seg = route.split("/")[2]
-  return seg === "usage" || seg === "models" || seg === "providers" || seg === "settings" ? (seg as AdminSection) : "members"
+  return seg === "usage" || seg === "models" || seg === "upstreams" || seg === "mail" ? (seg as AdminSection) : "members"
 }
 
 function memberSectionOf(route: string): MemberSection | null {
@@ -82,15 +83,20 @@ export function App() {
   const memberSection = memberSectionOf(route)
   const isHome = route === "/" || route === ""
 
-  // 路由守卫：非管理员访问后台回我的页；未知路由回我的页（首页放行）
+  // 路由守卫：非管理员访问后台回我的页；未知路由回我的页（首页与授权页放行）
   useEffect(() => {
-    if (booting || !user || isHome) return
-    if (adminSection && !user.is_admin) nav("/me")
+    if (booting || !user || isHome || route === "/ide/login") return
+    if (adminSection && !isAdmin(user)) nav("/me")
     else if (!adminSection && !memberSection) nav("/me")
   }, [user, route, adminSection, memberSection, booting, isHome])
 
   if (booting) {
     return <div className="text-muted-foreground flex min-h-screen items-center justify-center text-sm">加载中…</div>
+  }
+
+  // 桌面端授权页：独立于登录态（未登录也能进，页面内完成登录 + 授权码生成）
+  if (route === "/ide/login") {
+    return <IdeLogin />
   }
 
   // 推广首页：未登录展示「登录 / 注册」，已登录展示「进入控制台」
@@ -108,7 +114,7 @@ export function App() {
     )
   }
 
-  const showAdmin = adminSection !== null && user.is_admin
+  const showAdmin = adminSection !== null && isAdmin(user)
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -139,7 +145,7 @@ function Footer({ text }: { text: string }) {
   return <div className="text-muted-foreground border-t px-4 py-3 text-center text-xs">{text}</div>
 }
 
-/** 顶栏：左侧站点标题（跳我的页）；右侧管理员「后台管理」按钮 + 账号菜单（改手机号/退出）。 */
+/** 顶栏：左侧站点标题（跳我的页）；右侧管理员「后台管理」按钮 + 账号菜单（改邮箱/退出）。 */
 function Header({
   site,
   user,
@@ -154,7 +160,7 @@ function Header({
   onUserChanged: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [phoneOpen, setPhoneOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   // 点菜单外区域关闭
@@ -171,7 +177,7 @@ function Header({
     <header className="border-border/70 sticky top-0 z-40 border-b bg-card">
       {/* 内容宽度与下方 main 一致（max-w-5xl 居中）；
           注意：这里不能用 backdrop-blur——它会成为 fixed 元素的包含块，
-          导致页面内的弹窗（如修改手机号）fixed 定位参照 header 而跑到界面上方 */}
+          导致页面内的弹窗（如修改邮箱）fixed 定位参照 header 而跑到界面上方 */}
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2 px-3 py-2.5 md:px-6 md:py-3">
       <button type="button" className="flex cursor-pointer items-center gap-2" onClick={() => nav("/")}>
         <span className="bg-primary flex size-7 items-center justify-center rounded-lg text-white [&_svg]:size-4">
@@ -180,7 +186,7 @@ function Header({
         <span className="text-base font-semibold tracking-tight">{site.title || "omni server"}</span>
       </button>
       <div className="flex items-center gap-2">
-        {user.is_admin && (
+        {isAdmin(user) && (
           <Button
             variant={activeAdmin ? "secondary" : "outline"}
             size="sm"
@@ -190,30 +196,30 @@ function Header({
             后台管理
           </Button>
         )}
-        {/* 账号菜单：手机号 + 积分（0 不显示数字） */}
+        {/* 账号菜单：邮箱 + 积分（0 不显示数字） */}
         <div ref={ref} className="relative">
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             className="flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm hover:bg-accent"
           >
-            <span className="font-medium">{user.phone}</span>
-            {user.balance > 0 && (
+            <span className="font-medium">{user.email}</span>
+            {user.points > 0 && (
               <>
                 <span className="text-muted-foreground">·</span>
-                <span>积分 {user.balance}</span>
+                <span>积分 {user.points}</span>
               </>
             )}
             <ChevronDownIcon className="text-muted-foreground size-3.5" />
           </button>
           {menuOpen && (
             <div className="bg-card text-card-foreground absolute right-0 top-full z-50 mt-1 w-40 rounded-lg border p-1 shadow-lg">
-              {user.is_admin && <MenuItem label="后台管理" onClick={() => { setMenuOpen(false); nav("/admin/members") }} />}
-              <MenuItem label="修改手机号" onClick={() => { setMenuOpen(false); setPhoneOpen(true) }} />
+              {isAdmin(user) && <MenuItem label="后台管理" onClick={() => { setMenuOpen(false); nav("/admin/members") }} />}
+              <MenuItem label="修改邮箱" onClick={() => { setMenuOpen(false); setEmailOpen(true) }} />
               <MenuItem label="退出登录" onClick={() => { setMenuOpen(false); onLogout() }} />
             </div>
           )}
-          <ChangePhoneDialog open={phoneOpen} onOpenChange={setPhoneOpen} user={user} onSaved={onUserChanged} />
+          <ChangeEmailDialog open={emailOpen} onOpenChange={setEmailOpen} user={user} onSaved={onUserChanged} />
         </div>
       </div>
       </div>
