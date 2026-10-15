@@ -38,6 +38,25 @@ copy omni.exe webui\desktop\bin\      # 3. 覆盖桌面端内核副本
 
 不拷第 3 步 = 改了个寂寞。`.gitignore` 忽略 `webui/desktop/bin/`，别提交。
 
+## ⚠️ 发版：内核永远由 CI 现编，别手动覆盖 bin/omni.exe
+
+**线上安装包里的内核二进制，每次发版都由 CI 在打 tag 时现编**（release.yml 里
+`LDFLAGS="-s -w -X main.version=${TAG}"` + 各平台 go build），version 与 tag 严格一致。
+**不要在发版流程里手动 `go build -o omni.exe` 去覆盖 `webui/desktop/bin/omni.exe`**。
+本地产物只用于「改完代码本机自测」，测试完又会自己覆盖，不影响线上。
+
+**为什么是必修课（2026-10-15 实测踩到）**：界面「关于」页版本号来自**内核**自报
+（`omni --version` / go:embed / `main.go` 的 `appVersion()`），而升级弹窗「现 xxx」与
+`updater.js` 的 `isNewer(latest, app.getVersion())` 比对基准用的是**桌面壳 exe 的版本**
+（Electron `app.getVersion()` = 安装包内 package.json）。两者**本应是同一个版本**。
+
+一旦本地是「手动 go build 出 1.0.24 内核塞进 bin/、但桌壳 exe 还是旧装的 1.0.23」的错位态，
+就会看到：关于页 `v1.0.24`（内核新），升级信息却是 `发现 1.0.24（现 1.0.23）`（壳旧）——
+**双数据源被手动运行的方式拆开**，不是代码 bug。走正常发版（CI 打 tag）时壳与内核由同一份
+version 一起打包，不会错位。
+
+升级判断用壳的版本做基准是对的（升级替换的就是那个壳）。要让两处一致，就老老实实走 CI。
+
 ## Windows 上的坑
 
 - 禁用 `Set-Content`/`>` 写中文文件，必然坏 UTF-8；用编辑器或 Edit/Write 工具。
