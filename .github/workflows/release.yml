@@ -65,6 +65,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ⚠️ 版本一致性护栏（2026-10-15 加，防再发「壳旧内核新」的错位包）：
+      #    壳版本由 electron-builder 读本目录 package.json；内核版本由 -X main.version=${TAG}
+      #    注入（TAG=tag 名）。两者一旦不同，就会产出一个「关于页显示新版本、升级弹窗却现旧版本」
+      #    的坏包——GitHub 同名附件被先跑的坏 run 覆盖后，latest/download 一直给坏包。
+      #    打包前先断言 package.json 版本 == 当前 tag，不一致立即 fail，绝不放行。
+      - name: 校验 package.json 版本与 tag 一致
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          PKG_VER=$(node -p "require('./webui/desktop/package.json').version")
+          [ -z "$TAG" ] && { echo "::error::TAG 为空，无法校验版本一致性"; exit 1; }
+          if [ "$TAG" != "$PKG_VER" ] && [ "$TAG" != "v$PKG_VER" ]; then
+            echo "::error::package.json 版本($PKG_VER)与 tag($TAG)不一致 —— 会打出壳旧内核新的错位包，已终止。请先用 npm version 把 package.json 升到 $TAG 再发版。"
+            exit 1
+          fi
+          echo "  ✓ tag/package.json 版本一致：$TAG"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -252,6 +270,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 版本一致性护栏：package.json 版本必须等于当前 tag，否则会打出「壳旧内核新」的错位包（见 build-win 同名步骤注释）
+      - name: 校验 package.json 版本与 tag 一致
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          PKG_VER=$(node -p "require('./webui/desktop/package.json').version")
+          [ -z "$TAG" ] && { echo "::error::TAG 为空，无法校验版本一致性"; exit 1; }
+          if [ "$TAG" != "$PKG_VER" ] && [ "$TAG" != "v$PKG_VER" ]; then
+            echo "::error::package.json 版本($PKG_VER)与 tag($TAG)不一致 —— 会打出壳旧内核新的错位包，已终止。请先用 npm version 把 package.json 升到 $TAG 再发版。"
+            exit 1
+          fi
+          echo "  ✓ tag/package.json 版本一致：$TAG"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -436,6 +468,20 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+
+      # 版本一致性护栏：package.json 版本必须等于当前 tag，否则会打出「壳旧内核新」的错位包（见 build-win 同名步骤注释）
+      - name: 校验 package.json 版本与 tag 一致
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          PKG_VER=$(node -p "require('./webui/desktop/package.json').version")
+          [ -z "$TAG" ] && { echo "::error::TAG 为空，无法校验版本一致性"; exit 1; }
+          if [ "$TAG" != "$PKG_VER" ] && [ "$TAG" != "v$PKG_VER" ]; then
+            echo "::error::package.json 版本($PKG_VER)与 tag($TAG)不一致 —— 会打出壳旧内核新的错位包，已终止。请先用 npm version 把 package.json 升到 $TAG 再发版。"
+            exit 1
+          fi
+          echo "  ✓ tag/package.json 版本一致：$TAG"
 
       - uses: actions/setup-node@v4
         with:
