@@ -302,12 +302,19 @@ jobs:
           ls -l webui/desktop/bin
 
       # 内置 ffmpeg / ffprobe（media 插件依赖；Electron 的 ffmpeg.dll 不能用于转码）
+      # 备料落在 bin/ffmpeg/ 子目录（放 bin/ 根目录会被内核扫成幻影 MCP 插件）。
+      # 这里显式校验而不是 `chmod +x <glob>`：glob 无匹配时 chmod 会报
+      # "cannot access"，看起来像拉取失败，实际只是路径写错（v1.0.24 首跑踩过）。
       - name: 拉取内置 ffmpeg/ffprobe（darwin arm64/x64）
         shell: bash
         run: |
           set -e
           for ARCH in arm64 x64; do
             node webui/desktop/scripts/fetch-ffmpeg.mjs --platform darwin --arch "$ARCH"
+          done
+          for F in webui/desktop/bin/ffmpeg/ffmpeg-darwin-* webui/desktop/bin/ffmpeg/ffprobe-darwin-*; do
+            [ -f "$F" ] || { echo "::error::缺少备料 $F（fetch-ffmpeg 拉取未成功？）"; exit 1; }
+            chmod +x "$F"
           done
 
       # icon.icns 不入库（二进制产物），CI 上从已入库的 build/icon.png 现场生成
@@ -479,6 +486,7 @@ jobs:
           ls -l webui/desktop/bin
 
       # 内置 ffmpeg / ffprobe（media 插件依赖；Electron 的 libffmpeg.so 不能用于转码）
+      # 备料落在 bin/ffmpeg/ 子目录；显式校验而非裸 glob（glob 无匹配时报错信息极具误导性）。
       - name: 拉取内置 ffmpeg/ffprobe（linux x64/arm64）
         shell: bash
         run: |
@@ -486,7 +494,10 @@ jobs:
           for ARCH in x64 arm64; do
             node webui/desktop/scripts/fetch-ffmpeg.mjs --platform linux --arch "$ARCH"
           done
-          chmod +x webui/desktop/bin/ffmpeg-linux-* webui/desktop/bin/ffprobe-linux-*
+          for F in webui/desktop/bin/ffmpeg/ffmpeg-linux-* webui/desktop/bin/ffmpeg/ffprobe-linux-*; do
+            [ -f "$F" ] || { echo "::error::缺少备料 $F（fetch-ffmpeg 拉取未成功？）"; exit 1; }
+            chmod +x "$F"
+          done
 
       # 打包前 schema 校验（理由同 Windows job）。v1.0.12 首次跑这个 job 就是
       # 因为 linux.desktop 写了非法字段而在 electron-builder 起步时炸掉，白跑一轮编译。
