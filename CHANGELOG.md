@@ -2,6 +2,44 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.26 (2026-10-16)
+
+安装包瘦身：ffmpeg / ffprobe 不再随包内置，改为由 AI 在对话中按需准备音视频环境。
+Windows x64 安装包实测从 **188.1 MB 降到 152.8 MB**（-35.3 MB，-18.8%）。
+
+### ⚡ 优化
+
+- **ffmpeg 改为按需安装**（`dev/media` 新增 `media_setup` 工具）：ffmpeg/ffprobe 静态构建是安装包里
+  最大的一块（两个 exe 合计约 180MB），NSIS 压不动（exe 本身已压缩，145MB 只省下 35MB），
+  而绝大多数用户从不碰音视频功能。改为 AI 在对话中真正需要时才下载安装，
+  装在用户数据目录 `~/.local/share/omni/bin/`——安装包升级不覆盖，装一次永久可用
+- **先探测再下载**：很多用户自己装过 ffmpeg（brew / winget / scoop / apt，或手动解压加进 PATH）。
+  `media_setup` 先跑一遍 4 级查找（环境变量 → 插件同目录 → omni 数据目录 → 系统 PATH），
+  命中就**直接复用、一个字节都不下载**；只补真正缺失的那一个（如系统有 ffmpeg 无 ffprobe 就只装 ffprobe）。
+  报告会写明用的是哪一份以及版本号，便于判断系统那份是不是太老或缺编码器的裁剪版。
+  确需自备一份时传 `force: true`
+- **下载来源**：主源 npm 平台包 `@ffmpeg-installer/*` / `@ffprobe-installer/*`
+  （国内优先走 `registry.npmmirror.com`，tar.gz 约 20-40MB）；回退 `eugeneware/ffmpeg-static`
+  的 `.gz` 资源（18-30MB，同时补上 npm 缺失的 windows/arm64）
+- **找不到 ffmpeg 时的提示改为面向 AI 的行动指引**（先调 `media_setup` 再重试本工具），
+  手工方案（系统包管理器 / 手动放置 / 环境变量）降为备选
+- **CI 产物校验反向加固**：三个平台 job 从「断言 ffmpeg 确实进包」改为「断言包内**不得**含 ffmpeg」，
+  防止以后被误加回来
+
+### 🐛 修复
+
+- **npm 平台包名拼接错误导致主源静默失效**：包名被拼成 `@ffmpeg-installer/ffmpeg/win32-x64`
+  （registry 返回 404，正确是 `@ffmpeg-installer/win32-x64`），于是所有下载请求悄悄落到
+  慢速的 GitHub 回退源，且日志里看不出任何异常。已修正并加测试固化
+- **回退源成功时掩盖主源失败原因**：原先只记录最后一个错误，主源挂了也看不出来。
+  现在记录每个来源的失败原因并一并回传
+
+### 🧰 说明
+
+- 音视频能力本身**没有削弱**，首次使用时 AI 会自动准备环境；已有 ffmpeg 的用户零下载零等待
+- `webui/desktop/scripts/fetch-ffmpeg.mjs` 已退出打包链路（脚本保留作本地备用），
+  它与新实现是**两套独立来源**，改下载源时注意两处都要改
+
 ## v1.0.25 (2026-10-15)
 
 修复 v1.0.24 发版产物的「版本错位」问题：桌面壳（`app.getVersion()`）与内核（`omni --version`）各走一个
