@@ -2,6 +2,52 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.24 (2026-10-15)
+
+新增 CSV / 图片 / 音视频三个内置 MCP 插件（含 ffmpeg 三平台随包），并修复会话里图片与媒体显示不出来的问题。
+
+### ✨ 新功能
+
+- **内置 CSV 插件**（`dev/csv`）：`read_csv` 输出 Markdown 预览并报告行数/列数/编码/分隔符——
+  自动识别 UTF-8 BOM 与 GB18030（Windows Excel 导出的中文 csv 多为 GBK），列数不齐、引号异常的脏数据
+  也尽量读出；`write_csv` 生成 CSV，默认带 UTF-8 BOM（Excel 双击不乱码）
+- **内置图片插件**（`dev/image`）：`image_info` 元信息、`image_resize` 缩放（等比装箱/严格拉伸/按比例，
+  自写双线性插值）、`image_convert` 格式转换（png/jpg/gif）、`image_compress` 压缩（按质量重编、
+  可限最大宽/最大边长）。纯 Go 标准库实现，重编码自动剥离 EXIF/GPS；webp 明确提示不支持
+- **内置音视频插件**（`dev/media`）：`media_info` 信息、`media_convert` 格式转换（容器与编码按后缀推断，
+  可只取音频，或 `copy_stream` 仅重封装——快且无损）、`media_extract_audio` 抽音轨、`media_thumbnail` 视频截图
+- **ffmpeg / ffprobe 三平台随安装包内置**：新增 `webui/desktop/scripts/fetch-ffmpeg.mjs` 按平台与架构拉取
+  静态构建（Windows/Linux 用 BtbN，macOS 用 eugeneware + npm 的 ffprobe），打包钩子按目标架构换入正式名随包分发；
+  CI 的 win/mac/linux 三个 job 各加拉取步骤，并在打包后校验 ffmpeg/ffprobe 确实进包
+- **代码地图**：新增 `docs/ARCHITECTURE.md`（模块树、关键流程、前端组件触点表、启动命令），
+  `AGENTS.md` 顶部加「新任务先读」指引——新对话读它能快速建立语境，不必重扫全仓
+
+### 🐛 Bug 修复
+
+- **会话里图片显示不出来**（根因）：`react-markdown` 默认的 URL 消毒只允许 `http/https/irc/mailto/xmpp`，
+  会把 `file:///C:/…` 这类图片 src **清成空字符串**，图片必然加载失败；点它还会把内置浏览器导航到
+  工作台自身的 `…:8791/#`。现自定义 `urlTransform` 放行 `file://` 与本地绝对路径，本地路径统一重写为内核的
+  `/api/attachment?path=…`；图片加载失败时只显示可复制的路径文本，不再做任何跳转
+- **内置浏览器打开了工作台自身**：`openInBrowser` 现在拒绝同源地址——绝不把工作台嵌进工作台
+- **MCP 插件列表出现连不上的「幻影插件」**：内核会把插件目录里的每个可执行文件都注册为 MCP 服务器。
+  现扫描跳过 `omni` / `omni-*` 开头的备料文件；内置 ffmpeg/ffprobe 改放 `bin/ffmpeg/` 子目录（子目录不参与扫描）
+- **打包钩子提前返回**：内核备料缺失时原先直接 `return`，会把 MCP 插件与 ffmpeg 的按架构换名一起跳过；
+  现内核 / 插件 / ffmpeg 三块各自独立判断
+
+### 🎨 界面
+
+- **图片/视频/音频内联查看**：Markdown 里指向图片/视频/音频的链接直接渲染成可看/可播元素——图片点击放大
+  （遮罩改用 portal，避开 Markdown 段落内的非法嵌套），视频/音频内联播放器；用户上传的图片附件在气泡里
+  显示缩略图，不再是只有文件名的小标签
+- **模型选择器选中效果**：一级（供应商）与二级（模型）都用行尾对号标识选中，一级选中行不再同时显示箭头
+- **「关于」页**：原「版本号」页签更名，页内直接提示新版本并可就地升级（原先只有标题栏「更新」一个入口）
+
+### 📝 说明
+
+- **Electron 自带的 ffmpeg 不能用于转码**：`ffmpeg.dll` 仅 2.9MB（完整版 61–168MB），是 Chromium 为播放
+  裁剪的版本——编码器一个都没有、只有解码与容器能力，而且是 DLL 没有命令行入口，只能被 Chromium 自己调用
+- **移除开机自启动**：只对 Windows 有意义、收益低，相关代码（主进程 IPC / preload / 前端开关 / 文案）已全部还原
+
 ## v1.0.23 (2026-10-15)
 
 修复助手回复在宽屏下过早换行。
