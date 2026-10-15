@@ -139,16 +139,11 @@ jobs:
           cp webui/desktop/bin/omni-windows-x64.exe webui/desktop/bin/omni.exe
           ls -l webui/desktop/bin
 
-      # 内置 ffmpeg / ffprobe（media MCP 插件的运行时依赖，Electron 自带的 ffmpeg.dll
-      # 是 Chromium 裁剪版：只能解码、无编码器、不可命令行调用）。按目标架构备料，
-      # beforePack 钩子换入 bin/ 正式名后随 extraResources 进包。来源与覆盖方式见脚本头注释。
-      - name: 拉取内置 ffmpeg/ffprobe（windows x64/arm64）
-        shell: bash
-        run: |
-          set -e
-          for ARCH in x64 arm64; do
-            node webui/desktop/scripts/fetch-ffmpeg.mjs --platform win32 --arch "$ARCH"
-          done
+      # ⚠️ ffmpeg / ffprobe 不再随包内置（2026-10-16）：两个静态 exe 合计约 180MB，
+      #    是安装包里最大的一块（NSIS 压不动），绝大多数用户用不到音视频功能。
+      #    改为 AI 在对话中按需调用 media 插件的 media_setup 工具下载安装
+      #    （主源 npm 平台包，国内走 npmmirror；见 dev/media/setup.go）。
+      #    所以这里**没有** fetch-ffmpeg 步骤，产物校验也不再断言 ffmpeg 存在。
 
       # ⚠️ 打包前先用 electron-builder 自带 schema 校验 electron-builder.yml。
       #    非法字段（如 linux.desktop 下平铺一个键）会让 electron-builder 起步就抛
@@ -174,6 +169,7 @@ jobs:
       #   2) 包内内核必须是真二进制且架构与包一致——读 PE 头 machine 字段断言
       #      （0x8664=x64、0xaa64=arm64），防止「交叉轮没换内核」的包混上 Release。
       #   注：x64 的 unpacked 目录叫 win-unpacked（默认架构无后缀），arm64 叫 win-arm64-unpacked。
+      #   （不再断言 ffmpeg：已改为按需安装，不随包）
       - name: 校验双架构安装包与内核
         shell: bash
         run: |
@@ -196,11 +192,11 @@ jobs:
                 exit 1
               fi
             done
-            # ffmpeg/ffprobe 必须随包（media 插件的运行时依赖；放 bin/ffmpeg/ 子目录
-            # 是为了避开内核「扫描目录内可执行文件自动注册为 MCP 插件」的逻辑）
-            for T in ffmpeg ffprobe; do
-              if [ ! -f "$APPDIR/resources/bin/ffmpeg/$T.exe" ]; then
-                echo "::error::[$ARCH] 安装包内缺少 ffmpeg/$T.exe（media 插件将不可用）"
+            # ffmpeg 绝不能进包：媒体能力改为 AI 对话中按需安装（media_setup），
+            # 内置会让每个安装包白背 ~180MB。extraResources filter 已排除，这里做回归断言。
+            for F in "$APPDIR/resources/bin/ffmpeg/ffmpeg.exe" "$APPDIR/resources/bin/ffmpeg.exe"; do
+              if [ -e "$F" ]; then
+                echo "::error::[$ARCH] 安装包内仍含 ffmpeg（$F）——应改为按需安装，检查 electron-builder.yml 的 extraResources filter"
                 exit 1
               fi
             done
@@ -333,21 +329,9 @@ jobs:
           chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-darwin-*
           ls -l webui/desktop/bin
 
-      # 内置 ffmpeg / ffprobe（media 插件依赖；Electron 的 ffmpeg.dll 不能用于转码）
-      # 备料落在 bin/ffmpeg/ 子目录（放 bin/ 根目录会被内核扫成幻影 MCP 插件）。
-      # 这里显式校验而不是 `chmod +x <glob>`：glob 无匹配时 chmod 会报
-      # "cannot access"，看起来像拉取失败，实际只是路径写错（v1.0.24 首跑踩过）。
-      - name: 拉取内置 ffmpeg/ffprobe（darwin arm64/x64）
-        shell: bash
-        run: |
-          set -e
-          for ARCH in arm64 x64; do
-            node webui/desktop/scripts/fetch-ffmpeg.mjs --platform darwin --arch "$ARCH"
-          done
-          for F in webui/desktop/bin/ffmpeg/ffmpeg-darwin-* webui/desktop/bin/ffmpeg/ffprobe-darwin-*; do
-            [ -f "$F" ] || { echo "::error::缺少备料 $F（fetch-ffmpeg 拉取未成功？）"; exit 1; }
-            chmod +x "$F"
-          done
+      # ⚠️ ffmpeg / ffprobe 不再随包内置（2026-10-16）：改为 AI 在对话中按需调用
+      #    media 插件的 media_setup 工具下载安装（见 dev/media/setup.go）。
+      #    所以这里**没有** fetch-ffmpeg 步骤。
 
       # icon.icns 不入库（二进制产物），CI 上从已入库的 build/icon.png 现场生成
       # （icon.png 由 make_icon.py 从 icon.svg 渲染）。
@@ -388,6 +372,7 @@ jobs:
       #   同时验架构没打岔（file 输出含 cputype）：防止「arm64 机器上打 x64 包
       #   却忘了换内核」——Mach-O 文件头两种架构相同，只有 cputype 能区分。
       #   unpacked 目录名规则：默认架构 x64 → release/mac，arm64 → release/mac-arm64。
+      #   （不再断言 ffmpeg：已改为按需安装，不随包）
       - name: 校验双架构内核已打进安装包且架构正确
         shell: bash
         run: |
@@ -432,10 +417,11 @@ jobs:
                 exit 1
               fi
             done
-            # ffmpeg/ffprobe 必须随包且带 x 位（media 插件依赖，位于 bin/ffmpeg/ 子目录）
-            for T in ffmpeg ffprobe; do
-              if [ ! -x "$RESDIR/ffmpeg/$T" ]; then
-                echo "::error::[$ARCH] 安装包内缺少 ffmpeg/$T（或无 x 位），media 插件将不可用"
+            # ffmpeg 绝不能进包：媒体能力改为 AI 对话中按需安装（media_setup），
+            # 内置会让每个安装包白背 ~180MB。extraResources filter 已排除，这里做回归断言。
+            for F in "$RESDIR/ffmpeg" "$RESDIR/ffmpeg/ffmpeg" "$RESDIR/ffmpeg/ffprobe" "$RESDIR/ffprobe"; do
+              if [ -e "$F" ]; then
+                echo "::error::[$ARCH] 安装包内仍含 ffmpeg/ffprobe（$F）——应改为按需安装，检查 electron-builder.yml 的 extraResources filter"
                 exit 1
               fi
             done
@@ -531,20 +517,6 @@ jobs:
           chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-linux-* webui/desktop/bin/mcp-linux-*/*
           ls -l webui/desktop/bin
 
-      # 内置 ffmpeg / ffprobe（media 插件依赖；Electron 的 libffmpeg.so 不能用于转码）
-      # 备料落在 bin/ffmpeg/ 子目录；显式校验而非裸 glob（glob 无匹配时报错信息极具误导性）。
-      - name: 拉取内置 ffmpeg/ffprobe（linux x64/arm64）
-        shell: bash
-        run: |
-          set -e
-          for ARCH in x64 arm64; do
-            node webui/desktop/scripts/fetch-ffmpeg.mjs --platform linux --arch "$ARCH"
-          done
-          for F in webui/desktop/bin/ffmpeg/ffmpeg-linux-* webui/desktop/bin/ffmpeg/ffprobe-linux-*; do
-            [ -f "$F" ] || { echo "::error::缺少备料 $F（fetch-ffmpeg 拉取未成功？）"; exit 1; }
-            chmod +x "$F"
-          done
-
       # 打包前 schema 校验（理由同 Windows job）。v1.0.12 首次跑这个 job 就是
       # 因为 linux.desktop 写了非法字段而在 electron-builder 起步时炸掉，白跑一轮编译。
       - name: 校验 electron-builder.yml 配置
@@ -566,6 +538,7 @@ jobs:
       #   2) 必须是 ELF 且架构匹配（file 输出含 x86-64 / aarch64），
       #      防止「arm64 runner 上打 x64 包却忘换内核」；
       #   3) MCP 插件必须随包且带 x 位。
+      #   4) ffmpeg 绝不能进包（已改为按需安装）。
       # unpacked 目录名规则：x64 → release/linux-unpacked，arm64 → release/linux-arm64-unpacked。
       - name: 校验双架构内核已打进安装包且架构正确
         shell: bash
@@ -606,10 +579,11 @@ jobs:
                 exit 1
               fi
             done
-            # ffmpeg/ffprobe 必须随包且带 x 位（media 插件依赖，位于 bin/ffmpeg/ 子目录）
-            for T in ffmpeg ffprobe; do
-              if [ ! -x "$RESDIR/ffmpeg/$T" ]; then
-                echo "::error::[$ARCH] 安装包内缺少 ffmpeg/$T（或无 x 位），media 插件将不可用"
+            # ffmpeg 绝不能进包：媒体能力改为 AI 对话中按需安装（media_setup），
+            # 内置会让每个安装包白背 ~180MB。extraResources filter 已排除，这里做回归断言。
+            for F in "$RESDIR/ffmpeg" "$RESDIR/ffmpeg/ffmpeg" "$RESDIR/ffmpeg/ffprobe" "$RESDIR/ffprobe"; do
+              if [ -e "$F" ]; then
+                echo "::error::[$ARCH] 安装包内仍含 ffmpeg/ffprobe（$F）——应改为按需安装，检查 electron-builder.yml 的 extraResources filter"
                 exit 1
               fi
             done

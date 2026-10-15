@@ -31,6 +31,12 @@ extraResources:
   # （CI 上由各架构交叉编译产物填入，见 release.yml）
   # filter 排除交叉架构的备料文件（内核 omni-*、MCP 插件备料目录 mcp-*），
   # 防止把两份内核/插件都打进安装包。
+  #
+  # ⚠️ ffmpeg / ffprobe **不再随包内置**（2026-10-16 起）：两个静态 exe 合计约 180MB，
+  #    是安装包里最大的一块，而绝大多数用户从不碰音视频功能，NSIS 也压不动（exe 本身
+  #    已压缩）。改为由 AI 在对话中按需调用 media 插件的 media_setup 工具下载安装
+  #    （装在 ~/.local/share/omni/bin/，见 dev/media/setup.go），装一次永久可用、
+  #    安装包升级不覆盖。bin/ffmpeg/ 若存在（本地开发残留）也在此排除，别混进包里。
   - from: bin
     to: bin
     filter:
@@ -38,6 +44,8 @@ extraResources:
       - "!omni-darwin-*"
       - "!omni-linux-*"
       - "!mcp-*"
+      - "!ffmpeg*"
+      - "!ffprobe*"
 win:
   # 应用图标：build/icon.ico（由 make_icon.py 生成，源图为 build/icon.svg）
   icon: build/icon.ico

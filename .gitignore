@@ -26,9 +26,15 @@ webui/desktop/node_modules/
 # 桌面版打包产物与内核副本
 webui/desktop/bin/
 webui/desktop/release/
+# A/B 体积对照等临时输出目录（-c.directories.output=... 指定的非标准目录）
+webui/desktop/release-*/
 
 # dev MCP 服务器：源码入库，构建出的 exe 不入库
 dev/bin/
+
+# Go 版 server/ 已在 c55fdd1 删除并统一到 server_cloudflare/，
+# 这里只是本地残留的运行时产物（sqlite db + 已构建 web），不入库
+server/
 
 # WorkBuddy 临时文件（调试脚本等）
 .workbuddy/tmp/

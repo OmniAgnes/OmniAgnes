@@ -19,7 +19,7 @@
 //
 // 用 .cjs 不用 .mjs：electron-builder 用 require() 加载钩子文件。
 const { copyFileSync, existsSync, statSync, chmodSync, readdirSync } = require("node:fs")
-const { join, basename } = require("node:path")
+const { join } = require("node:path")
 
 /**
  * context.arch 是 builder-util 的数字枚举（ia32=0 / x64=1 / armv7l=2 / arm64=3 /
@@ -67,23 +67,13 @@ module.exports = async function beforePack(context) {
     )
   }
 
-  // 内置 ffmpeg / ffprobe（media MCP 插件的运行时依赖）：备料名 bin/ffmpeg/ffmpeg-<平台>-<架构>[.exe]，
-  // 由 scripts/fetch-ffmpeg.mjs 拉取（CI 里跑），这里按目标架构换成正式名。
-  // 放在 bin/ffmpeg/ 子目录是刻意的：内核会把 bin/ 根目录里的可执行文件逐个注册成 MCP 插件，
-  // ffmpeg 放根目录会被误当服务器去连接（幻影插件）；子目录会被扫描跳过。
-  const ffDir = join(binDir, "ffmpeg")
-  for (const tool of ["ffmpeg", "ffprobe"]) {
-    const st = join(ffDir, `${tool}-${platform.pkg}-${arch}${exe}`)
-    const dst = join(ffDir, `${tool}${exe}`)
-    if (!existsSync(st)) {
-      console.log(`[beforePack] 无 ffmpeg 备料 ffmpeg/${basename(st)}，沿用现有文件（本地打包或未拉取）`)
-      continue
-    }
-    copyFileSync(st, dst)
-    if (chmod) chmodSync(dst, 0o755)
-    console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} ${tool}：ffmpeg/${basename(st)} → ffmpeg/${basename(dst)}`)
-  }
-
+  // ⚠️ ffmpeg / ffprobe 不再随包内置（2026-10-16 起）：两个静态 exe 合计约 180MB，
+  //    是安装包里最大的一块，NSIS 压不动，且绝大多数用户从不碰音视频功能。
+  //    现在由 AI 在对话中按需调用 media 插件的 media_setup 工具下载安装
+  //    （装到 ~/.local/share/omni/bin/，见 dev/media/setup.go），装一次永久可用。
+  //    因此这里**没有** ffmpeg 换名逻辑，CI 也不再有 fetch-ffmpeg 步骤。
+  //    旧版本残留的 bin/ffmpeg/ 由 electron-builder.yml 的 extraResources filter 排除。
+  //
   // 内置 MCP 插件：与内核同套路。CI 把各架构插件编进备料目录 bin/mcp-<平台>-<架构>/，
   // 这里按目标架构把插件（pdf.exe、agnes.exe 等）覆盖拷到 bin/ 根目录——
   // extraResources 随后把 bin/ 打进 resources/bin，内核按"自身同目录"自动注册它们。

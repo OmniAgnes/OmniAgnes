@@ -15,12 +15,13 @@ Go 内核 + React 前端 + Electron 桌面端 + Cloudflare Workers 后台的单�
   后台前端源码在它的 `web/`，产物 `dist/` 由 wrangler assets 分发。桌面端说的手机号协议在
   `src/desk.ts`，邮箱那套在 `src/admin.ts`，两套并存、路由注册顺序决定优先级（先 desk 后 admin）
 - `dev/` 自研 MCP 服务器源码（pdf/xlsx/docx/pptx/csv/image/media/fetch/agnes/mimo），构建 exe 不入库。
-  （media 是 ffmpeg 的纯 Go 前端，ffmpeg/ffprobe 由 `webui/desktop/scripts/fetch-ffmpeg.mjs`
-  按平台拉取，随包内置在 `resources/bin/ffmpeg/`；其余插件零外部依赖）
+  （media 是 ffmpeg 的纯 Go 前端；**ffmpeg/ffprobe 不再随包内置**，由 AI 在对话中调
+  `media_setup` 按需下载到 `~/.local/share/omni/bin/`，见 `dev/media/setup.go`；
+  其余插件零外部依赖）
 - ⚠️ 内核会把「自身 exe 同目录」里的**每个可执行文件**自动注册为 MCP 插件（仅跳过 `omni` 与
-  `omni-*` 备料）。辅助程序（ffmpeg 等）**必须放子目录**（子目录会被扫描跳过），否则插件列表
+  `omni-*` 备料）。辅助程序**必须放子目录**（子目录会被扫描跳过），否则插件列表
   会冒出连不上的幻影条目。桌面端 bin/ 的正确布局：`omni.exe` + 各 `<插件>.exe` 在根，
-  `ffmpeg/` 子目录放 ffmpeg/ffprobe，`mcp-<平台>-<架构>/` 放插件备料
+  `mcp-<平台>-<架构>/` 放插件备料（不再有 `ffmpeg/` 子目录——已改按需安装）
   **新增插件三件事**：dev/ 写服务器 → `builtinMCPDescs`（internal/config/config.go）加描述 →
   `.github/workflows/release.yml` 6 处 `for P in ...` 全加上（win/mac/linux 编译+校验循环）。
   产物放 `webui/desktop/bin/`（内核 exe 同目录，dev 与打包态都扫描）

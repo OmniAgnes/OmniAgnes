@@ -268,7 +268,7 @@ var builtinMCPDescs = map[string]string{
 	"pptx":  "PPT 读/写（read_pptx 提取文本；write_pptx 标题/要点/备注生成）",
 	"csv":   "CSV 读/写（read_csv 预览为 Markdown 表并报告行数/编码/分隔符，可读 GB18030；write_csv 生成 CSV，默认 UTF-8 BOM）",
 	"image": "图片处理（image_info 元信息；image_resize 缩放；image_convert 格式转换 png/jpg/gif；image_compress 压缩，重编码会剥离 EXIF）",
-	"media": "音视频转换（media_info 信息；media_convert 格式转换；media_extract_audio 提取音轨；media_thumbnail 视频截图）。基于 ffmpeg，需本机可用的 ffmpeg/ffprobe",
+	"media": "音视频处理（media_setup 准备环境；media_info 信息；media_convert 格式转换；media_extract_audio 提取音轨；media_thumbnail 视频截图）。⚠️ 安装包不内置 ffmpeg：首次使用音视频功能前先调 media_setup——它会先探测本机已有的 ffmpeg（系统 PATH 里 brew/winget/scoop 装过的直接复用、零下载），只补缺失的部分（约 20-40MB，装一次永久可用）",
 	"fetch": "抓取网页（fetch_html 原始 HTML / fetch_text 纯文本 / fetch_markdown Markdown / fetch_json 接口数据 / fetch_readable 提取正文），含 robots 与 SSRF 防护",
 	"agnes": "Agnes 生图 / 生视频（需 AGNES_API_KEY）",
 	"mimo":  "MiMo 语音合成（需 MIMO_API_KEY）",

@@ -6,11 +6,16 @@
 //
 // ffmpeg / ffprobe 解析顺序（先命中先用）：
 //  1. 环境变量 OMNI_FFMPEG / OMNI_FFPROBE（可指到任意路径）
-//  2. 本插件 exe 同目录（随包内置：bin/ffmpeg.exe）
-//  3. 数据目录 bin（~/.local/share/omni/bin/ffmpeg.exe）
+//  2. 本插件 exe 同目录（含 bin/ffmpeg/ 子目录，用户也可手动放）
+//  3. 数据目录 bin（~/.local/share/omni/bin/ffmpeg.exe —— media_setup 按需装到这里）
 //  4. 系统 PATH
 //
+// ⚠️ 安装包**不再内置** ffmpeg：静态构建是安装包里最大的一块（双 exe 约 180MB，
+//    NSIS 压不动），绝大多数用户根本用不到。改为由 AI 在对话中按需调用 media_setup
+//    下载安装（见 setup.go），装一次永久可用，安装包升级不覆盖。
+//
 // 工具：
+//   - media_setup：按需下载安装 ffmpeg/ffprobe（其他 media 工具报缺环境时先调它）
 //   - media_info：读取音视频信息（时长/分辨率/码率/编码/音视频轨）
 //   - media_convert：通用格式转换（容器/编码/质量/分辨率/裁剪时间；可仅重封装）
 //   - media_extract_audio：只抽音轨（mp3/m4a/wav/flac/ogg）
@@ -70,6 +75,11 @@ type thumbArgs struct {
 func main() {
 	server := mcp.NewServer(&mcp.Implementation{Name: "omni-media", Version: "0.0.1"}, nil)
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "media_setup",
+		Annotations: &mcp.ToolAnnotations{Title: "安装音视频处理环境"},
+		Description: "准备音视频处理环境：先探测本机是否已有 ffmpeg/ffprobe（系统 PATH 里 brew/winget/scoop/apt 装的会被直接复用），只下载缺失的部分（约 20-40MB，装一次永久可用）。其他 media 工具若报「未找到 ffmpeg」，先调用本工具再重试；报告可用 ffmpeg 版本。",
+	}, mediaSetup)
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "media_info",
 		Annotations: &mcp.ToolAnnotations{Title: "音视频信息", ReadOnlyHint: true},
 		Description: "读取音视频文件的时长、分辨率、码率、编码格式与音视频轨信息（基于 ffprobe）。",
@@ -109,18 +119,20 @@ func exeName(base string) string {
 	return base
 }
 
-// findTool 按 4 级顺序找 ffmpeg / ffprobe。
-func findTool(name string) (string, error) {
+// locateTool 按 4 级顺序找 ffmpeg / ffprobe，并报告**命中来源**。
+// 来源要报出来给 AI 与用户看：media_setup 靠它判断「用户机器上已经有了」，
+// 从而跳过下载（用户 brew/winget/scoop 装过 ffmpeg 很常见，没理由再下 80MB）。
+func locateTool(name string) (path string, source string, err error) {
 	// 1. 环境变量
 	envKey := "OMNI_" + strings.ToUpper(name)
 	if p := strings.TrimSpace(os.Getenv(envKey)); p != "" {
 		if fileExists(p) {
-			return p, nil
+			return p, "环境变量 " + envKey, nil
 		}
-		return "", fmt.Errorf("环境变量 %s 指向的 %s 不存在", envKey, p)
+		return "", "", fmt.Errorf("环境变量 %s 指向的 %s 不存在", envKey, p)
 	}
-	// 2. 插件 exe 同目录：随包内置在 bin/ffmpeg/ 子目录（内核扫描会跳过该目录，
-	//    不会被误注册成 MCP 插件）；也支持手动把 ffmpeg 丢在插件同目录。
+	// 2. 插件 exe 同目录：也支持用户手动把 ffmpeg 丢在插件同目录或其 ffmpeg/ 子目录
+	//    （安装包已不再内置，这里是留给手动放置与旧版本残留的位置）。
 	if self, err := os.Executable(); err == nil {
 		dir := filepath.Dir(self)
 		for _, p := range []string{
@@ -128,30 +140,41 @@ func findTool(name string) (string, error) {
 			filepath.Join(dir, exeName(name)),
 		} {
 			if fileExists(p) {
-				return p, nil
+				return p, "插件同目录 " + p, nil
 			}
 		}
 	}
-	// 3. 数据目录：~/.local/share/omni/bin 与 ~/.local/share/omni/ffmpeg
+	// 3. 数据目录：media_setup 按需装到这里（~/.local/share/omni/bin）
 	if home, err := os.UserHomeDir(); err == nil {
 		for _, p := range []string{
 			filepath.Join(home, ".local", "share", "omni", "bin", exeName(name)),
 			filepath.Join(home, ".local", "share", "omni", "ffmpeg", exeName(name)),
 		} {
 			if fileExists(p) {
-				return p, nil
+				return p, "omni 数据目录 " + p, nil
 			}
 		}
 	}
-	// 4. PATH
+	// 4. PATH：用户自己用系统包管理器装的（brew / winget / scoop / apt）
 	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
+		return p, "系统 PATH " + p, nil
 	}
-	return "", fmt.Errorf("未找到 %s。三种解决办法任选其一：\n"+
-		"  1) 安装 ffmpeg 并加入 PATH（Windows: winget install Gyan.FFmpeg / scoop install ffmpeg；macOS: brew install ffmpeg；Linux: apt install ffmpeg）\n"+
-		"  2) 把 ffmpeg（及 ffprobe）可执行文件放到插件同目录的 ffmpeg/ 子目录：%s\n"+
-		"  3) 用环境变量 %s 指定 ffmpeg 完整路径",
-		name, filepath.Join(selfDir(), "ffmpeg"), "OMNI_"+strings.ToUpper(name))
+	// 找不到时的提示是**给 AI 看的**：安装包不再内置 ffmpeg，AI 读到这段就该
+	// 先调 media_setup 装好再重试本工具，而不是把一堆手工步骤甩给用户。
+	return "", "", fmt.Errorf(
+		"未找到 %s。安装包不再内置 ffmpeg，请先调用 media_setup 工具自动下载安装（约 20-40MB，装一次永久可用；"+
+			"若用户已自行装过 ffmpeg，media_setup 会自动识别并跳过下载），装好后重试本工具。\n"+
+			"若用户明确不想自动下载，可选这些手工办法：\n"+
+			"  1) 系统包管理器（Windows: winget install Gyan.FFmpeg / scoop install ffmpeg；macOS: brew install ffmpeg；Linux: apt install ffmpeg）\n"+
+			"  2) 把 %s（及 ffprobe）放到插件同目录的 ffmpeg/ 子目录：%s\n"+
+			"  3) 用环境变量 %s 指定完整路径",
+		name, name, filepath.Join(selfDir(), "ffmpeg"), "OMNI_"+strings.ToUpper(name))
+}
+
+// findTool 是 locateTool 的薄封装，只要路径的既有调用点用它。
+func findTool(name string) (string, error) {
+	p, _, err := locateTool(name)
+	return p, err
 }
 
 func selfDir() string {

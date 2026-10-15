@@ -12,7 +12,7 @@
 | `pptx` | `read_pptx`、`write_pptx` | 按页提取 .pptx 文本；从 slides（标题/要点/备注）生成 16:9 .pptx。不支持 .ppt 老格式 |
 | `csv` | `read_csv`、`write_csv` | 读取 CSV/TSV 为 Markdown 预览（附行数/列数/编码/分隔符，自动识别 UTF-8 BOM 与 GB18030，容忍列数不齐的脏数据）；生成 CSV（默认带 UTF-8 BOM，Excel 双击不乱码） |
 | `image` | `image_info`、`image_resize`、`image_convert`、`image_compress` | 图片处理：元信息、缩放（等比装箱/严格拉伸/按比例，双线性插值）、格式转换（png/jpg/gif）、压缩（按质量重编 jpg，可选限最大宽/最大边长）。重编码会剥离 EXIF/GPS；不支持 webp |
-| `media` | `media_info`、`media_convert`、`media_extract_audio`、`media_thumbnail` | 音视频：读取信息（时长/分辨率/码率/编码）、格式转换（容器与编码按后缀推断，可只取音频或仅重封装）、提取音轨、视频截图。**基于 ffmpeg**（Electron 自带的 `ffmpeg.dll` 是 Chromium 裁剪版：只解码、无编码器、不可当命令行调用，**不能用于转码**）。安装包已内置 ffmpeg/ffprobe（见下）；开发态查找顺序：`OMNI_FFMPEG` 环境变量 → 插件同目录的 `ffmpeg/` 子目录 → `~/.local/share/omni/{bin,ffmpeg}` → 系统 PATH |
+| `media` | `media_setup`、`media_info`、`media_convert`、`media_extract_audio`、`media_thumbnail` | 音视频：读取信息（时长/分辨率/码率/编码）、格式转换（容器与编码按后缀推断，可只取音频或仅重封装）、提取音轨、视频截图。**基于 ffmpeg，但安装包不内置**（两个静态 exe 约 180MB，是安装包最大的一块）——首次用音视频功能前先调 `media_setup`（它会先探测本机已有 ffmpeg 并复用，只补缺失的），详见下文「ffmpeg / ffprobe：按需安装」 |
 | `fetch` | `fetch_html`、`fetch_text`、`fetch_markdown`、`fetch_json`、`fetch_readable` | 抓取网页：HTML/纯文本/Markdown/JSON/正文提取。含 robots.txt 遵循与 SSRF 防护（拒绝私网/内网），响应体上限 5MB |
 | `agnes` | `generate_image`、`generate_video` | Agnes AI 生图（agnes-image-2.5-flash / 2.1-flash，文生图与图生图）与生视频（agnes-video-2.5 / 2.5-flash，异步轮询）。需环境变量 `AGNES_API_KEY` |
 | `mimo` | `tts` | MiMo 语音合成（mimo-v2.5-tts / voicedesign / voiceclone）。需环境变量 `MIMO_API_KEY` |
@@ -45,26 +45,42 @@ for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do go build -o ".o
 > 桌面版请把产物放到 `webui/desktop/bin/`（内核 exe 同目录，dev 态与打包态都会扫描）；
 > 该目录已 gitignore，不会入库。
 
-## 内置 ffmpeg / ffprobe（media 插件依赖）
+## ffmpeg / ffprobe：按需安装（不再随包内置）
 
-`dev/media` 是 ffmpeg 的前端，需要完整版 ffmpeg。`webui/desktop/scripts/fetch-ffmpeg.mjs`
-按目标平台/架构拉取静态构建，放进 **`webui/desktop/bin/ffmpeg/`**（备料名
-`ffmpeg-<平台>-<架构>[.exe]`），打包时由 `scripts/electron-before-pack.cjs`
-换成正式名随包分发：
+`dev/media` 是 ffmpeg 的前端，需要完整版 ffmpeg（Electron 自带的 `ffmpeg.dll` /
+mac `libffmpeg.dylib` 是 Chromium 裁剪版：只解码、无编码器、不可当命令行调用，**不能用于转码**）。
+
+**安装包不再内置 ffmpeg**（2026-10-16 起）。两个静态 exe 合计约 180MB，是安装包里
+最大的一块，且绝大多数用户从不碰音视频功能；NSIS 也压不动（exe 本身已压缩）。
+改为 AI 在对话中按需调用 `media_setup` 工具准备环境：
+
+- **先探测再下载**：很多用户自己装过 ffmpeg（brew / winget / scoop / apt，或手动解压
+  加进 PATH）。`media_setup` 先跑一遍 `findTool` 的 4 级查找，命中就**直接复用、
+  一个字节都不下载**，只补真正缺失的那个（例如系统有 ffmpeg 没 ffprobe，就只装
+  ffprobe）。报告会写明用的是哪一份（环境变量 / 插件同目录 / omni 数据目录 / 系统 PATH）
+  以及版本号，便于判断系统那份是不是太老或是缺编码器的裁剪版；
+  真需要自己那份时传 `force: true`（无视现有环境，全部装到数据目录）；
+- **装到** `~/.local/share/omni/bin/`（即 `findTool` 的第 3 级查找路径）——
+  用户数据目录，安装包升级不覆盖，装一次永久可用；
+- **来源**：主源 npm 平台包 `@ffmpeg-installer/*` / `@ffprobe-installer/*`
+  （国内优先走 `registry.npmmirror.com`，tar.gz 约 20-40MB）；
+  回退 `eugeneware/ffmpeg-static` b6.0 的 `.gz` 资源（单文件 18-30MB，兼作
+  `windows/arm64` 的唯一来源——npm 两个包都没有 arm64 的 Windows）；
+- **实现**：`dev/media/setup.go`。本地想预先装好（开发/测试）可直接：
 
 ```bash
-cd webui/desktop
-node scripts/fetch-ffmpeg.mjs --list                              # 查看来源表
-node scripts/fetch-ffmpeg.mjs --platform win32 --arch x64         # 只备料（CI 用法）
-node scripts/fetch-ffmpeg.mjs --platform win32 --arch x64 --local  # 顺带装入本机 bin/ffmpeg/ 正式名
+cd dev/media && go test -run TestFromNpmReal -v   # 顺带把 ffmpeg 装到数据目录
 ```
 
-来源：Windows/Linux 用 [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds)（master 最新，一包含 ffmpeg+ffprobe）；
-macOS 用 [evermeet.cx](https://evermeet.cx/ffmpeg/)（经其 JSON API 解析最新版；只有 x86_64，Apple Silicon 经 Rosetta 2 运行）。
-URL 可用 `FFMPEG_URL_<平台>_<架构>` / `FFPROBE_URL_<平台>_<架构>` 覆盖（如换国内镜像或原生 arm64 构建）。
-下载缓存在仓库根 `.ffmpeg-cache/`（已 gitignore）。
+或手动放置（优先级高于数据目录）：把 ffmpeg/ffprobe 放到插件 exe 同目录或其
+`ffmpeg/` 子目录，或用 `OMNI_FFMPEG` / `OMNI_FFPROBE` 环境变量指定完整路径。
 
-> ⚠️ **为什么放在 `bin/ffmpeg/` 子目录而不是 `bin/` 根目录**：内核启动时会扫描自身 exe 同目录，
+> ⚠️ `webui/desktop/scripts/fetch-ffmpeg.mjs` 已**退出打包链路**（CI 不再调用，
+> `beforePack` 钩子里的换名逻辑也已删除，`extraResources` filter 排除 `ffmpeg*`）。
+> 脚本本体保留作本地取静态构建的备用手段，但它与 `setup.go` 是**两套独立来源**，
+> 改下载源时别只改一处。三个平台的 CI 产物校验已反向断言「包内不得含 ffmpeg」。
+
+> ⚠️ **若手工放置 ffmpeg，注意别放 `bin/` 根目录**：内核启动时会扫描自身 exe 同目录，
 > 把里面的**每个可执行文件**自动注册为 MCP 插件；ffmpeg 放根目录会被当成 MCP 服务器去连接
 > （必然失败），插件列表冒出连不上的幻影条目。子目录会被扫描跳过。同理，内核也会跳过
 > `omni*` 开头的文件（主程序与按架构的备料 `omni-windows-x64.exe` 等）。
