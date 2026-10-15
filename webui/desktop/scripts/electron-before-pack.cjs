@@ -19,7 +19,7 @@
 //
 // 用 .cjs 不用 .mjs：electron-builder 用 require() 加载钩子文件。
 const { copyFileSync, existsSync, statSync, chmodSync, readdirSync } = require("node:fs")
-const { join } = require("node:path")
+const { join, basename } = require("node:path")
 
 /**
  * context.arch 是 builder-util 的数字枚举（ia32=0 / x64=1 / armv7l=2 / arm64=3 /
@@ -47,27 +47,42 @@ module.exports = async function beforePack(context) {
   const target = join(binDir, platform.kernel)
   const exe = platform.kernel.endsWith(".exe") ? ".exe" : ""
   const staging = join(binDir, `omni-${platform.pkg}-${arch}${exe}`)
+  const chmod = NEEDS_CHMOD.has(context.electronPlatformName)
 
-  if (!existsSync(staging)) {
+  // 三件事（内核 / MCP 插件 / ffmpeg）各自独立判断，互不短路：早期版本在内核备料缺失时
+  // 直接 return，会把后面的插件与 ffmpeg 换名一起跳过（本地打包时尤其容易踩）。
+  if (existsSync(staging)) {
+    copyFileSync(staging, target)
+    if (chmod) chmodSync(target, 0o755) // mac/Linux 需要 x 位；Windows 不看权限位
+    console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} 内核：${staging} → ${target}`)
+  } else if (existsSync(target)) {
     // 本地开发/单架构打包：没有备料，bin 里就是本机内核，直接放行。
     // （CI 双架构轮必须两个备料都在，否则慢的那轮可能把对侧架构内核留进包——
     //   备料齐全时本钩子无条件覆盖，轮次顺序无关、幂等。）
-    if (existsSync(target)) {
-      console.log(`[beforePack] 无 bin/ 备料 omni-${platform.pkg}-${arch}${exe}，沿用现有内核（本机架构轮/本地打包）`)
-      return
-    }
+    console.log(`[beforePack] 无 bin/ 备料 omni-${platform.pkg}-${arch}${exe}，沿用现有内核（本机架构轮/本地打包）`)
+  } else {
     throw new Error(
       `[beforePack] bin/ 下既无备料 omni-${platform.pkg}-${arch}${exe} 也无内核 ${platform.kernel}——` +
         `先 go build 对应二进制（CI 见 .github/workflows/release.yml 交叉编译步骤）`,
     )
   }
 
-  copyFileSync(staging, target)
-  if (NEEDS_CHMOD.has(context.electronPlatformName)) {
-    // mac/Linux 必须带 x 位，否则主进程 spawn 会被系统拒绝（Windows 不看权限位）
-    chmodSync(target, 0o755)
+  // 内置 ffmpeg / ffprobe（media MCP 插件的运行时依赖）：备料名 bin/ffmpeg/ffmpeg-<平台>-<架构>[.exe]，
+  // 由 scripts/fetch-ffmpeg.mjs 拉取（CI 里跑），这里按目标架构换成正式名。
+  // 放在 bin/ffmpeg/ 子目录是刻意的：内核会把 bin/ 根目录里的可执行文件逐个注册成 MCP 插件，
+  // ffmpeg 放根目录会被误当服务器去连接（幻影插件）；子目录会被扫描跳过。
+  const ffDir = join(binDir, "ffmpeg")
+  for (const tool of ["ffmpeg", "ffprobe"]) {
+    const st = join(ffDir, `${tool}-${platform.pkg}-${arch}${exe}`)
+    const dst = join(ffDir, `${tool}${exe}`)
+    if (!existsSync(st)) {
+      console.log(`[beforePack] 无 ffmpeg 备料 ffmpeg/${basename(st)}，沿用现有文件（本地打包或未拉取）`)
+      continue
+    }
+    copyFileSync(st, dst)
+    if (chmod) chmodSync(dst, 0o755)
+    console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} ${tool}：ffmpeg/${basename(st)} → ffmpeg/${basename(dst)}`)
   }
-  console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} 内核：${staging} → ${target}`)
 
   // 内置 MCP 插件：与内核同套路。CI 把各架构插件编进备料目录 bin/mcp-<平台>-<架构>/，
   // 这里按目标架构把插件（pdf.exe、agnes.exe 等）覆盖拷到 bin/ 根目录——
@@ -81,7 +96,7 @@ module.exports = async function beforePack(context) {
     const src = join(mcpStaging, name)
     if (!statSync(src).isFile()) continue
     copyFileSync(src, join(binDir, name))
-    if (NEEDS_CHMOD.has(context.electronPlatformName)) chmodSync(join(binDir, name), 0o755)
+    if (chmod) chmodSync(join(binDir, name), 0o755)
   }
   console.log(`[beforePack] 已换入 ${context.electronPlatformName}/${arch} MCP 插件（${mcpStaging} → bin/）`)
 }

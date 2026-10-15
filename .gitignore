@@ -17,6 +17,9 @@ webui/frontend/node_modules/
 .npm-cache/
 webui/desktop/node_modules/
 
+# 内置 ffmpeg/ffprobe 的下载缓存（scripts/fetch-ffmpeg.mjs）
+.ffmpeg-cache/
+
 # ZCode 会话数据
 .zcode/
 

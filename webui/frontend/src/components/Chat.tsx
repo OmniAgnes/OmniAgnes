@@ -35,6 +35,7 @@ import { toolApprovalLabel, type ToolRun } from "@/components/ToolCallView"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Textarea } from "@/components/ui/textarea"
+import { ZoomImage } from "@/components/ui/zoom-image"
 import { todosFromJson, type TodoItem } from "@/lib/todo"
 import { openInBrowser } from "@/lib/browser"
 import { sourceName } from "@/lib/sources"
@@ -43,6 +44,9 @@ import type { ServerUser } from "@/lib/serverAuth"
 import { cn } from "@/lib/utils"
 import { isDesktop } from "@/lib/platform"
 import type { AttachmentInfo, SkillInfo } from "@/types"
+
+/** 用户上传的附件里，哪些后缀直接当图片渲染缩略图 */
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i
 import { MediaList } from "./ToolCallView"
 
 export type { ToolRun } from "@/components/ToolCallView"
@@ -75,8 +79,8 @@ export interface ViewItem {
   text: string
   tools: ToolRun[]
   error?: string
-  /** 该消息随带的附件文件名（仅用户消息，展示用） */
-  attachments?: string[]
+  /** 该消息随带的附件（仅用户消息，展示用）：图片类渲染缩略图，其余显示文件名小标签 */
+  attachments?: { name: string; path: string }[]
   /** 本轮产出的多媒体（生成图片/视频/音频），在回答里集中展示 */
   media?: AttachmentInfo[]
   /** 本轮工具调用触达过的外部 URL（来源站点），回复末尾「来源：」行展示，点击进内置浏览器 */
@@ -859,7 +863,15 @@ const COLLAPSE_CHARS = 300
 const COLLAPSE_LINES = 8
 
 /** 用户气泡：内容多时默认收起（点击气泡或「展开」看全部）；悬停浮动显示 编辑/复制 按钮，不占布局空间；附件以标签展示。 */
-function UserBubble({ text, attachments, onEdit }: { text: string; attachments?: string[]; onEdit: (text: string) => void }) {
+function UserBubble({
+  text,
+  attachments,
+  onEdit,
+}: {
+  text: string
+  attachments?: { name: string; path: string }[]
+  onEdit: (text: string) => void
+}) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -932,17 +944,28 @@ function UserBubble({ text, attachments, onEdit }: { text: string; attachments?:
         >
           {text}
           {attachments && attachments.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {attachments.map((a, i) => (
-                <span
-                  key={`${a}-${i}`}
-                  className="flex max-w-52 items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px]"
-                  title={a}
-                >
-                  <PaperclipIcon className="size-3 shrink-0 opacity-80" />
-                  <span className="min-w-0 truncate">{a}</span>
-                </span>
-              ))}
+            // 图片类直接给缩略图（点开可放大）；非图片保留文件名标签。
+            // stopPropagation：气泡本体在长文本时点了会折叠/展开，别让点图片误触。
+            <div className="mt-1.5 flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
+              {attachments.map((a, i) =>
+                IMAGE_EXT.test(a.name) ? (
+                  <ZoomImage
+                    key={`${a.path}-${i}`}
+                    src={`/api/attachment?path=${encodeURIComponent(a.path)}`}
+                    alt={a.name}
+                    className="max-h-40 rounded-lg"
+                  />
+                ) : (
+                  <span
+                    key={`${a.path}-${i}`}
+                    className="flex max-w-52 items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px]"
+                    title={a.path}
+                  >
+                    <PaperclipIcon className="size-3 shrink-0 opacity-80" />
+                    <span className="min-w-0 truncate">{a.name}</span>
+                  </span>
+                ),
+              )}
             </div>
           )}
         </div>

@@ -266,6 +266,10 @@ var builtinMCPDescs = map[string]string{
 	"xlsx":  "Excel 读/写（read_xlsx 读表；write_xlsx 多表生成，列宽/表头加粗/冻结）",
 	"docx":  "Word 读/写（read_docx 提取正文；write_docx 标题/段落/列表/表格生成）",
 	"pptx":  "PPT 读/写（read_pptx 提取文本；write_pptx 标题/要点/备注生成）",
+	"csv":   "CSV 读/写（read_csv 预览为 Markdown 表并报告行数/编码/分隔符，可读 GB18030；write_csv 生成 CSV，默认 UTF-8 BOM）",
+	"image": "图片处理（image_info 元信息；image_resize 缩放；image_convert 格式转换 png/jpg/gif；image_compress 压缩，重编码会剥离 EXIF）",
+	"media": "音视频转换（media_info 信息；media_convert 格式转换；media_extract_audio 提取音轨；media_thumbnail 视频截图）。基于 ffmpeg，需本机可用的 ffmpeg/ffprobe",
+	"fetch": "抓取网页（fetch_html 原始 HTML / fetch_text 纯文本 / fetch_markdown Markdown / fetch_json 接口数据 / fetch_readable 提取正文），含 robots 与 SSRF 防护",
 	"agnes": "Agnes 生图 / 生视频（需 AGNES_API_KEY）",
 	"mimo":  "MiMo 语音合成（需 MIMO_API_KEY）",
 }
@@ -296,10 +300,13 @@ func (c *Config) BuiltinMCPServers() {
 			if runtime.GOOS == "windows" && filepath.Ext(name) != ".exe" {
 				continue
 			}
-			if name == "omni"+filepath.Ext(name) { // 跳过主程序本体
+			server := strings.TrimSuffix(name, filepath.Ext(name))
+			// 跳过主程序本体与按架构的备料文件（omni.exe / omni-windows-x64.exe /
+			// omni-darwin-arm64 …）：它们不是 MCP 服务器，注册了会在插件列表里
+			// 冒出连不上的幻影条目（发版时 bin/ 里同时存在各架构备料）。
+			if server == "omni" || strings.HasPrefix(server, "omni-") {
 				continue
 			}
-			server := strings.TrimSuffix(name, filepath.Ext(name))
 			if _, ok := builtinPath[server]; ok {
 				continue
 			}

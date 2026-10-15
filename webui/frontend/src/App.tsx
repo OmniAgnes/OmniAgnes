@@ -492,15 +492,16 @@ export default function App() {
         flushSources()
         // 历史里附件以「[附件] + 路径列表」附在正文后：展示时拆出来，只显示文件名
         let text = m.text ?? ""
-        let atts: string[] | undefined
+        let atts: { name: string; path: string }[] | undefined
         const marker = "\n\n[附件]"
         const at = text.indexOf(marker)
         if (at >= 0) {
           atts = text
             .slice(at + marker.length)
             .split("\n")
-            .map((l) => l.replace(/^\d+\.\s*/, "").trim().split(/[\\/]/).pop() ?? "")
+            .map((l) => l.replace(/^\d+\.\s*/, "").trim())
             .filter(Boolean)
+            .map((p) => ({ name: p.split(/[\\/]/).pop() ?? p, path: p }))
           text = text.slice(0, at)
         }
         cur = { id: nextId(), role: "user", text, attachments: atts, tools: [] }
@@ -926,13 +927,18 @@ export default function App() {
     r.streaming = true
     r.thinking = true
     r.lastRound = -1
+    // 气泡里展示的附件：带上完整路径，图片类直接渲染缩略图（只给文件名的话用户看不出是不是传对了）
+    const attItems: { name: string; path: string }[] | undefined =
+      attachments.length > 0
+        ? attachments.map((p, i) => ({ name: attNames?.[i] ?? p.split(/[\\/]/).pop() ?? p, path: p }))
+        : undefined
     if (replaceLast) {
       const items = [...r.items]
       const userItem = items[items.length - 2]
       const asstItem = items[items.length - 1]
       if (userItem && userItem.role === "user" && asstItem && asstItem.role === "assistant") {
         userItem.text = text
-        userItem.attachments = attNames && attNames.length > 0 ? attNames : undefined
+        userItem.attachments = attItems
         asstItem.text = ""
         asstItem.error = undefined
         asstItem.tools = []
@@ -949,7 +955,7 @@ export default function App() {
         id: nextId(),
         role: "user",
         text,
-        attachments: attNames && attNames.length > 0 ? attNames : undefined,
+        attachments: attItems,
         tools: [],
       }
       // 预置第 0 轮的占位项：后端 round 从 0 起算，正好接上

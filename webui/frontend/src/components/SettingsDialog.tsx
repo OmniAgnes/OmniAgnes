@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
+  ArrowUpCircleIcon,
   BlocksIcon,
   BrainIcon,
   ChartNoAxesColumnIcon,
@@ -9,6 +10,7 @@ import {
   CoinsIcon,
   CpuIcon,
   ChevronRightIcon,
+  DownloadIcon,
   FolderOpenIcon,
   InfoIcon,
   Loader2Icon,
@@ -17,6 +19,7 @@ import {
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
+  RocketIcon,
   SunMoonIcon,
   Trash2Icon,
   UserIcon,
@@ -26,6 +29,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { UsagePanel } from "@/components/UsagePanel"
+import { UpgradeDialog } from "@/components/UpgradeDialog"
 import {
   Dialog,
   DialogContent,
@@ -286,6 +290,8 @@ export function SettingsDialog({
   /** 桌面更新状态（快照存主进程 updater.js，这里只读 + 订阅）；域名编辑缓冲（null=还没从快照初始化） */
   const [updSt, setUpdSt] = useState<OmniUpdateState | null>(null)
   const [updDomain, setUpdDomain] = useState<string | null>(null)
+  /** 「关于」页内点「立即升级」打开的升级弹窗；该弹窗重绘升级按钮逻辑与左上角入口共用 */
+  const [aboutUpgradeOpen, setAboutUpgradeOpen] = useState(false)
   useEffect(() => {
     const upd = window.omniDesktop?.update
     if (!upd) return
@@ -1018,78 +1024,119 @@ export function SettingsDialog({
               {section === "usage" && <UsagePanel key={usageSeq} />}
 
               {section === "version" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label>{t("se.currentVersion")}</Label>
-                    {/* 版本号来自内核自报（/api/state），内核读的是桌面端 package.json，
-                        发版只改那一个文件，不再有第二处常量对不上 */}
-                    <span className="text-muted-foreground text-sm tabular-nums">
-                      {versionLabel(state?.version)}
-                    </span>
-                  </div>
+                <>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <Label>{t("se.currentVersion")}</Label>
+                      {/* 版本号来自内核自报（/api/state），内核读的是桌面端 package.json，
+                          发版只改那一个文件，不再有第二处常量对不上 */}
+                      <span className="text-muted-foreground text-sm tabular-nums">
+                        {versionLabel(state?.version)}
+                      </span>
+                    </div>
 
-                  {/* 更新（仅桌面壳）：域名可配置、无默认值——留空直连 GitHub Releases；
-                      填了自建平台地址则优先走 {域名}/api/upgrade（服务端代拉，国内可达） */}
-                  {window.omniDesktop?.update && (
-                    <>
-                      <div className="space-y-1.5">
-                        <Label>{t("se.updateDomain")}</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            value={updDomain ?? ""}
-                            onChange={(e) => setUpdDomain(e.target.value)}
-                            placeholder={t("se.updateDomainPh")}
-                            spellCheck={false}
-                            autoComplete="off"
-                            className="h-8 font-mono text-xs"
-                          />
+                    {/* 更新（仅桌面壳）：域名可配置、无默认值——留空直连 GitHub Releases；
+                        填了自建平台地址则优先走 {域名}/api/upgrade（服务端代拉，国内可达） */}
+                    {window.omniDesktop?.update && (
+                      <>
+                        {/* 检测到新版本：醒目横幅，可直接在此升级（不只左上角「更新」入口） */}
+                        {updSt?.latest && !updSt.progress && !updSt.canInstall && (
+                          <div className="border-primary/30 bg-primary/5 flex items-center gap-2.5 rounded-md border px-3 py-2.5">
+                            <ArrowUpCircleIcon className="text-primary size-4 shrink-0" />
+                            <span className="min-w-0 flex-1 text-sm">
+                              {t("ud.found", { v: updSt.latest.version })}
+                              <span className="text-muted-foreground text-xs"> {t("ud.from", { v: updSt.current })}</span>
+                            </span>
+                            <Button size="sm" onClick={() => setAboutUpgradeOpen(true)}>
+                              <DownloadIcon className="size-4" /> {t("ud.now")}
+                            </Button>
+                          </div>
+                        )}
+                        {/* 已在下载中 / 已就绪：在「关于」里也能看到进度并点安装 */}
+                        {(updSt?.progress || updSt?.canInstall) && (
+                          <div className={cn("flex items-center gap-2.5 rounded-md border px-3 py-2.5", updSt.canInstall ? "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950" : "border-border")}>
+                            <ArrowUpCircleIcon className="text-primary size-4 shrink-0" />
+                            <span className="text-muted-foreground min-w-0 flex-1 text-sm">
+                              {updSt.canInstall ? t("ud.readyHint") : t("ud.downloading")}
+                              {updSt.progress && updSt.progress.total > 0 && (
+                                <> {Math.min(100, Math.round((updSt.progress.received / updSt.progress.total) * 100))}%</>
+                              )}
+                            </span>
+                            {updSt.canInstall ? (
+                              <Button size="sm" onClick={() => setAboutUpgradeOpen(true)}>
+                                <RocketIcon className="size-4" /> {t("ud.ready")}
+                              </Button>
+                            ) : (
+                              <Button size="sm" variant="ghost" onClick={() => void window.omniDesktop?.update.cancel()}>
+                                {t("ud.cancel")}
+                              </Button>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                          <Label>{t("se.updateDomain")}</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              value={updDomain ?? ""}
+                              onChange={(e) => setUpdDomain(e.target.value)}
+                              placeholder={t("se.updateDomainPh")}
+                              spellCheck={false}
+                              autoComplete="off"
+                              className="h-8 font-mono text-xs"
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={updDomain === null || updDomain === (updSt?.domain ?? "")}
+                              onClick={() => {
+                                const upd = window.omniDesktop?.update
+                                if (!upd) return
+                                void upd
+                                  .setDomain(updDomain ?? "")
+                                  .then(() => upd.get())
+                                  .then((s) => {
+                                    setUpdSt(s)
+                                    setUpdDomain(s.domain)
+                                    // 后台地址复用这个域名：改完立刻重探活、刷新登录态
+                                    onDomainSaved?.()
+                                  })
+                                  .catch(() => {})
+                              }}
+                            >
+                              {t("se.save")}
+                            </Button>
+                          </div>
+                          <p className="text-muted-foreground text-xs">{t("se.updateDomainHint")}</p>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground min-w-0 text-xs">
+                            {updSt?.checking
+                              ? t("se.checking")
+                              : updSt?.error
+                                ? updSt.error
+                                : updSt?.latest
+                                  ? t("ud.found", { v: updSt.latest.version })
+                                  : updSt && updSt.checkedAt > 0
+                                    ? t("se.upToDate")
+                                    : ""}
+                          </span>
                           <Button
                             size="sm"
-                            variant="outline"
-                            disabled={updDomain === null || updDomain === (updSt?.domain ?? "")}
-                            onClick={() => {
-                              const upd = window.omniDesktop?.update
-                              if (!upd) return
-                              void upd
-                                .setDomain(updDomain ?? "")
-                                .then(() => upd.get())
-                                .then((s) => {
-                                  setUpdSt(s)
-                                  setUpdDomain(s.domain)
-                                  // 后台地址复用这个域名：改完立刻重探活、刷新登录态
-                                  onDomainSaved?.()
-                                })
-                                .catch(() => {})
-                            }}
+                            disabled={!!updSt?.checking}
+                            onClick={() => void window.omniDesktop?.update.check().then(setUpdSt).catch(() => {})}
                           >
-                            {t("se.save")}
+                            {t("se.checkUpdate")}
                           </Button>
                         </div>
-                        <p className="text-muted-foreground text-xs">{t("se.updateDomainHint")}</p>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground min-w-0 text-xs">
-                          {updSt?.checking
-                            ? t("se.checking")
-                            : updSt?.error
-                              ? updSt.error
-                              : updSt?.latest
-                                ? t("ud.found", { v: updSt.latest.version })
-                                : updSt && updSt.checkedAt > 0
-                                  ? t("se.upToDate")
-                                  : ""}
-                        </span>
-                        <Button
-                          size="sm"
-                          disabled={!!updSt?.checking}
-                          onClick={() => void window.omniDesktop?.update.check().then(setUpdSt).catch(() => {})}
-                        >
-                          {t("se.checkUpdate")}
-                        </Button>
-                      </div>
-                    </>
+                      </>
+                    )}
+                  </div>
+                  {/* 「关于」页内升级弹窗：与左上角入口复用同一套下载/安装/取消逻辑 */}
+                  {aboutUpgradeOpen && updSt?.latest && (
+                    <UpgradeDialog st={updSt} onClose={() => setAboutUpgradeOpen(false)} />
                   )}
-                </div>
+                </>
               )}
 
               {section === "account" &&

@@ -7,8 +7,22 @@
 
 export const BROWSER_OPEN_EVENT = "omni:browser-open"
 
+/** 目标是否就是本应用自身（同源）——工作台/内核接口都不是「网页」 */
+function isSelfURL(url: string): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
 export function openInBrowser(url: string) {
-  if (typeof window === "undefined") return
+  if (typeof window === "undefined" || !url) return
+  // 绝不在内置浏览器里打开本应用自己：那等于把工作台嵌进工作台（嵌套一份 UI，
+  // 又占满右栏、还可能递归触发导航）。同源地址一律拦掉——内核的 /api/* 也一样，
+  // 它们不是给人浏览的页面。
+  if (isSelfURL(url)) return
   if (window.omniDesktop?.browserOp) {
     window.dispatchEvent(new CustomEvent(BROWSER_OPEN_EVENT, { detail: { url } }))
     return

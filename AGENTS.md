@@ -3,6 +3,8 @@
 Go 内核 + React 前端 + Electron 桌面端 + Cloudflare Workers 后台的单体仓库。
 本文件只记「可复用的结论与触点清单」，以代码为准，改动后同步。
 
+> **新任务先读**：`docs/ARCHITECTURE.md`（一页代码地图）+ `.workbuddy/memory/MEMORY.md`（项目长期约定）+ 最近一日志 `YYYY-MM-DD.md`，再按需下钻，避免重扫全仓。
+
 ## 目录
 
 - `internal/` 后端模块：`agent`(会话编排) `llm`(多 provider) `mcp` `tools` `skills`
@@ -12,7 +14,16 @@ Go 内核 + React 前端 + Electron 桌面端 + Cloudflare Workers 后台的单�
 - `server_cloudflare/` 账号/积分后台（Hono + TS，worker 名 `omni-server`，D1 `omni_server`）；
   后台前端源码在它的 `web/`，产物 `dist/` 由 wrangler assets 分发。桌面端说的手机号协议在
   `src/desk.ts`，邮箱那套在 `src/admin.ts`，两套并存、路由注册顺序决定优先级（先 desk 后 admin）
-- `dev/` 自研 MCP 服务器源码（agnes/mimo/docx/pptx/xlsx），构建 exe 不入库
+- `dev/` 自研 MCP 服务器源码（pdf/xlsx/docx/pptx/csv/image/media/fetch/agnes/mimo），构建 exe 不入库。
+  （media 是 ffmpeg 的纯 Go 前端，ffmpeg/ffprobe 由 `webui/desktop/scripts/fetch-ffmpeg.mjs`
+  按平台拉取，随包内置在 `resources/bin/ffmpeg/`；其余插件零外部依赖）
+- ⚠️ 内核会把「自身 exe 同目录」里的**每个可执行文件**自动注册为 MCP 插件（仅跳过 `omni` 与
+  `omni-*` 备料）。辅助程序（ffmpeg 等）**必须放子目录**（子目录会被扫描跳过），否则插件列表
+  会冒出连不上的幻影条目。桌面端 bin/ 的正确布局：`omni.exe` + 各 `<插件>.exe` 在根，
+  `ffmpeg/` 子目录放 ffmpeg/ffprobe，`mcp-<平台>-<架构>/` 放插件备料
+  **新增插件三件事**：dev/ 写服务器 → `builtinMCPDescs`（internal/config/config.go）加描述 →
+  `.github/workflows/release.yml` 6 处 `for P in ...` 全加上（win/mac/linux 编译+校验循环）。
+  产物放 `webui/desktop/bin/`（内核 exe 同目录，dev 与打包态都扫描）
 
 ## 改前端必须走完四步
 
@@ -109,4 +120,6 @@ cd webui\desktop; npm run check:bin     # 打包前校验内核副本存在
 
 ## 详细文档
 
-历史排查结论见 git log 与本目录 `docs/`（如存在）。
+- **代码结构地图**：`docs/ARCHITECTURE.md`（一页建立全局上下文：模块树、关键流程、组件触点、桌面壳触点、启动命令、版本号来源）。新任务先读它 + 本文件，按需下钻，别重扫全仓。
+- **AI 长期记忆**：`.workbuddy/memory/MEMORY.md`（稳定约定，跨对话复用）+ `.workbuddy/memory/YYYY-MM-DD.md`（每日进展追加）。
+- 历史排查结论见 git log。

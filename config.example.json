@@ -13,7 +13,7 @@
   "theme": "dark",
   "mcp_servers": {
     "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
-    "fetch": { "url": "http://127.0.0.1:8931/mcp" }
+    "fetch": { "description": "抓取网页（fetch_html/text/markdown/json/readable），内置插件：构建 dev/fetch 到 .omni/mcp/ 后自动注册" }
   }
 }
 

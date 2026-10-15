@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { useMemo } from "react"
 
 import {
   BracesIcon,
@@ -28,6 +28,9 @@ import { diffLines, diffStat } from "@/lib/diff"
 import { highlightToHtml, langFromPath } from "@/lib/highlight"
 import { useI18n, type Translate } from "@/lib/i18n"
 import type { AttachmentInfo } from "@/types"
+
+import { ZoomImage } from "./ui/zoom-image"
+import { AudioPlayer } from "./ui/inline-media"
 import { todosFromArgs } from "@/lib/todo"
 import { cn } from "@/lib/utils"
 
@@ -319,19 +322,13 @@ function ToolDetail({
  * 在最终回答里集中展示（不在工具卡片里渲染），本地文件标注保存路径。 */
 export function MediaList({ atts }: { atts: AttachmentInfo[] }) {
   const { t } = useI18n()
-  const [zoom, setZoom] = useState<AttachmentInfo | null>(null)
   return (
     <div className="flex flex-col gap-2">
       {atts.map((a, i) => {
         if (a.kind === "image") {
           return (
             <div key={i} className="flex flex-col gap-1">
-              <img
-                src={a.src}
-                alt={a.caption || t("tl.imgAlt")}
-                className="max-h-64 w-auto max-w-full cursor-zoom-in self-start rounded-md object-contain"
-                onClick={() => setZoom(a)}
-              />
+              <ZoomImage src={a.src} alt={a.caption || t("tl.imgAlt")} />
               <MediaMeta att={a} />
             </div>
           )
@@ -354,40 +351,8 @@ export function MediaList({ atts }: { atts: AttachmentInfo[] }) {
         }
         return null
       })}
-
-      {/* 图片放大遮罩 */}
-      {zoom && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
-          onClick={() => setZoom(null)}
-        >
-          <img
-            src={zoom.src}
-            alt={zoom.caption || ""}
-            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
     </div>
   )
-}
-
-/** 音频播放器：AI 生成的 WAV 头里长度字段常常未知，duration 会读成 Infinity、
- * 进度条/时长不显示。这里在 loadedmetadata 时探测并做一次"快进回跳"逼浏览器算出真实时长。 */
-function AudioPlayer({ src }: { src: string }) {
-  const ref = useRef<HTMLAudioElement | null>(null)
-  const fixDuration = () => {
-    const el = ref.current
-    if (!el) return
-    if (Number.isFinite(el.duration) && el.duration > 0) return
-    el.ontimeupdate = () => {
-      el.ontimeupdate = null
-      el.currentTime = 0
-    }
-    el.currentTime = 1e101 // 跳到"末尾"迫使浏览器解析全文件长度
-  }
-  return <audio ref={ref} onLoadedMetadata={fixDuration} src={src} controls preload="metadata" className="w-full max-w-md" />
 }
 
 /** 媒体说明行：说明文字 + 本地保存路径（远程 URL 的不显示路径） */function MediaMeta({ att }: { att: AttachmentInfo }) {

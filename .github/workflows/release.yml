@@ -113,13 +113,24 @@ jobs:
           # beforePack 钩子按架构换入 bin/，随 extraResources 进包（见 electron-before-pack.cjs）
           for ARCH in x64 arm64; do
             GA=$ARCH; [ "$ARCH" = x64 ] && GA=amd64
-            for P in pdf xlsx docx pptx agnes mimo; do
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
               GOOS=windows GOARCH=$GA go build -trimpath -o "webui/desktop/bin/mcp-windows-$ARCH/$P.exe" "./dev/$P"
             done
           done
           # runner 是 x64：正式名先放 x64 那份（钩子会按每轮目标架构无条件从备料重覆盖）
           cp webui/desktop/bin/omni-windows-x64.exe webui/desktop/bin/omni.exe
           ls -l webui/desktop/bin
+
+      # 内置 ffmpeg / ffprobe（media MCP 插件的运行时依赖，Electron 自带的 ffmpeg.dll
+      # 是 Chromium 裁剪版：只能解码、无编码器、不可命令行调用）。按目标架构备料，
+      # beforePack 钩子换入 bin/ 正式名后随 extraResources 进包。来源与覆盖方式见脚本头注释。
+      - name: 拉取内置 ffmpeg/ffprobe（windows x64/arm64）
+        shell: bash
+        run: |
+          set -e
+          for ARCH in x64 arm64; do
+            node webui/desktop/scripts/fetch-ffmpeg.mjs --platform win32 --arch "$ARCH"
+          done
 
       # ⚠️ 打包前先用 electron-builder 自带 schema 校验 electron-builder.yml。
       #    非法字段（如 linux.desktop 下平铺一个键）会让 electron-builder 起步就抛
@@ -161,9 +172,17 @@ jobs:
               exit 1
             fi
             # 内置 MCP 插件必须随包（内核按自身同目录自动注册）
-            for P in pdf xlsx docx pptx agnes mimo; do
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
               if [ ! -f "$APPDIR/resources/bin/$P.exe" ]; then
                 echo "::error::[$ARCH] 安装包内缺少 MCP 插件：$APPDIR/resources/bin/$P.exe"
+                exit 1
+              fi
+            done
+            # ffmpeg/ffprobe 必须随包（media 插件的运行时依赖；放 bin/ffmpeg/ 子目录
+            # 是为了避开内核「扫描目录内可执行文件自动注册为 MCP 插件」的逻辑）
+            for T in ffmpeg ffprobe; do
+              if [ ! -f "$APPDIR/resources/bin/ffmpeg/$T.exe" ]; then
+                echo "::error::[$ARCH] 安装包内缺少 ffmpeg/$T.exe（media 插件将不可用）"
                 exit 1
               fi
             done
@@ -272,7 +291,7 @@ jobs:
           # 内置 MCP 插件按目标架构编进备料目录，beforePack 钩子换入 bin/（同内核套路）
           for ARCH in arm64 x64; do
             GA=$ARCH; [ "$ARCH" = x64 ] && GA=amd64
-            for P in pdf xlsx docx pptx agnes mimo; do
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
               mkdir -p "webui/desktop/bin/mcp-darwin-$ARCH"
               GOOS=darwin GOARCH=$GA go build -trimpath -o "webui/desktop/bin/mcp-darwin-$ARCH/$P" "./dev/$P"
             done
@@ -281,6 +300,15 @@ jobs:
           cp webui/desktop/bin/omni-darwin-arm64 webui/desktop/bin/omni
           chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-darwin-*
           ls -l webui/desktop/bin
+
+      # 内置 ffmpeg / ffprobe（media 插件依赖；Electron 的 ffmpeg.dll 不能用于转码）
+      - name: 拉取内置 ffmpeg/ffprobe（darwin arm64/x64）
+        shell: bash
+        run: |
+          set -e
+          for ARCH in arm64 x64; do
+            node webui/desktop/scripts/fetch-ffmpeg.mjs --platform darwin --arch "$ARCH"
+          done
 
       # icon.icns 不入库（二进制产物），CI 上从已入库的 build/icon.png 现场生成
       # （icon.png 由 make_icon.py 从 icon.svg 渲染）。
@@ -359,9 +387,16 @@ jobs:
             fi
             # 内置 MCP 插件必须随包且带 x 位
             RESDIR=$(dirname "$BIN")
-            for P in pdf xlsx docx pptx agnes mimo; do
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
               if [ ! -x "$RESDIR/$P" ]; then
                 echo "::error::[$ARCH] 安装包内缺少 MCP 插件（或无 x 位）：$RESDIR/$P"
+                exit 1
+              fi
+            done
+            # ffmpeg/ffprobe 必须随包且带 x 位（media 插件依赖，位于 bin/ffmpeg/ 子目录）
+            for T in ffmpeg ffprobe; do
+              if [ ! -x "$RESDIR/ffmpeg/$T" ]; then
+                echo "::error::[$ARCH] 安装包内缺少 ffmpeg/$T（或无 x 位），media 插件将不可用"
                 exit 1
               fi
             done
@@ -434,7 +469,7 @@ jobs:
             GA=$ARCH; [ "$ARCH" = x64 ] && GA=amd64
             GOOS=linux GOARCH=$GA go build -trimpath -ldflags "$LDFLAGS" -o "webui/desktop/bin/omni-linux-$ARCH" .
             mkdir -p "webui/desktop/bin/mcp-linux-$ARCH"
-            for P in pdf xlsx docx pptx agnes mimo; do
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
               GOOS=linux GOARCH=$GA go build -trimpath -o "webui/desktop/bin/mcp-linux-$ARCH/$P" "./dev/$P"
             done
           done
@@ -442,6 +477,16 @@ jobs:
           cp webui/desktop/bin/omni-linux-x64 webui/desktop/bin/omni
           chmod +x webui/desktop/bin/omni webui/desktop/bin/omni-linux-* webui/desktop/bin/mcp-linux-*/*
           ls -l webui/desktop/bin
+
+      # 内置 ffmpeg / ffprobe（media 插件依赖；Electron 的 libffmpeg.so 不能用于转码）
+      - name: 拉取内置 ffmpeg/ffprobe（linux x64/arm64）
+        shell: bash
+        run: |
+          set -e
+          for ARCH in x64 arm64; do
+            node webui/desktop/scripts/fetch-ffmpeg.mjs --platform linux --arch "$ARCH"
+          done
+          chmod +x webui/desktop/bin/ffmpeg-linux-* webui/desktop/bin/ffprobe-linux-*
 
       # 打包前 schema 校验（理由同 Windows job）。v1.0.12 首次跑这个 job 就是
       # 因为 linux.desktop 写了非法字段而在 electron-builder 起步时炸掉，白跑一轮编译。
@@ -498,9 +543,16 @@ jobs:
               exit 1
             fi
             RESDIR=$(dirname "$BIN")
-            for P in pdf xlsx docx pptx agnes mimo; do
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
               if [ ! -x "$RESDIR/$P" ]; then
                 echo "::error::[$ARCH] 安装包内缺少 MCP 插件（或无 x 位）：$RESDIR/$P"
+                exit 1
+              fi
+            done
+            # ffmpeg/ffprobe 必须随包且带 x 位（media 插件依赖，位于 bin/ffmpeg/ 子目录）
+            for T in ffmpeg ffprobe; do
+              if [ ! -x "$RESDIR/ffmpeg/$T" ]; then
+                echo "::error::[$ARCH] 安装包内缺少 ffmpeg/$T（或无 x 位），media 插件将不可用"
                 exit 1
               fi
             done

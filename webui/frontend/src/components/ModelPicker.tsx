@@ -165,8 +165,16 @@ export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }
     close()
   }
 
-  // 一级行渲染（内置组在前，供应商在后）
-  const renderRow = (key: string, label: React.ReactNode) => (
+  // 当前选中模型的所属一级 key：内置组（server: 前缀）→ BUILTIN；
+  // 本地模型 → 包含它的那个供应商。一级列表据此点亮对号，让用户知道当前选在哪一组。
+  const selectedOne = (() => {
+    if (model.startsWith(BUILTIN_PREFIX)) return BUILTIN
+    return groups.find((g) => g.models.includes(model))?.provider ?? ""
+  })()
+
+  // 一级行渲染（内置组在前，供应商在后）。
+  // selected：该行是否为当前选中模型所在组 → 行尾（chevron 左侧）点亮对号。
+  const renderRow = (key: string, label: React.ReactNode, selected: boolean) => (
     <button
       key={key}
       type="button"
@@ -184,12 +192,18 @@ export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }
         key === hoverProvider
           ? "bg-accent text-accent-foreground font-medium"
           : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+        selected && "text-foreground font-medium",
       )}
     >
       <span className="truncate" title={typeof label === "string" ? label : undefined}>
         {label}
       </span>
-      <ChevronRightIcon className="text-muted-foreground ml-auto size-3 shrink-0 -scale-x-100" />
+      {/* 选中的行用对号收尾；未选中的行用箭头作「可展开」提示——两者不同时出现，避免双图标堆叠 */}
+      {selected ? (
+        <CheckIcon className="text-primary ml-auto size-3.5 shrink-0" />
+      ) : (
+        <ChevronRightIcon className="text-muted-foreground ml-auto size-3 shrink-0 -scale-x-100" />
+      )}
     </button>
   )
 
@@ -228,8 +242,8 @@ export function ModelPicker({ groups, model, onChange, serverUser, onConfigure }
                 <div className="text-muted-foreground px-2 py-1.5 text-xs">{t("mp.noProvider")}</div>
               ) : (
                 <>
-                  {builtin.length > 0 && renderRow(BUILTIN, t("mp.builtin"))}
-                  {groups.map((g) => renderRow(g.provider || t("a.other"), g.provider || t("a.other")))}
+                  {builtin.length > 0 && renderRow(BUILTIN, t("mp.builtin"), selectedOne === BUILTIN)}
+                  {groups.map((g) => renderRow(g.provider || t("a.other"), g.provider || t("a.other"), selectedOne === g.provider))}
                 </>
               )}
             </div>
@@ -361,13 +375,19 @@ function Flyout({
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
               )}
             >
-              <CheckIcon className={cn("size-3 shrink-0", m === model ? "opacity-100" : "opacity-0")} />
               <span className="min-w-0 truncate" title={m}>
                 {m}
               </span>
               {byKey.has(m) && (
-                <span className="ml-auto shrink-0 text-[10px]">{rateLabel(byKey.get(m)!)}</span>
+                <span className="ml-1 shrink-0 text-[10px]">{rateLabel(byKey.get(m)!)}</span>
               )}
+              {/* 激活效果：行高亮 + 最右侧对号（选中时点亮），对齐用户要求的「最右边图标用对号」 */}
+              <CheckIcon
+                className={cn(
+                  "text-primary ml-auto size-3.5 shrink-0 transition-opacity",
+                  m === model ? "opacity-100" : "opacity-0",
+                )}
+              />
             </button>
           ))
         )}

@@ -366,6 +366,13 @@ body {
   border-color: var(--border);
   margin: 1rem 0;
 }
+/* 正文里的图片：不超出容器宽度（大图会把气泡撑破），块级排版避免与文字挤在一行。
+   尺寸/圆角/点击放大由 ZoomImage 组件负责，这里只兜底。 */
+.md-output img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
 
 /* GitHub 风格代码块底（工具卡片 read/write 用） */
 .gh-code {
