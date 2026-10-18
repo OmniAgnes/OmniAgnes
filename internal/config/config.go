@@ -191,6 +191,7 @@ type Config struct {
 	BashTimeoutSec    int                        `json:"bash_timeout_seconds"`
 	Cwd               string                     `json:"cwd,omitempty"` // 工作目录；为空则取启动时目录
 	SessionDir        string                     `json:"session_dir,omitempty"`
+	OutputDir         string                     `json:"output_dir,omitempty"` // 生成文件（生图/视频/音频/PDF 等）的默认输出目录；为空则取系统「下载」目录
 	SystemPromptExtra string                     `json:"system_prompt_extra,omitempty"`
 	MaxHistoryTurns   int                        `json:"max_history_turns"`     // 上下文保留的最近用户提问轮数；0 用默认
 	Theme             string                     `json:"theme,omitempty"`       // dark | light | system
@@ -239,6 +240,33 @@ func DefaultSkillsDir() string {
 	return filepath.Join(home, defaultConfigDir, "skills")
 }
 
+// DefaultOutputDir 返回生成文件的默认输出目录：用户的「下载」目录。
+//
+// 取值顺序：Windows 优先 USERPROFILE\Downloads，再兜底 OneDrive 重定向后的
+// Downloads 与 HOME/Downloads；都不存在时仍返回首选路径（调用方负责 MkdirAll）。
+// 不用 Known Folder API 是为了避免引入 syscall/unsafe——重定向到 OneDrive 的
+// 机器由第二个候选覆盖。
+func DefaultOutputDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "Downloads"
+	}
+	var candidates []string
+	if up := os.Getenv("USERPROFILE"); up != "" {
+		candidates = append(candidates, filepath.Join(up, "Downloads"))
+		if od := os.Getenv("OneDrive"); od != "" {
+			candidates = append(candidates, filepath.Join(od, "Downloads"))
+		}
+	}
+	candidates = append(candidates, filepath.Join(home, "Downloads"))
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && st.IsDir() {
+			return c
+		}
+	}
+	return candidates[0]
+}
+
 // Default 返回带默认值的配置。
 func Default() *Config {
 	return &Config{
@@ -246,6 +274,7 @@ func Default() *Config {
 		MaxToolOutput:     defaultMaxToolOutput,
 		BashTimeoutSec:    defaultBashTimeoutSec,
 		SessionDir:        DefaultSessionDir(),
+		OutputDir:         DefaultOutputDir(),
 		SystemPromptExtra: "",
 		Theme:             "light",
 	}
@@ -365,6 +394,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.SessionDir == "" {
 		cfg.SessionDir = DefaultSessionDir()
+	}
+	if strings.TrimSpace(cfg.OutputDir) == "" {
+		cfg.OutputDir = DefaultOutputDir()
 	}
 	if cfg.Theme != "dark" && cfg.Theme != "system" {
 		cfg.Theme = "light"

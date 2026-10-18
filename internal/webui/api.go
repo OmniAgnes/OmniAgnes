@@ -530,9 +530,13 @@ func (s *server) attachmentAllowed(abs string) bool {
 	if cwd, err := os.Getwd(); err == nil {
 		roots = append(roots, cwd)
 	}
-	// 内核的启动工作目录（桌面版是 --cwd 传入的目录）：生成的媒体落在它的 .omni/download/ 下
+	// 内核的启动工作目录（桌面版是 --cwd 传入的目录）：生成的媒体可能落在它的 .omni/download/ 下
 	if s.opts.StartCwd != "" {
 		roots = append(roots, s.opts.StartCwd)
+	}
+	// 生成文件的输出目录（默认用户「下载」目录）：产物都在这儿，不加会 403
+	if s.cfg != nil && s.cfg.OutputDir != "" {
+		roots = append(roots, s.cfg.OutputDir)
 	}
 	if s.cfg != nil && s.cfg.Cwd != "" {
 		roots = append(roots, s.cfg.Cwd)
@@ -598,6 +602,14 @@ func mediaContentType(path string) string {
 		return "audio/flac"
 	case ".pdf":
 		return "application/pdf"
+	case ".csv", ".tsv":
+		return "text/csv"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	}
 	return ""
 }
@@ -866,6 +878,7 @@ func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		"model":       s.cfg.Provider,
 		"theme":       s.cfg.Theme,
 		"theme_color": s.cfg.ThemeColor,
+		"output_dir":  s.cfg.OutputDir,
 	})
 }
 
@@ -874,9 +887,10 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 		Model      string `json:"model"`
 		Theme      string `json:"theme"`
 		ThemeColor string `json:"theme_color"`
+		OutputDir  string `json:"output_dir"`
 	}](r)
 	if err != nil {
-		writeErr(w, `请求体需为 {"model":..., "theme":..., "theme_color":...}`, http.StatusBadRequest)
+		writeErr(w, `请求体需为 {"model":..., "theme":..., "theme_color":..., "output_dir":...}`, http.StatusBadRequest)
 		return
 	}
 	changed := false
@@ -905,16 +919,43 @@ func (s *server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "未知主题配色: "+req.ThemeColor, http.StatusBadRequest)
 		return
 	}
+	// 生成文件输出目录：空串表示恢复默认（系统「下载」目录）
+	if req.OutputDir != "" || s.cfg.OutputDir != "" {
+		dir := strings.TrimSpace(req.OutputDir)
+		if dir == "" {
+			dir = config.DefaultOutputDir()
+		} else if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		if dir != s.cfg.OutputDir {
+			s.cfg.OutputDir = dir
+			changed = true
+		}
+	}
 	if changed {
 		if err := s.cfg.Save(s.opts.ConfigPath); err != nil {
 			writeErr(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// 目录变了要重启插件进程，它们在启动时读 OMNI_OUTPUT_DIR
+		if s.cfg.OutputDir != "" {
+			if mgr := s.mcpManager(); mgr != nil {
+				mgr.SetOutputDir(s.cfg.OutputDir)
+				if len(s.cfg.MCPServers) > 0 {
+					go func() {
+						mgr.Reset()
+						mgr.Start(context.Background(), s.cfg.MCPServers)
+						s.refreshMCPTools()
+					}()
+				}
+			}
 		}
 	}
 	writeJSON(w, map[string]any{
 		"model":       s.cfg.Provider,
 		"theme":       s.cfg.Theme,
 		"theme_color": s.cfg.ThemeColor,
+		"output_dir":  s.cfg.OutputDir,
 	})
 }
 
@@ -1453,6 +1494,7 @@ func (s *server) agentForOpts(t *store.Task, withBrowser bool) (*agent.Agent, er
 		Model:             modelName,
 		Mode:              mode,
 		Cwd:               cwd,
+		OutputDir:         s.cfg.OutputDir,
 		MaxIterations:     500,
 		MaxTokens:         maxTokens,
 		MaxHistoryTurns:   s.cfg.MaxHistoryTurns,

@@ -72,6 +72,9 @@ type Options struct {
 	Cwd           string
 	MaxIterations int
 	MaxTokens     int
+	// OutputDir 是生成文件（生图/视频/音频/PDF 等）的落盘目录；
+	// 为空则退回 Cwd/.omni/download。
+	OutputDir string
 	// SystemPromptExtra 是静态附加段（来自配置）。
 	SystemPromptExtra string
 	// ExtraPrompt 每轮构建系统提示词时调用，返回动态附加段（技能清单、全局记忆等）；可为 nil。
@@ -103,6 +106,7 @@ type Agent struct {
 	model         string
 	mode          Mode
 	cwd           string
+	outputDir     string
 	maxIter       int
 	maxToken      int
 	extra         string
@@ -133,6 +137,7 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		model:         opts.Model,
 		mode:          opts.Mode,
 		cwd:           opts.Cwd,
+		outputDir:     opts.OutputDir,
 		maxIter:       opts.MaxIterations,
 		maxToken:      opts.MaxTokens,
 		extra:         opts.SystemPromptExtra,
@@ -214,7 +219,9 @@ Agent 模式: %s
 8. 当歧义会实质影响结果、无法合理假设时，用 ask 工具向用户提一个简短问题（可带候选项），拿到回答再继续；不要连环追问，一次只问一个。
 9. bash工具的 shell 是 bash（Windows 上是 Git Bash），不是 cmd。丢弃输出必须写 '>/dev/null 2>&1'，绝对不要写 cmd 风格的 '> nul'——bash 会把它当成普通文件名，在工作目录里凭空造出一个名为 nul 的垃圾文件。同理不要创建名为 nul 的任何文件。
 10. 调试日志、临时产物、脚本输出统一写到工作目录下的 .omni/log/（如 .omni/log/debug.log），不要散落在项目根目录或源码目录里；该目录已在 .gitignore 中。给用户的结论看工具返回即可，不要把完整日志贴进回复。
-11. 长回复（方案、需求文档、报告、清单）必须用 Markdown 分段，不要写成连续大段文字：每个主题用二级标题开头，条目用有序/无序列表，比较与参数用表格，步骤用有序列表，结论单独成段。段落控制在 3-5 行为宜。短回答则直接说结论，不要为了排版硬加标题。`, a.cwd, modeDesc, a.model)
+11. 长回复（方案、需求文档、报告、清单）必须用 Markdown 分段，不要写成连续大段文字：每个主题用二级标题开头，条目用有序/无序列表，比较与参数用表格，步骤用有序列表，结论单独成段。段落控制在 3-5 行为宜。短回答则直接说结论，不要为了排版硬加标题。
+12. 生成给用户的文件（图片、视频、音频、PDF、Word 等文档）默认保存到「输出目录」：%s。生图/生视频/TTS 等工具未指定路径时内核会自动落到这里，write_pdf 一类需要你传路径的工具请直接用该目录下的绝对路径，并起有意义的中文文件名（如 行程安排.pdf），不要自己去 mkdir、探测下载目录或用临时目录中转；只有用户明确要求别的位置时才写到别处。
+13. 生成文件后，用生成类工具（如 write_pdf）产出即可，它们会把文件作为附件直接展示给用户；不要为了「让用户看到」再截图或读图——PDF 等文档不是图片，截图会失败且白白消耗 token。`, a.cwd, modeDesc, a.model, a.mediaDir())
 	if a.extra != "" {
 		p += "\n\n额外要求（来自配置）:\n" + a.extra
 	}
@@ -286,21 +293,57 @@ const defaultHistoryTurns = 20
 // 从某个 user 消息处开始切——新一轮自含（先 user，再同轮的 assistant/tool），
 // 切在这里不会截断跨轮的 tool 引用；用户轮不足时整段返回。
 func contextWindow(history []llm.Message, keepTurns int) []llm.Message {
-	if keepTurns <= 0 || len(history) <= 1 {
-		return history
-	}
-	count := 0
-	start := 0
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role == llm.RoleUser {
-			count++
-			if count == keepTurns {
-				start = i
-				break
+	src := history
+	if keepTurns > 0 && len(history) > 1 {
+		count := 0
+		start := 0
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].Role == llm.RoleUser {
+				count++
+				if count == keepTurns {
+					start = i
+					break
+				}
 			}
 		}
+		src = history[start:]
 	}
-	return history[start:]
+	return sanitizeImages(src)
+}
+
+// sanitizeImages 剔除历史消息里不是真图片的「图片」。
+// 历史里持久化的 Images 可能含坏数据（旧版把 PDF 冒充成 image/png 送进上下文，
+// 随会话落盘后每轮请求都把上游打 400）；按魔数消毒，已损坏的会话无需任何操作即可自愈。
+func sanitizeImages(ms []llm.Message) []llm.Message {
+	filtered := make([][]llm.Image, len(ms)) // nil = 本条无需改动
+	changed := false
+	for i := range ms {
+		imgs := ms[i].Images
+		if len(imgs) == 0 {
+			continue
+		}
+		kept := make([]llm.Image, 0, len(imgs))
+		for _, im := range imgs {
+			if llm.ValidImageB64(im.Data) {
+				kept = append(kept, im)
+			}
+		}
+		if len(kept) != len(imgs) {
+			filtered[i] = kept
+			changed = true
+		}
+	}
+	if !changed {
+		return ms
+	}
+	out := make([]llm.Message, len(ms))
+	copy(out, ms)
+	for i := range out {
+		if filtered[i] != nil {
+			out[i].Images = filtered[i]
+		}
+	}
+	return out
 }
 
 // elapsedMs 返回整轮工作耗时（毫秒）。仅最终答复（无工具调用）记录；
@@ -330,6 +373,9 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 
 	for i := 0; i < a.maxIter; i++ {
 		round := i // 本轮序号，供 UI 分组
+		// 历史（可能来自会话文件恢复）里可能残留「标成 image/png 实为 PDF」的旧脏数据，
+		// 就地清洗后再发给 provider：上游对内容与 media_type 不符的图片直接 400。
+		sanitizeHistoryImages(a.history)
 		var reasoning, effort string
 		if a.reasoning != nil {
 			reasoning, effort = a.reasoning(a.model)
@@ -392,10 +438,11 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 		a.history = append(a.history, msg)
 
 		if len(resp.ToolCalls) == 0 {
-			// 回答结束：把本次提问所有媒体附件统一落盘（内联的写到 .omni/media/），
-			// 并作为一条 media 事件集中发给 UI——展示在最终回答里，而不是埋在工具卡片里。
+			// 回答结束：把本次提问所有媒体附件统一落盘（内联的写到输出目录，
+			// 默认用户的「下载」目录），并作为一条 media 事件集中发给 UI——
+			// 展示在最终回答里，而不是埋在工具卡片里。
 			if len(runMedia) > 0 {
-				finalizeMedia(a.cwd, runMedia)
+				finalizeMedia(a.mediaDir(), runMedia)
 				emit(Event{Type: EventMedia, Attachments: runMedia, Round: round})
 			}
 			u := totalUsage
@@ -484,18 +531,27 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 	return fmt.Errorf("达到最大迭代次数 %d，任务可能未完成", a.maxIter)
 }
 
-// finalizeMedia 把本次产出的媒体统一落到 <cwd>/.omni/download/：
+// mediaDir 返回生成文件的落盘目录：配置的输出目录（默认用户的「下载」目录），
+// 未配置时退回工作目录下的 .omni/download/。
+func (a *Agent) mediaDir() string {
+	if d := strings.TrimSpace(a.outputDir); d != "" {
+		return d
+	}
+	return filepath.Join(a.cwd, ".omni", "download")
+}
+
+// finalizeMedia 把本次产出的媒体统一落到 outDir（生成文件的输出目录，默认用户下载目录）：
 //   - 内联 base64（Data）解码写文件；
 //   - 远程 URL（如生视频返回的 mp4 地址）下载到本地；
 //   - 已有本地 Path 的（截图）不动。
 //
 // 下载/写盘成功后都回填 Path，前端展示直接用本地文件。
 // WAV 音频顺手修正头部长度字段——AI 生成的 WAV 头长度常为未知值，不改浏览器算不出时长。
-func finalizeMedia(cwd string, atts []llm.Attachment) {
-	if strings.TrimSpace(cwd) == "" {
+func finalizeMedia(outDir string, atts []llm.Attachment) {
+	dir := strings.TrimSpace(outDir)
+	if dir == "" {
 		return
 	}
-	dir := filepath.Join(cwd, ".omni", "download")
 	n := 0
 	mkdir := func() bool {
 		if n == 0 {
@@ -508,6 +564,27 @@ func finalizeMedia(cwd string, atts []llm.Attachment) {
 	}
 	for i := range atts {
 		a := &atts[i]
+		// 文档类附件（PDF/docx 等）：外来的本地路径（用户 Desktop 等）不在
+		// /api/attachment 允许目录内，前端会 403——统一拷贝进输出目录再回填 Path。
+		// 已在输出目录内的不搬（拷一份没意义）。
+		if a.Kind == llm.KindFile && a.Path != "" {
+			if withinTree(a.Path, dir) {
+				continue
+			}
+			data, err := os.ReadFile(a.Path)
+			if err != nil {
+				continue
+			}
+			if !mkdir() {
+				return
+			}
+			fp := filepath.Join(dir, uniqueName(dir, filepath.Base(a.Path), extForMedia(*a)))
+			if err := os.WriteFile(fp, data, 0o644); err == nil {
+				a.Path = fp
+				a.Data = "" // Data 一旦有值前端优先用 data URL，保持二选一语义
+			}
+			continue
+		}
 		switch {
 		case a.Path != "" || a.Data == "" && a.URL == "":
 			// 已在本地，或既无数据也无地址
@@ -545,6 +622,42 @@ func finalizeMedia(cwd string, atts []llm.Attachment) {
 
 func isHTTP(u string) bool {
 	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
+}
+
+// uniqueName 在 dir 下取一个不重名的文件名：优先沿用原名（PDF 这类文档对
+// 用户有意义），重名时按「名字(2).ext」递增，再不行退回 media-<时间戳>。
+func uniqueName(dir, base, ext string) string {
+	name := base
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "media-" + time.Now().Format("20060102-150405")
+	} else if filepath.Ext(name) == "" && ext != "" {
+		name += ext
+	}
+	cand := name
+	for i := 2; i < 100; i++ {
+		if _, err := os.Stat(filepath.Join(dir, cand)); os.IsNotExist(err) {
+			return cand
+		}
+		cand = fmt.Sprintf("%s(%d)%s", strings.TrimSuffix(name, filepath.Ext(name)), i, filepath.Ext(name))
+	}
+	return fmt.Sprintf("media-%d%s", time.Now().Unix(), ext)
+}
+
+// withinTree 报告 p 是否位于 dir 目录树内（含 dir 自身）。
+func withinTree(p, dir string) bool {
+	if dir == "" || p == "" {
+		return false
+	}
+	absDir, err1 := filepath.Abs(dir)
+	absP, err2 := filepath.Abs(p)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absDir, absP)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel))
 }
 
 // downloadFile 下载远程媒体（上限 64MB）。
@@ -604,6 +717,16 @@ func extForMedia(a llm.Attachment) string {
 		return ".ogg"
 	case strings.HasSuffix(m, "webm"):
 		return ".webm"
+	case strings.Contains(m, "pdf"):
+		return ".pdf"
+	case strings.Contains(m, "wordprocessingml"):
+		return ".docx"
+	case strings.Contains(m, "spreadsheetml"):
+		return ".xlsx"
+	case strings.Contains(m, "presentationml"):
+		return ".pptx"
+	case strings.Contains(m, "csv"):
+		return ".csv"
 	case a.Kind == llm.KindVideo:
 		return ".mp4"
 	case a.Kind == llm.KindAudio:
@@ -613,9 +736,41 @@ func extForMedia(a llm.Attachment) string {
 	}
 }
 
+// sanitizeHistoryImages 就地清洗历史消息里的图片：按魔数核验内容确实是图片，
+// 非图片（如被误标成 image/png 的 PDF）直接丢弃，类型与内容不符的按内容纠正。
+//
+// 为什么要这层：imagesForModel 只管「新产生的工具媒体」，而历史还可能是从会话文件
+// 恢复的存量数据——旧版本把 PDF 当图片存进去后，每轮请求都会带上它，上游一律 400。
+// 在每次请求前清洗，等于给存量会话做了一次「体检修复」，不必让用户删会话重来。
+func sanitizeHistoryImages(msgs []llm.Message) {
+	for i := range msgs {
+		imgs := msgs[i].Images
+		if len(imgs) == 0 {
+			continue
+		}
+		cleaned := imgs[:0]
+		for _, im := range imgs {
+			raw, err := base64.StdEncoding.DecodeString(im.Data)
+			if err != nil {
+				continue // 解不出就不是可用图片
+			}
+			if sniffed := llm.ImageType(raw); sniffed != "" {
+				im.MediaType = sniffed // 内容说了算
+				cleaned = append(cleaned, im)
+			} else if strings.HasPrefix(im.MediaType, "image/svg") && llm.IsSVG(raw) {
+				cleaned = append(cleaned, im)
+			}
+			// 其余（非图片内容）直接丢弃
+		}
+		msgs[i].Images = cleaned
+	}
+}
+
 // imagesForModel 从附件里挑出标记了 ForModel 的图片（截图/读图），转成模型可消费的
 // llm.Image。生成类工具的产出（未标记）不进上下文，省 token。
 // 落盘的图片在这里按需读文件；读失败就跳过（不影响工具本身已成功的事实）。
+// 送模型前再按魔数核验一次内容确实是图片——历史上发生过 PDF 被误标成
+// image/png 混进来、上游直接 400 的事故，这里兜底挡住。
 func imagesForModel(media []llm.Attachment) []llm.Image {
 	var out []llm.Image
 	for _, a := range media {
@@ -632,6 +787,14 @@ func imagesForModel(media []llm.Attachment) []llm.Image {
 		}
 		if im.Data == "" {
 			continue
+		}
+		// 魔数核验：非图片内容或类型不符时丢弃（svg 无魔数走 IsSVG）
+		if raw, err := base64.StdEncoding.DecodeString(im.Data); err == nil {
+			if sniffed := llm.ImageType(raw); sniffed != "" {
+				im.MediaType = sniffed // 内容说了算，比附件标注更可靠
+			} else if !strings.HasPrefix(im.MediaType, "image/svg") || !llm.IsSVG(raw) {
+				continue
+			}
 		}
 		if im.MediaType == "" {
 			im.MediaType = "image/png"

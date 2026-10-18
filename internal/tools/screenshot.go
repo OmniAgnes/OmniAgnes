@@ -42,7 +42,7 @@ func screenshotTool() *Tool {
 	return &Tool{
 		Name: "screenshot",
 		Description: "截取屏幕/窗口，或读取本地图片，并把它直接交给模型（供视觉模型分析界面、报错截图、图表）。" +
-			"参数：path=读取本地图片文件（png/jpg/webp/gif）；" +
+			"参数：path=读取本地图片文件（仅限 png/jpg/webp/gif/bmp/svg，PDF 等文档不是图片、会被拒绝）；" +
 			"window=按标题关键词截取指定窗口（如 'Visual Studio Code'，不传则截最前面的窗口）；" +
 			"region={x,y,width,height} 截取窗口内的局部区域（相对窗口左上角）。" +
 			"截图会保存到工作目录 .omni/screenshots/ 并返回该路径。",
@@ -147,13 +147,27 @@ func readImageFile(p string, env *Env) (string, []llm.Attachment, error) {
 		return "", nil, fmt.Errorf("screenshot: 图片过大（%.1f MB），上限 %d MB；请先裁剪或压缩",
 			float64(len(data))/(1<<20), maxImageBytes>>20)
 	}
+	// 只接受真图片：按魔数校验，防止把 PDF 等非图片文件误标成 image/png
+	// 送给模型（上游会对内容与 media_type 不符直接 400，历史踩坑见会话排查）。
+	// PDF/Word 等文档请让用户直接打开，或用 write_pdf 等生成类工具产出（自动展示）。
+	sniffed := llm.ImageType(data)
+	if strings.ToLower(filepath.Ext(abs)) != ".svg" && sniffed == "" && !llm.IsSVG(data) {
+		return "", nil, fmt.Errorf("screenshot: %s 不是图片文件（无 PNG/JPEG/WebP/GIF/BMP/SVG 内容）。" +
+			"展示 PDF 等生成的文档请通过 write_pdf 生成（附件会自动展示给用户），或直接告诉用户文件路径",
+			abs)
+	}
+	// 魔数识别出的真实类型比按扩展名猜的更可靠，优先采用
+	mt := imageMime(abs)
+	if sniffed != "" {
+		mt = sniffed
+	}
 	w, h := imageDims(data)
 	text := fmt.Sprintf("已读取图片 %s（%dx%d，%.1f KB）", abs, w, h, float64(len(data))/1024)
 	// 用 Path 引用而非内联 base64：避免把几 MB 的图塞进历史 JSON，
 	// agent 需要送模型时会按 Path 读文件。
 	return text, []llm.Attachment{{
 		Kind:      llm.KindImage,
-		MediaType: imageMime(abs),
+		MediaType: mt,
 		Path:      abs,
 		Caption:   text,
 		ForModel:  true, // 读图的目的就是给模型分析

@@ -51,7 +51,7 @@ type resizeArgs struct {
 
 type convertArgs struct {
 	Path    string `json:"path" jsonschema:"源图片路径"`
-	Out     string `json:"out" jsonschema:"输出路径，格式由后缀决定（.png/.jpg/.jpeg/.gif）"`
+	Out     string `json:"out,omitempty" jsonschema:"输出路径，格式由后缀决定（.png/.jpg/.jpeg/.gif）；省略则按原名生成到用户「下载」目录"`
 	Quality int    `json:"quality,omitempty" jsonschema:"jpg 质量 1-100，默认 85（png/gif 忽略）"`
 }
 
@@ -221,9 +221,13 @@ func imageResize(_ context.Context, _ *mcp.CallToolRequest, args resizeArgs) (*m
 
 func imageConvert(_ context.Context, _ *mcp.CallToolRequest, args convertArgs) (*mcp.CallToolResult, any, error) {
 	p := strings.TrimSpace(args.Path)
+	if p == "" {
+		return nil, nil, fmt.Errorf("path 不能为空")
+	}
+	// out 可选：省略时按原名 + -converted 落到输出目录（默认用户的「下载」目录）
 	out := strings.TrimSpace(args.Out)
-	if p == "" || out == "" {
-		return nil, nil, fmt.Errorf("path 与 out 都不能为空")
+	if out == "" {
+		out = deriveName(p, "-converted")
 	}
 	format, err := formatFromExt(out)
 	if err != nil {
@@ -419,10 +423,24 @@ func formatFromExt(p string) (string, error) {
 	}
 }
 
-// deriveName 在源文件名后加后缀，扩展名保持不变。
+// deriveName 在源文件名后加后缀，扩展名保持不变；
+// 产物落在输出目录（默认用户的「下载」目录）而非源文件所在目录，
+// 免得把用户的工作目录塞满中间文件。out 参数为空时用它派生默认输出名。
 func deriveName(src, suffix string) string {
 	ext := filepath.Ext(src)
-	return strings.TrimSuffix(src, ext) + suffix + ext
+	return filepath.Join(outputDir(), strings.TrimSuffix(filepath.Base(src), ext)+suffix+ext)
+}
+
+// outputDir 返回生成文件的默认输出目录：优先 OMNI_OUTPUT_DIR（内核注入，
+// 通常就是用户的「下载」目录），否则用户主目录下的 Downloads。
+func outputDir() string {
+	if d := strings.TrimSpace(os.Getenv("OMNI_OUTPUT_DIR")); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Downloads")
+	}
+	return "Downloads"
 }
 
 // resizeBilinear 双线性插值缩放。

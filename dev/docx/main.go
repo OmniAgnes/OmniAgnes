@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -72,6 +73,25 @@ func readDocx(ctx context.Context, req *mcp.CallToolRequest, args readDocxArgs) 
 // textResult 以纯文本内容返回（不用 structured content，避免客户端拿到 JSON 编码文本）。
 func textResult(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
+}
+
+// docResult 返回说明文本 + 产物 file:// 资源链接：内核会把链接转成本地附件，
+// 前端随图片/媒体同区展示，用户可直接打开（与生成图片一致的展示位置）。
+func docResult(text, path, mime string) *mcp.CallToolResult {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	name := filepath.Base(abs)
+	return &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.TextContent{Text: text},
+		&mcp.ResourceLink{
+			URI:      (&url.URL{Scheme: "file", Path: "/" + filepath.ToSlash(abs)}).String(),
+			Name:     name,
+			Title:    name,
+			MIMEType: mime,
+		},
+	}}
 }
 
 // extractDocx 解包 docx 并按文档顺序抽取段落与表格。

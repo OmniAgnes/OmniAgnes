@@ -30,7 +30,7 @@ export interface ToolResultMsg {
 
 /** 持久化历史里的原始附件（对应后端 llm.Attachment：Data/URL/Path 三选一） */
 export interface RawAttachment {
-  kind: "image" | "video" | "audio"
+  kind: "image" | "video" | "audio" | "file"
   media_type?: string
   caption?: string
   data?: string
@@ -188,9 +188,9 @@ export interface StateInfo {
   start_cwd: string
 }
 
-// 工具产出的多媒体附件（截图/生成图片/视频/音频），src 可为本地接口路径、data URL 或远程 URL
+// 工具产出的多媒体附件（截图/生成图片/视频/音频/PDF 等文档），src 可为本地接口路径、data URL 或远程 URL
 export interface AttachmentInfo {
-  kind: "image" | "video" | "audio"
+  kind: "image" | "video" | "audio" | "file"
   media_type?: string
   caption?: string
   src: string

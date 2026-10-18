@@ -136,20 +136,21 @@ export const api = {
 
   settings: () =>
     fetch("/api/settings").then((r) =>
-      json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r),
+      json<{ model: string; theme: Theme; theme_color: ThemeColor; output_dir: string }>(r),
     ),
 
   saveSettings: (payload: {
     model?: string
     theme?: Theme
     theme_color?: ThemeColor
+    output_dir?: string
   }) =>
     fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }).then((r) =>
-      json<{ model: string; theme: Theme; theme_color: ThemeColor }>(r),
+      json<{ model: string; theme: Theme; theme_color: ThemeColor; output_dir: string }>(r),
     ),
 
   memory: () =>

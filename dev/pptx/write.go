@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,19 +25,17 @@ type pptxSlide struct {
 }
 
 type writePPTXArgs struct {
-	Path      string      `json:"path" jsonschema:"目标 .pptx 路径（相对路径基于 MCP 进程工作目录）"`
+	Path      string      `json:"path,omitempty" jsonschema:"目标 .pptx 路径；省略则按时间戳命名存到用户「下载」目录。相对路径基于 MCP 进程工作目录"`
 	Slides    []pptxSlide `json:"slides" jsonschema:"幻灯片序列，不能为空"`
 	Overwrite bool        `json:"overwrite,omitempty" jsonschema:"目标已存在时是否覆盖"`
 }
 
 func writePPTX(ctx context.Context, req *mcp.CallToolRequest, args writePPTXArgs) (*mcp.CallToolResult, any, error) {
-	if strings.TrimSpace(args.Path) == "" {
-		return nil, nil, fmt.Errorf("缺少 path 参数")
-	}
 	if len(args.Slides) == 0 {
 		return nil, nil, fmt.Errorf("slides 不能为空")
 	}
-	path, err := resolvePathParent(args.Path)
+	// path 可选：省略时落到输出目录（默认用户的「下载」目录），文件名取首页标题
+	path, err := resolvePathParent(args.Path, defaultName(slideTitle(args.Slides), "演示文稿", ".pptx"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -50,7 +49,8 @@ func writePPTX(ctx context.Context, req *mcp.CallToolRequest, args writePPTXArgs
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return nil, nil, err
 	}
-	return textResult(fmt.Sprintf("已生成 %s（%d 页）", path, len(args.Slides))), nil, nil
+	return docResult(fmt.Sprintf("已生成 %s（%d 页）", path, len(args.Slides)), path,
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation"), nil, nil
 }
 
 // ---------- 尺寸（EMU，16:9） ----------
@@ -321,8 +321,58 @@ func stableOrder(files map[string]string) []string {
 	return names
 }
 
-// resolvePathParent 解析写入目标路径，仅要求父目录存在（不存在则创建）。
-func resolvePathParent(p string) (string, error) {
+// slideTitle 取首页标题用于命名默认文件。
+func slideTitle(slides []pptxSlide) string {
+	for _, s := range slides {
+		if t := strings.TrimSpace(s.Title); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// defaultName 由标题生成默认文件名（清洗路径分隔符与 Windows 非法字符）；
+// 标题为空时用「演示文稿-<时间戳>」。
+func defaultName(title, fallback, ext string) string {
+	name := strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', '\n', '\r', '\t':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(title))
+	name = strings.Trim(strings.TrimSpace(name), ".")
+	if len([]rune(name)) > 60 {
+		name = string([]rune(name)[:60])
+	}
+	if name == "" {
+		return fmt.Sprintf("%s-%s%s", fallback, time.Now().Format("20060102-150405"), ext)
+	}
+	if strings.EqualFold(filepath.Ext(name), ext) {
+		return name
+	}
+	return name + ext
+}
+
+// outputDir 返回生成文件的默认输出目录：优先 OMNI_OUTPUT_DIR（内核注入，
+// 通常就是用户的「下载」目录），否则用户主目录下的 Downloads。
+func outputDir() string {
+	if d := strings.TrimSpace(os.Getenv("OMNI_OUTPUT_DIR")); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Downloads")
+	}
+	return "Downloads"
+}
+
+// resolvePathParent 解析写入目标路径：p 为空时用 fallback 落到输出目录
+// （默认下载目录），用户显式指定的路径原样尊重。父目录不存在则创建。
+func resolvePathParent(p, fallback string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		p = filepath.Join(outputDir(), fallback)
+	}
 	if strings.HasPrefix(p, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
 			p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))

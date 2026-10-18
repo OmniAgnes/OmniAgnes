@@ -126,6 +126,7 @@ func main() {
 	if len(cfg.MCPServers) > 0 {
 		mgr := mcp.NewManager(version)
 		ext.MCP = mgr
+		mgr.SetOutputDir(cfg.OutputDir)
 		mgr.SetOnChange(func() { mgr.RegisterInto(reg) })
 		ext.RegisterTools(reg, absCwd)
 		for _, st := range mgr.Start(context.Background(), cfg.MCPServers) {

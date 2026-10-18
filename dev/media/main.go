@@ -59,14 +59,14 @@ type convertArgs struct {
 
 type extractAudioArgs struct {
 	Path  string `json:"path" jsonschema:"源音视频文件路径"`
-	Out   string `json:"out,omitempty" jsonschema:"输出音频路径；省略则按源文件名生成 .mp3"`
+	Out   string `json:"out,omitempty" jsonschema:"输出音频路径；省略则按源文件名生成 .mp3 到用户「下载」目录"`
 	Rate  string `json:"rate,omitempty" jsonschema:"音频码率，如 192k，默认 192k"`
 	Codec string `json:"codec,omitempty" jsonschema:"音频编码，默认按输出后缀自动（mp3→libmp3lame，m4a→aac，wav→pcm_s16le，flac→flac，ogg→libvorbis）"`
 }
 
 type thumbArgs struct {
 	Path  string  `json:"path" jsonschema:"源视频文件路径"`
-	Out   string  `json:"out,omitempty" jsonschema:"输出图片路径；省略则生成 <原名>-thumb.jpg"`
+	Out   string  `json:"out,omitempty" jsonschema:"输出图片路径；省略则生成 <原名>-thumb.jpg 到用户「下载」目录"`
 	Time  string  `json:"time,omitempty" jsonschema:"截取时间点，如 00:00:05 或 5（秒），默认 1 秒"`
 	Width int     `json:"width,omitempty" jsonschema:"输出宽度像素，默认保持原宽；高度按比例"`
 	Scale float64 `json:"scale,omitempty" jsonschema:"缩放比例（与 width 二选一），如 0.5"`
@@ -108,6 +108,27 @@ func main() {
 
 func textResult(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
+}
+
+// ---------- 输出目录 ----------
+
+// outputDir 返回生成文件的默认输出目录：优先 OMNI_OUTPUT_DIR（内核注入，
+// 通常就是用户的「下载」目录），否则用户主目录下的 Downloads。
+func outputDir() string {
+	if d := strings.TrimSpace(os.Getenv("OMNI_OUTPUT_DIR")); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Downloads")
+	}
+	return "Downloads"
+}
+
+// deriveOut 由源文件派生输出文件名，落在输出目录（默认用户的「下载」目录）
+// 而非源文件所在目录：suffix 就是要换成的后缀（如 ".mp3"、"-thumb.jpg"）。
+func deriveOut(src, suffix string) string {
+	base := strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
+	return filepath.Join(outputDir(), base+suffix)
 }
 
 // ---------- ffmpeg 定位 ----------
@@ -482,9 +503,10 @@ func mediaExtractAudio(ctx context.Context, _ *mcp.CallToolRequest, args extract
 	if !fileExists(p) {
 		return nil, nil, fmt.Errorf("文件不存在：%s", p)
 	}
+	// out 可选：省略时按原名落到输出目录（默认用户的「下载」目录）
 	out := strings.TrimSpace(args.Out)
 	if out == "" {
-		out = strings.TrimSuffix(p, filepath.Ext(p)) + ".mp3"
+		out = deriveOut(p, ".mp3")
 	}
 	ext := strings.ToLower(filepath.Ext(out))
 	codec := strings.TrimSpace(args.Codec)
@@ -537,9 +559,10 @@ func mediaThumbnail(ctx context.Context, _ *mcp.CallToolRequest, args thumbArgs)
 	if !fileExists(p) {
 		return nil, nil, fmt.Errorf("文件不存在：%s", p)
 	}
+	// out 可选：省略时按原名落到输出目录（默认用户的「下载」目录）
 	out := strings.TrimSpace(args.Out)
 	if out == "" {
-		out = strings.TrimSuffix(p, filepath.Ext(p)) + "-thumb.jpg"
+		out = deriveOut(p, "-thumb.jpg")
 	}
 	switch strings.ToLower(filepath.Ext(out)) {
 	case ".jpg", ".jpeg", ".png":

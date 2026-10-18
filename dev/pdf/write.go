@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -25,20 +27,18 @@ const (
 )
 
 type writePDFArgs struct {
-	Path      string `json:"path" jsonschema:"目标 .pdf 路径（相对路径基于 MCP 进程工作目录）"`
+	Path      string `json:"path,omitempty" jsonschema:"目标 .pdf 路径；省略则按 title 命名存到用户「下载」目录。相对路径基于 MCP 进程工作目录"`
 	Title     string `json:"title,omitempty" jsonschema:"文档标题（第一页大字）"`
 	Content   string `json:"content" jsonschema:"正文，\\n 分行；以 - 或 * 开头的行渲染为项目符号；空行留白"`
 	Overwrite bool   `json:"overwrite,omitempty" jsonschema:"目标已存在时是否覆盖"`
 }
 
 func writePDF(ctx context.Context, req *mcp.CallToolRequest, args writePDFArgs) (*mcp.CallToolResult, any, error) {
-	if strings.TrimSpace(args.Path) == "" {
-		return nil, nil, fmt.Errorf("缺少 path 参数")
-	}
 	if strings.TrimSpace(args.Content) == "" && strings.TrimSpace(args.Title) == "" {
 		return nil, nil, fmt.Errorf("title 与 content 不能同时为空")
 	}
-	path, err := resolvePathParent(args.Path)
+	// path 可选：省略时按标题生成文件名落到输出目录（默认用户的「下载」目录）
+	path, err := resolvePathParent(args.Path, defaultName(args.Title, "文档", ".pdf"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,7 +52,21 @@ func writePDF(ctx context.Context, req *mcp.CallToolRequest, args writePDFArgs) 
 	if err := os.WriteFile(path, pages.doc, 0o644); err != nil {
 		return nil, nil, err
 	}
-	return textResult(fmt.Sprintf("已生成 %s（%d 页；中文按 STSong-Light 渲染）", path, pages.count)), nil, nil
+	// 产物以 file:// 资源链接返回：内核会转成本地 Path 附件，前端随图片/媒体
+	// 同区展示给用户，模型无需再想办法「截图预览」（旧做法会误标成图片被上游拒绝）。
+	name := filepath.Base(path)
+	link := &mcp.ResourceLink{
+		URI:      (&url.URL{Scheme: "file", Path: "/" + filepath.ToSlash(path)}).String(),
+		Name:     name,
+		Title:    name,
+		MIMEType: "application/pdf",
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("已生成 %s（%d 页；中文按 STSong-Light 渲染）", path, pages.count)},
+			link,
+		},
+	}, nil, nil
 }
 
 type pdfLine struct {
@@ -218,8 +232,48 @@ func cp(r rune) int {
 	return int(r)
 }
 
-// resolvePathParent 解析写入目标路径，仅要求父目录存在（不存在则创建）。
-func resolvePathParent(p string) (string, error) {
+// defaultName 由标题生成默认文件名（清洗掉路径分隔符与 Windows 非法字符）；
+// 标题为空或清洗后为空时用「文档-<时间戳>」。
+func defaultName(title, fallback, ext string) string {
+	name := strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', '\n', '\r', '\t':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(title))
+	name = strings.Trim(strings.TrimSpace(name), ".")
+	if len([]rune(name)) > 60 {
+		name = string([]rune(name)[:60])
+	}
+	if name == "" {
+		return fmt.Sprintf("%s-%s%s", fallback, time.Now().Format("20060102-150405"), ext)
+	}
+	if strings.EqualFold(filepath.Ext(name), ext) {
+		return name
+	}
+	return name + ext
+}
+
+// outputDir 返回生成文件的默认输出目录：优先 OMNI_OUTPUT_DIR（内核注入，
+// 通常就是用户的「下载」目录），否则用户主目录下的 Downloads。
+func outputDir() string {
+	if d := strings.TrimSpace(os.Getenv("OMNI_OUTPUT_DIR")); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Downloads")
+	}
+	return "Downloads"
+}
+
+// resolvePathParent 解析写入目标路径：p 为空时用 fallback 落到输出目录
+// （默认下载目录），用户显式指定的路径原样尊重。父目录不存在则创建。
+func resolvePathParent(p, fallback string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		p = filepath.Join(outputDir(), fallback)
+	}
 	if strings.HasPrefix(p, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
 			p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))

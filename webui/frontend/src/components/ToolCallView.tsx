@@ -349,6 +349,37 @@ export function MediaList({ atts }: { atts: AttachmentInfo[] }) {
             </div>
           )
         }
+        if (a.kind === "file") {
+          const isPdf = a.media_type === "application/pdf" || /\.pdf(\?|$)/i.test(a.src)
+          if (isPdf) {
+            return (
+              <div key={i} className="flex flex-col gap-1">
+                <iframe
+                  src={a.src}
+                  title={a.caption || a.path || "PDF"}
+                  className="h-[420px] w-full max-w-full rounded-md border bg-white"
+                  loading="lazy"
+                />
+                <MediaMeta att={a} />
+              </div>
+            )
+          }
+          // 其他文件类型：卡片行，点击打开（浏览器下载或预览）
+          const name = a.path?.replace(/\\/g, "/").split("/").pop() || a.caption || "file"
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <a
+                href={a.src}
+                download
+                className="text-foreground inline-flex w-fit items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-opacity-5"
+              >
+                <FileTextIcon className="text-muted-foreground size-4 shrink-0" />
+                <span className="[overflow-wrap:anywhere]">{name}</span>
+              </a>
+              <MediaMeta att={a} />
+            </div>
+          )
+        }
         return null
       })}
     </div>

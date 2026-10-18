@@ -15,9 +15,11 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -37,7 +39,7 @@ type readArgs struct {
 }
 
 type writeArgs struct {
-	Path      string     `json:"path" jsonschema:"要写入的 CSV 文件路径"`
+	Path      string     `json:"path,omitempty" jsonschema:"要写入的 CSV 文件路径；省略则按首个列名命名存到用户「下载」目录"`
 	Headers   []string   `json:"headers,omitempty" jsonschema:"表头（可选）"`
 	Rows      [][]string `json:"rows" jsonschema:"数据行，二维数组，每行元素按列顺序"`
 	Delimiter string     `json:"delimiter,omitempty" jsonschema:"分隔符，默认逗号；可传 tab 或 ;"`
@@ -65,6 +67,25 @@ func main() {
 
 func textResult(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
+}
+
+// docResult 返回说明文本 + 产物 file:// 资源链接：内核会把链接转成本地附件，
+// 前端随图片/媒体同区展示，用户可直接打开（与生成图片一致的展示位置）。
+func docResult(text, path, mime string) *mcp.CallToolResult {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	name := filepath.Base(abs)
+	return &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.TextContent{Text: text},
+		&mcp.ResourceLink{
+			URI:      (&url.URL{Scheme: "file", Path: "/" + filepath.ToSlash(abs)}).String(),
+			Name:     name,
+			Title:    name,
+			MIMEType: mime,
+		},
+	}}
 }
 
 // ---------- read_csv ----------
@@ -278,13 +299,52 @@ func mdCells(rec []string) []string {
 
 // ---------- write_csv ----------
 
+// outputDir 返回生成文件的默认输出目录：优先 OMNI_OUTPUT_DIR（内核注入，
+// 通常就是用户的「下载」目录），否则用户主目录下的 Downloads。
+func outputDir() string {
+	if d := strings.TrimSpace(os.Getenv("OMNI_OUTPUT_DIR")); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Downloads")
+	}
+	return "Downloads"
+}
+
+// sanitizeFileName 清洗文件名：去掉路径分隔符与 Windows 非法字符，长度封顶 60 字符。
+func sanitizeFileName(s string) string {
+	name := strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', '\n', '\r', '\t':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+	name = strings.Trim(strings.TrimSpace(name), ".")
+	if len([]rune(name)) > 60 {
+		name = string([]rune(name)[:60])
+	}
+	return name
+}
+
 func writeCSV(_ context.Context, _ *mcp.CallToolRequest, args writeArgs) (*mcp.CallToolResult, any, error) {
 	p := strings.TrimSpace(args.Path)
-	if p == "" {
-		return nil, nil, fmt.Errorf("缺少 path 参数")
-	}
 	if len(args.Headers) == 0 && len(args.Rows) == 0 {
 		return nil, nil, fmt.Errorf("headers 与 rows 都为空，没有内容可写")
+	}
+	// path 可选：省略时落到输出目录（默认用户的「下载」目录），文件名取首个列名
+	if p == "" {
+		name := ""
+		if len(args.Headers) > 0 {
+			name = sanitizeFileName(args.Headers[0])
+		}
+		if name == "" {
+			name = fmt.Sprintf("数据-%s", time.Now().Format("20060102-150405"))
+		}
+		if filepath.Ext(name) == "" {
+			name += ".csv"
+		}
+		p = filepath.Join(outputDir(), name)
 	}
 	sep := ','
 	switch {
@@ -347,8 +407,8 @@ func writeCSV(_ context.Context, _ *mcp.CallToolRequest, args writeArgs) (*mcp.C
 	if withBOM {
 		bomNote = "带 UTF-8 BOM"
 	}
-	return textResult(fmt.Sprintf("已写入 %s\n行数：%d（其中表头 %d 行）\n列数：%d\n分隔符：%s\n编码：UTF-8（%s）",
-		p, totalRows, boolToInt(len(args.Headers) > 0), cols, sepName(sep), bomNote)), nil, nil
+	return docResult(fmt.Sprintf("已写入 %s\n行数：%d（其中表头 %d 行）\n列数：%d\n分隔符：%s\n编码：UTF-8（%s）",
+		p, totalRows, boolToInt(len(args.Headers) > 0), cols, sepName(sep), bomNote), p, "text/csv"), nil, nil
 }
 
 func boolToInt(b bool) int {

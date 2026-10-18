@@ -33,7 +33,7 @@ func main() {
 		}, readPDF)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "write_pdf",
-		Description: "生成 .pdf：传入 title 与纯文本 content（\\n 分行，-/* 行变项目符号），A4 竖版、支持中文（STSong-Light）。仅文本版式，无表格/图片/样式。",
+		Description: "生成 .pdf：传入 title 与纯文本 content（\\n 分行，-/* 行变项目符号），A4 竖版、支持中文（STSong-Light）。仅文本版式，无表格/图片/样式。path 可省略，省略时按 title 自动命名并存到用户「下载」目录；生成结果会作为附件直接展示给用户。",
 		Annotations: &mcp.ToolAnnotations{Title: "写入 PDF"},
 	}, writePDF)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

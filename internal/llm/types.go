@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,6 +45,7 @@ const (
 	KindImage AttachmentKind = "image"
 	KindVideo AttachmentKind = "video"
 	KindAudio AttachmentKind = "audio"
+	KindFile  AttachmentKind = "file" // 生成类文档（application/pdf 等），前端以文件卡片/预览展示，不进模型上下文
 )
 
 // Attachment 是一条多媒体产出（图片/视频/音频）。
@@ -117,6 +120,54 @@ func (im Image) ByteSize() int {
 		n++
 	}
 	return n
+}
+
+// ImageType 按文件头魔数嗅探图片类型（png/jpeg/gif/webp/bmp），返回 image/* MIME；
+// 不是常见图片格式返回空串。用于防止把 PDF 等误标成图片的附件送进多模态上下文
+// （上游对内容和 media_type 不符的图片直接报 400）。
+func ImageType(data []byte) string {
+	switch {
+	case len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n":
+		return "image/png"
+	case len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
+		return "image/jpeg"
+	case len(data) >= 4 && string(data[:4]) == "GIF8":
+		return "image/gif"
+	case len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP":
+		return "image/webp"
+	case len(data) >= 2 && string(data[:2]) == "BM":
+		return "image/bmp"
+	}
+	return ""
+}
+
+// IsSVG 粗略判断字节内容是否为 SVG（纯文本 XML，无魔数，按首次出现 <svg 识别）。
+func IsSVG(data []byte) bool {
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	return bytes.Contains(bytes.ToLower(head), []byte("<svg"))
+}
+
+// ValidImageB64 判断 base64 图片数据开头是否为常见图片（或 SVG）。
+// 只解码前 32 字节左右，成本常数，供发送前对历史持久化的图片做消毒：
+// 历史上曾有 PDF 冒充 image/png 落进会话文件，之后每轮请求都把上游打成 400。
+func ValidImageB64(data string) bool {
+	if data == "" {
+		return false
+	}
+	// 32 字节需 ~44 个 base64 字符；不足时取全长。截断会剩下非 4 倍数残字节，
+	// 用 RawStdEncoding 解前缀即可，省去补齐与去 padding 的边界处理。
+	n := 44
+	if len(data) < n {
+		n = len(data)
+	}
+	head, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(data[:n], "="))
+	if err != nil {
+		return false
+	}
+	return ImageType(head) != "" || IsSVG(head)
 }
 
 // Message 是多模态消息：文本、图片、工具调用/结果的组合。

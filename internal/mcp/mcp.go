@@ -7,7 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -35,11 +38,19 @@ type Status struct {
 
 // Manager 持有全部 MCP 会话与其连接状态。
 type Manager struct {
-	mu       sync.Mutex
-	client   *mcp.Client
-	sessions map[string]*mcp.ClientSession
-	statuses map[string]*Status
-	onChange func()
+	mu        sync.Mutex
+	client    *mcp.Client
+	sessions  map[string]*mcp.ClientSession
+	statuses  map[string]*Status
+	onChange  func()
+	outputDir string // 生成文件默认输出目录，注入给内置插件（OMNI_OUTPUT_DIR）
+}
+
+// SetOutputDir 设置生成文件的默认输出目录（用户「下载」目录）。
+func (m *Manager) SetOutputDir(dir string) {
+	m.mu.Lock()
+	m.outputDir = dir
+	m.mu.Unlock()
 }
 
 // NewManager 创建管理器。version 用于握手标识。
@@ -112,6 +123,11 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg config.MCPServer
 		cmd := exec.Command(cfg.Command, cfg.Args...)
 		if len(cfg.Env) > 0 {
 			cmd.Env = append(cmd.Environ(), envPairs(cfg.Env)...)
+		}
+		// 内置插件（pdf/docx/image…）据此把产物落到用户「下载」目录；
+		// 用户自建 MCP 不注入，避免影响第三方服务器的行为。
+		if cfg.Builtin && m.outputDir != "" {
+			cmd.Env = append(cmd.Environ(), "OMNI_OUTPUT_DIR="+m.outputDir)
 		}
 		transport = &mcp.CommandTransport{Command: cmd}
 	}
@@ -305,26 +321,97 @@ func contentToMedia(contents []mcp.Content) []llm.Attachment {
 				out = append(out, llm.Attachment{Kind: llm.KindAudio, MediaType: mime, Data: b64})
 			case strings.HasPrefix(mime, "video/"):
 				out = append(out, llm.Attachment{Kind: llm.KindVideo, MediaType: mime, Data: b64})
+			case strings.Contains(mime, "pdf"):
+				out = append(out, llm.Attachment{Kind: llm.KindFile, MediaType: mime, Data: b64})
 			}
 		}
 	}
 	return out
 }
 
-// resourceAttachment 把远程 http(s) 资源转成 URL 型附件；kind 按 MIME 或扩展名推断。
+// resourceAttachment 把资源（远程 http(s) 地址或本地 file:// 链接）转成附件；
+// kind 按 MIME 或扩展名推断。生成类工具（如 write_pdf）用 file:// 链接把产物
+// 挂成附件，前端与图片同区展示。
 func resourceAttachment(mime, uri string) (llm.Attachment, bool) {
-	if !strings.HasPrefix(uri, "http://") && !strings.HasPrefix(uri, "https://") {
+	att, ok := attachmentKind(mime, uri)
+	if !ok {
 		return llm.Attachment{}, false
 	}
-	switch {
-	case strings.HasPrefix(mime, "image/"), mime == "" && (strings.HasSuffix(uri, ".png") || strings.HasSuffix(uri, ".jpg") || strings.HasSuffix(uri, ".jpeg") || strings.HasSuffix(uri, ".webp") || strings.HasSuffix(uri, ".gif")):
-		return llm.Attachment{Kind: llm.KindImage, MediaType: mime, URL: uri}, true
-	case strings.HasPrefix(mime, "video/"), mime == "" && (strings.HasSuffix(uri, ".mp4") || strings.HasSuffix(uri, ".webm") || strings.HasSuffix(uri, ".mov")):
-		return llm.Attachment{Kind: llm.KindVideo, MediaType: mime, URL: uri}, true
-	case strings.HasPrefix(mime, "audio/"), mime == "" && (strings.HasSuffix(uri, ".mp3") || strings.HasSuffix(uri, ".wav") || strings.HasSuffix(uri, ".m4a")):
-		return llm.Attachment{Kind: llm.KindAudio, MediaType: mime, URL: uri}, true
+	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
+		att.URL = uri
+		return att, true
+	}
+	if strings.HasPrefix(uri, "file://") {
+		// file:///C:/Users/...(Windows) / file:///home/...(unix)
+		raw, err := url.PathUnescape(strings.TrimPrefix(uri, "file://"))
+		if err != nil || raw == "" {
+			return llm.Attachment{}, false
+		}
+		p := strings.TrimPrefix(raw, "/")
+		if !(len(p) >= 2 && p[1] == ':') { // 非 Windows 盘符路径的保留绝对形式
+			p = "/" + p
+		}
+		att.Path = filepath.FromSlash(strings.ReplaceAll(p, "\\", "/"))
+		return att, true
 	}
 	return llm.Attachment{}, false
+}
+
+// attachmentKind 按 MIME/扩展名给出附件类型（不含数据来源，URL/Path 由调用方填）。
+func attachmentKind(mime, uri string) (llm.Attachment, bool) {
+	ext := strings.ToLower(path.Ext(uri))
+	switch {
+	// 图/音/视频：MIME 或常见扩展名都认
+	case strings.HasPrefix(mime, "image/"), mime == "" && (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif"):
+		return llm.Attachment{Kind: llm.KindImage, MediaType: mime}, true
+	case strings.HasPrefix(mime, "video/"), mime == "" && (ext == ".mp4" || ext == ".webm" || ext == ".mov"):
+		return llm.Attachment{Kind: llm.KindVideo, MediaType: mime}, true
+	case strings.HasPrefix(mime, "audio/"), mime == "" && (ext == ".mp3" || ext == ".wav" || ext == ".m4a"):
+		return llm.Attachment{Kind: llm.KindAudio, MediaType: mime}, true
+	// 生成类文档：PDF（前端内嵌预览）与 Office/CSV（文件卡片可下载）
+	case strings.Contains(mime, "pdf"), mime == "" && ext == ".pdf":
+		return llm.Attachment{Kind: llm.KindFile, MediaType: "application/pdf"}, true
+	case isDocMIME(mime), mime == "" && (ext == ".docx" || ext == ".xlsx" || ext == ".pptx" || ext == ".doc" || ext == ".csv"):
+		if mime == "" {
+			mime = "application/octet-stream"
+		}
+		return llm.Attachment{Kind: llm.KindFile, MediaType: mime}, true
+	}
+	if dm := docFileMime(mime, ext); dm != "" {
+		return llm.Attachment{Kind: llm.KindFile, MediaType: dm}, true
+	}
+	return llm.Attachment{}, false
+}
+
+// docFileMime 识别生成类文档（Office/CSV）的 MIME（不认的返回空串）。
+func docFileMime(mime, ext string) string {
+	switch ext {
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".csv", ".tsv":
+		return "text/csv"
+	}
+	if strings.HasPrefix(mime, "application/vnd.openxmlformats-officedocument.") || mime == "text/csv" {
+		return mime
+	}
+	return ""
+}
+
+// isDocMIME 报告是否为文档类 MIME（docx/xlsx/pptx/旧版 Office/csv 等）。
+func isDocMIME(mime string) bool {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	switch {
+	case mime == "text/csv", mime == "application/msword",
+		mime == "application/vnd.ms-excel", mime == "application/vnd.ms-powerpoint",
+		strings.HasPrefix(mime, "application/vnd.openxmlformats-officedocument"),
+		strings.HasPrefix(mime, "application/vnd.oasis.opendocument"):
+		return true
+	}
+	return false
 }
 
 // inputSchema 把 MCP 的 inputSchema 转为 JSON Schema map。
@@ -343,6 +430,16 @@ func inputSchema(v any) map[string]any {
 	return m
 }
 
+// prettyURI 把 file:// 链接还原成可读的本地路径（去掉 percent-encoding，
+// 中文直接显示），其余 URI 原样返回。工具输出里出现 %E8%8B%8F 这种转义很难读。
+func prettyURI(uri string) string {
+	att, ok := resourceAttachment("", uri)
+	if ok && att.Path != "" {
+		return att.Path
+	}
+	return uri
+}
+
 // contentToText 把 MCP 内容块转成纯文本。
 func contentToText(contents []mcp.Content) string {
 	var sb strings.Builder
@@ -355,10 +452,10 @@ func contentToText(contents []mcp.Content) string {
 		case *mcp.AudioContent:
 			fmt.Fprintf(&sb, "[音频: %s]", t.MIMEType)
 		case *mcp.ResourceLink:
-			fmt.Fprintf(&sb, "[资源链接: %s]", t.URI)
+			fmt.Fprintf(&sb, "[产出文件: %s]", prettyURI(t.URI))
 		case *mcp.EmbeddedResource:
 			if t.Resource != nil {
-				fmt.Fprintf(&sb, "[资源: %s]", t.Resource.URI)
+				fmt.Fprintf(&sb, "[资源: %s]", prettyURI(t.Resource.URI))
 			}
 		default:
 			sb.WriteString("[未知内容类型]")

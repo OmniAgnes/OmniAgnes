@@ -271,6 +271,9 @@ export function SettingsDialog({
   const [preset, setPreset] = useState<ThemePreset>(deriveThemePreset(state?.theme, state?.theme_color ?? "zinc"))
   const [memory, setMemory] = useState("")
   const [memorySaved, setMemorySaved] = useState(false)
+  // 生成文件输出目录（默认系统「下载」目录）；留空保存即恢复默认
+  const [outputDir, setOutputDir] = useState("")
+  const [outputDirDraft, setOutputDirDraft] = useState("")
   // 账号：登录用户打开时拉最新余额（领取后余额会变化，每次打开重取）；积分流水由账号页自分页拉取
   const [cred, setCred] = useState<ServerUser | null>(null)
   const [credLoading, setCredLoading] = useState(false)
@@ -342,6 +345,7 @@ export function SettingsDialog({
     api.providers().then((r) => setProviders(r.providers)).catch(() => setProviders([]))
     api.settings().then((r) => {
       setPreset(deriveThemePreset(r.theme, r.theme_color))
+      setOutputDir(r.output_dir ?? "")
     }).catch(() => {})
     api.memory().then((r) => setMemory(r.content)).catch(() => {})
     void refreshMcp()
@@ -402,6 +406,23 @@ export function SettingsDialog({
     await api.saveMemory(memory)
     setMemorySaved(true)
     setTimeout(() => setMemorySaved(false), 2000)
+  }
+
+  /** 保存生成文件的输出目录；留空则恢复默认（系统「下载」目录） */
+  const saveOutputDir = async () => {
+    setSaving(true)
+    try {
+      const r = await api.saveSettings({ output_dir: outputDirDraft })
+      setOutputDir(r.output_dir)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** 用内核的目录浏览器挑一个目录（进入子目录后点「用这个目录」） */
+  const pickOutputDir = async () => {
+    const r = await api.browse(outputDirDraft).catch(() => null)
+    if (r?.path) setOutputDirDraft(r.path)
   }
 
   const patchProvider = (i: number, patch: Partial<ProviderConfig>) => {
@@ -678,6 +699,35 @@ export function SettingsDialog({
                     <Button size="sm" variant="secondary" onClick={() => void saveMemory()}>
                       {t("se.save")}
                     </Button>
+                  </div>
+
+                  {/* 生成文件（生图/视频/音频/PDF/文档）的默认输出目录 */}
+                  <div className="mt-4 flex flex-col gap-2 border-t pt-4">
+                    <Label>{t("se.outputDir")}</Label>
+                    <p className="text-muted-foreground text-xs">{t("se.outputDirDesc")}</p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={outputDirDraft}
+                        onChange={(e) => setOutputDirDraft(e.target.value)}
+                        placeholder={outputDir}
+                        className="font-mono text-xs"
+                      />
+                      <Button size="sm" variant="secondary" onClick={() => void pickOutputDir()}>
+                        {t("se.browse")}
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => void saveOutputDir()}>
+                        {t("se.save")}
+                      </Button>
+                    </div>
+                    {outputDir && outputDirDraft !== outputDir && (
+                      <button
+                        type="button"
+                        className="text-muted-foreground self-start text-xs underline hover:text-foreground"
+                        onClick={() => setOutputDirDraft("")}
+                      >
+                        {t("se.outputDirReset")}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
