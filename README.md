@@ -4,12 +4,6 @@
 
 ![omni 桌面版](screenshot/3.png)
 
-![omni 桌面版](screenshot/4.png)
-
-![omni 桌面版](screenshot/5.png)
-
-# omni — AI 编码智能体
-
 桌面版 / 终端 TUI / 网页工作台，在本地与 AI 协作编程。
 模型与供应商在桌面版「设置」里配置，开箱即用。
 
