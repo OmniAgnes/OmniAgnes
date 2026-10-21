@@ -34,8 +34,41 @@
 
 ### 只要命令行（TUI / 网页版 / 脚本），不要桌面端
 
-去 [Releases](https://github.com/OmniAgnes/omni/releases/latest) 下 `omni-cli-*` 附件，
-解压即用，**不需要装桌面端、不需要 Electron**：
+**一条命令装完**（自动识别平台架构、校验 sha256、装内核 + 11 个内置插件、配好 PATH）：
+
+macOS / Linux：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OmniAgnes/OmniAgnes/master/scripts/install.sh | sh
+```
+
+Windows（PowerShell）：
+
+```powershell
+irm https://raw.githubusercontent.com/OmniAgnes/OmniAgnes/master/scripts/install.ps1 | iex
+```
+
+装到 `~/.local/bin/omni`（Windows 是 `%LOCALAPPDATA%\omni\bin\omni.exe`），装完直接敲 `omni` 进 TUI。
+**不需要装桌面端、不需要 Electron、不需要 Go 环境。**
+
+指定版本 / 安装目录：
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/OmniAgnes/OmniAgnes/master/scripts/install.sh \
+  | sh -s -- --version 1.0.28 --dir ~/bin
+```
+
+```powershell
+# Windows
+$env:OMNI_VERSION = '1.0.28'; $env:OMNI_DIR = 'D:\omni\bin'
+irm https://raw.githubusercontent.com/OmniAgnes/OmniAgnes/master/scripts/install.ps1 | iex
+```
+
+国内下载慢时可同时设 `OMNI_DOWNLOAD_BASE` 指向镜像的 releases 目录。
+
+不想跑脚本就手工下 [Releases](https://github.com/OmniAgnes/OmniAgnes/releases/latest) 里的
+`omni-cli-*` 附件解压：
 
 | 平台 | 附件 |
 |------|------|
@@ -55,11 +88,11 @@ omni                     # 进 TUI
 
 - 压缩包里是 `omni`（或 `omni.exe`）**加**内置 MCP 插件（`pdf` `xlsx` `docx` `pptx` `csv`
   `image` `media` `fetch` `agnes` `mimo`）。插件必须和 `omni` **放在同一目录**——内核按
-  自身 exe 同目录自动注册，拆散了那批工具就没了。
+  自身 exe 同目录自动注册，拆散了那批工具就没了（安装脚本已自动放好）。
 - 没有桌面端就没有图形化配置界面，首次运行在 TUI 里用 `/config` 添加供应商与 API Key
   （写回 `~/.config/omni/config.json`，与桌面端共用同一份配置与 `~/.local/share/omni/` 数据）。
-- `omni-cli-checksums.txt` 是 sha256，解包前可校验。
-- 附件名固定不带版本号，`releases/latest/download/omni-cli-linux-x64.tar.gz` 可写进脚本。
+- `omni-cli-checksums.txt` 是 sha256，解包前可校验（安装脚本会自动校验）。
+- 附件名固定不带版本号，`releases/latest/download/omni-cli-linux-x64.tar.gz` 可写进自己的脚本。
 - macOS 包未签名：首次运行若被拦截，`xattr -dr com.apple.quarantine ~/.local/bin/omni`
   再执行（或右键 → 打开）；Windows 同理可能弹 SmartScreen，选「仍要运行」。
 
