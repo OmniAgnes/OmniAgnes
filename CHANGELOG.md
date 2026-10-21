@@ -2,6 +2,32 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.30 (2026-10-21)
+
+v1.0.29 里的 CLI 修复只进了 master，当时的 tag 还指着坏 workflow，CLI 附件依旧没发出去。
+本版补发：修掉校验步骤在 `pipefail` 下被 `grep -q` 半路退管道弄挂的雷，六个 CLI 附件随本版正常传出。
+
+### 🐛 修复
+
+- **`build-cli` 校验步骤误报 `tar: stdout: write error`（退出码 2），CLI 附件没传出去**：
+  根因是 v1.0.28 起就存在的 `tar -tzf … | grep -q '\./omni$'` 这种写法撞上 GitHub Actions `shell: bash` 以
+  `-eo pipefail` 启动：tar 按 readdir 顺序写条目（ext4 hash 序基本随机），压缩包里 `./omni`
+  落在 11 个条目中间时，`grep -q` 一匹配**立刻退出**，管道唯一读者没了，tar 继续写
+  `pdf`/`pptx` 等剩余条目就触发 EPIPE，tar 退出码 2 被 `pipefail` 判死整个步骤——
+  **与产物内容无关**（v1.0.28 偶然通过只因那次 `./omni` 恰好排在 readdir 序最后）。
+  同款隐患还有 `unzip -l … | grep -q 'omni.exe'`。
+  同步改在 `.github/workflows/release.yml` 校验步骤一处：两条断言改为先取全文存变量、
+  再对字符串 `grep -q`，无管道可碎（无匹配依旧断言失败）
+- **v1.0.29 tag 与修复 commit 错位**：修复 commit（`05b7a9c`）在 tag 之后才进 master，
+  而 workflow 在 CI 里是从 tag 指向的快照读取的，Re-run 也只会重跑坏代码——所以 CLI 修复
+  必须随新 tag 一起发。本版 tag 指向新的 release commit，包含全部修复
+
+### 📝 说明
+
+- [README](https://github.com/OmniAgnes/OmniAgnes/blob/master/README.md) 精简：
+  安装章节只留两条一键命令，删掉指定版本/目录、手工下载附件表、镜像环境变量与「要点」列表；
+  功能改为简要列表；删掉参数/快捷键/Slash/工具四张表、开发与目录结构详解。
+
 ## v1.0.29 (2026-10-21)
 
 补 v1.0.28 装不上的命令行版：修掉发版时附件名拼错、以及 Windows 一键安装脚本被 BOM 弄坏的两个问题。
