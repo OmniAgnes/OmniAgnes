@@ -760,9 +760,15 @@ jobs:
               fi
             done
           done
-          # 压缩包里必须真有内核，而不是空目录
-          unzip -l "$OUT/omni-cli-windows-x64.zip" | grep -q 'omni.exe'
-          tar -tzf "$OUT/omni-cli-linux-x64.tar.gz" | grep -q '\./omni$'
+          # 压缩包里必须真有内核，而不是空目录。
+          # ⚠️ 不要写成 `cmd | grep -q`：bash 是 -eo pipefail 启动，grep -q 一匹配就退，
+          #    管道读者没了，后面的 cmd 继续 write 会 EPIPE（tar: stdout: write error，退 2）。
+          #    是否踩雷取决于 readdir 顺序（omni 排中间必炸），v1.0.29 就是这么挂的。
+          #    改为先取全文再对字符串 grep，无管道可碎。
+          zip_list=$(unzip -l "$OUT/omni-cli-windows-x64.zip")
+          grep -q 'omni.exe' <<<"$zip_list"
+          tar_list=$(tar -tzf "$OUT/omni-cli-linux-x64.tar.gz")
+          grep -q '\./omni$' <<<"$tar_list"
           echo "✓ 六个平台的命令行包齐全，版本与插件均正常"
 
       - name: 上传命令行包到 Release
