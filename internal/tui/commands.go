@@ -38,7 +38,8 @@ Slash 命令（输入 / 出现提示，↑↓ 选择 · Tab 补全）:
   /quit          退出
 
 技能: ~/.config/omni/skills/<名称>/SKILL.md（全局）或 .omni/skills/<名称>/SKILL.md（项目），
-      输入 /技能名 直接触发。工具: read · write · edit · bash · grep · glob · skill · memory · mcp__*
+      输入 /技能名 直接触发（不进 / 补全提示列表，/skills 查看已装技能）。
+工具: read · write · edit · bash · grep · glob · skill · memory · mcp__*
 配置: 默认读取 ~/.config/omni/config.json，支持 OPENAI_API_KEY 等环境变量；
       无可用配置时启动会自动打开 /config 表单。`
 

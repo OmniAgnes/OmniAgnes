@@ -11,7 +11,8 @@ type slashCmd struct {
 	desc string
 }
 
-// builtinSlashCommands 是内置命令；技能命令在运行时追加。
+// builtinSlashCommands 是内置命令；技能命令（/技能名）不在提示列表里——
+// 技能数量多时会淹没内置命令，且技能触发走 handleCommand 的兜底分支即可。
 var builtinSlashCommands = []slashCmd{
 	{"/help", "显示帮助"},
 	{"/new", "开启新会话（原会话保留在任务列表）"},
@@ -25,16 +26,6 @@ var builtinSlashCommands = []slashCmd{
 	{"/mcp", "查看 MCP 服务器状态"},
 	{"/webui", "在浏览器打开网页版聊天"},
 	{"/quit", "退出"},
-}
-
-// slashCommands 返回内置命令 + 技能命令（/技能名）。
-func (m *Model) slashCommands() []slashCmd {
-	out := make([]slashCmd, 0, len(builtinSlashCommands)+len(m.skillCmds))
-	out = append(out, builtinSlashCommands...)
-	for _, s := range m.skillCmds {
-		out = append(out, slashCmd{"/" + s.Name, s.Description})
-	}
-	return out
 }
 
 // reloadSkills 重新扫描技能目录，刷新 slash 提示。
@@ -65,7 +56,7 @@ func (m *Model) slashMatches() []slashCmd {
 	if !strings.HasPrefix(v, "/") || strings.Contains(v, " ") {
 		return nil
 	}
-	matches := filterSlashCommands(m.slashCommands(), v)
+	matches := filterSlashCommands(builtinSlashCommands, v)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -87,9 +78,13 @@ func (m *Model) updateSlashHint() {
 	}
 }
 
-// layoutViewport 按提示框高度计算消息区可用行数。
+// layoutViewport 按底部区块（生成中的状态行 / 提示面板 / 输入区）计算消息区可用行数。
 func (m *Model) layoutViewport() {
-	h := m.height - 2 - inputHeight - m.hintLines
+	extra := m.hintLines
+	if m.running {
+		extra++ // 生成中的 spinner 状态行
+	}
+	h := m.height - 1 - inputLines - extra
 	if h < 3 {
 		h = 3
 	}

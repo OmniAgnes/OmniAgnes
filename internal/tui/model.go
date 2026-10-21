@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	inputHeight = 6
+	// inputLines 输入区总行数：textarea 2 行 + 上下两条分隔线
+	inputLines = 4
 )
 
 // eventMsg 将 agent 事件桥接为 tea 消息。
@@ -63,6 +64,10 @@ type Model struct {
 	statusText string
 	toolID     int
 
+	// 本轮开始时刻：EventDone 时算耗时与 tok/s，输出完成统计行
+	turnStart time.Time
+	version   string // 欢迎屏显示，main 注入
+
 	sessionID string
 	startTime time.Time
 
@@ -89,22 +94,26 @@ type Model struct {
 // New 构造 TUI 模型。
 func New(a *agent.Agent, sessionID, configPath string, ext *extras.Extras, cwd string) *Model {
 	ta := textarea.New()
-	ta.Placeholder = " 输入消息，Enter 发送，Alt+Enter 换行；/help 查看帮助"
-	// 仅首行显示 ❯，其余行（换行/自动折行）留空对齐
+	ta.Placeholder = " 输入消息；/help 查看命令"
+	// 仅首行显示 ›，其余行（换行/自动折行）留空对齐
 	ta.SetPromptFunc(2, func(line int) string {
 		if line == 0 {
-			return "❯ "
+			return "› "
 		}
 		return ""
 	})
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 100000
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
-	ta.SetHeight(3)
+	ta.SetHeight(2)
 
 	sp := spinner.New()
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
-	sp.Spinner = spinner.Dot
+	// 生成期间的状态栏旋转符
+	sp.Spinner = spinner.Spinner{
+		Frames: []string{"✻", "✳", "✶", "✷", "✸", "✶"},
+		FPS:    time.Second / 10,
+	}
 
 	vp := viewport.New(0, 0)
 
@@ -128,6 +137,9 @@ func New(a *agent.Agent, sessionID, configPath string, ext *extras.Extras, cwd s
 	return m
 }
 
+// SetVersion 注入版本号，欢迎屏显示；main.go 构建后调用。
+func (m *Model) SetVersion(v string) { m.version = v }
+
 // Init 初始化。
 func (m *Model) Init() tea.Cmd {
 	ta := m.textarea
@@ -146,7 +158,10 @@ func (m *Model) View() string {
 	if m.modelPickerOpen {
 		return m.renderModelPicker()
 	}
-	parts := []string{m.renderHeader(), m.viewport.View(), m.renderStatus()}
+	parts := []string{m.renderHeader(), m.viewport.View()}
+	if m.running {
+		parts = append(parts, m.renderStatus())
+	}
 	if hint := m.renderSlashHint(); hint != "" {
 		parts = append(parts, hint)
 	}
@@ -177,22 +192,17 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderStatus() string {
-	var text string
-	if m.running {
-		txt := m.statusText
-		if txt == "" {
-			txt = "思考中…"
-		}
-		text = m.spinner.View() + " " + txt
-	} else {
-		text = "Enter 发送 · Esc 取消 · Ctrl+o 收起工具 · Ctrl+r 重新生成 · /help"
+	txt := m.statusText
+	if txt == "" {
+		txt = "思考中…"
 	}
-	return styleStatusBar.Render(text)
+	return styleStatusBar.Render(m.spinner.View() + " " + txt)
 }
 
 func (m *Model) renderInputBox() string {
-	taStyle := styleInputBox.Width(m.width - 4)
-	return taStyle.Render(m.textarea.View())
+	// 圆角边框输入框：2 行内容 + 上下边框共 4 行（与 inputLines 一致）。
+	// Width 含 padding 不含 border：m.width-4 + 边框 2 = 总宽 m.width-2，与头部对齐。
+	return styleChatInput.Width(m.width - 4).Render(m.textarea.View())
 }
 
 // Update 处理事件。
@@ -245,6 +255,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancel = nil
 		m.saveTask()
+		m.layoutViewport()
 		m.setViewportContent()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -332,6 +343,7 @@ func (m *Model) handleEscape() tea.Cmd {
 		m.cancel()
 		m.statusText = "已取消本轮生成"
 		m.running = false
+		m.layoutViewport() // 状态行消失，消息区回收一行
 		return nil
 	}
 	return nil
@@ -391,7 +403,9 @@ func (m *Model) startAgent(text string) tea.Cmd {
 	m.cancel = cancel
 	m.running = true
 	m.statusText = ""
+	m.turnStart = time.Now()
 	m.evtCh = make(chan agent.Event, 256)
+	m.layoutViewport() // 状态行出现，消息区需让出一行
 
 	go func() {
 		defer close(m.evtCh)
@@ -430,6 +444,11 @@ func (m *Model) setViewportContent() {
 // handleAgentEvent 处理 agent 事件。
 func (m *Model) handleAgentEvent(ev agent.Event) {
 	switch ev.Type {
+	case agent.EventReasoning:
+		// 思考流增量：灰色展示在正文上方，不进历史
+		cur := m.currentAssistant()
+		cur.reasoning += ev.Text
+		m.setViewportContent()
 	case agent.EventText:
 		cur := m.currentAssistant()
 		cur.text += ev.Text
@@ -470,11 +489,22 @@ func (m *Model) handleAgentEvent(ev agent.Event) {
 		m.addSystemMsg("error: " + ev.Err.Error())
 		m.running = false
 		m.cancel = nil
+		m.layoutViewport()
 	case agent.EventDone:
 		m.running = false
 		m.cancel = nil
 		m.rollback = nil
 		m.statusText = ""
+		m.layoutViewport() // 状态行消失，消息区回收一行
+		// 最后一条 assistant 消息整轮结束：标记后切换 markdown 渲染
+		for i := len(m.msgs) - 1; i >= 0; i-- {
+			if m.msgs[i].role == roleAssistant {
+				m.msgs[i].done = true
+				break
+			}
+		}
+		// 对话完成统计行：模型名 · tok/s · 耗时
+		m.addStats(ev)
 		m.setViewportContent()
 	}
 }

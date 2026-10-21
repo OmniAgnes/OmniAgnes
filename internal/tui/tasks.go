@@ -102,7 +102,7 @@ func (m *Model) openTask(arg string) {
 			m.msgs = append(m.msgs, &viewMsg{role: roleUser, text: msg.Text})
 		case llm.RoleAssistant:
 			if msg.Text != "" {
-				m.msgs = append(m.msgs, &viewMsg{role: roleAssistant, text: msg.Text})
+				m.msgs = append(m.msgs, &viewMsg{role: roleAssistant, text: msg.Text, done: true})
 			}
 		}
 	}

@@ -193,7 +193,12 @@ func main() {
 	}
 
 	sessionID := newSessionID()
-	p := tea.NewProgram(tui.New(a, sessionID, configPath, ext, absCwd), tea.WithAltScreen())
+	tm := tui.New(a, sessionID, configPath, ext, absCwd)
+	tm.SetVersion(appVersion())
+	if restore := setConsoleUTF8(os.Stdout); restore != nil {
+		defer restore()
+	}
+	p := tea.NewProgram(tm, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		exitErr("TUI 运行失败: %v", err)
 	}

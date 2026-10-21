@@ -37,12 +37,13 @@ var (
 
 	styleStatusBar = lipgloss.NewStyle().
 			Foreground(colorMuted).
-			Border(lipgloss.NormalBorder()).
-			BorderTop(true).
-			BorderForeground(colorBorder).
 			Padding(0, 1)
 
 	styleInputBox = lipgloss.NewStyle().
+			Padding(0, 1)
+
+	// styleChatInput 聊天输入框：圆角边框替代上下 "----" 分隔线
+	styleChatInput = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorBorder).
 			Padding(0, 1)
@@ -62,14 +63,15 @@ var (
 			Margin(0, 0, 0, 3)
 
 	styleError = lipgloss.NewStyle().
-			Foreground(colorErr).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorErr).
-			Padding(0, 1)
+			Foreground(colorErr)
 
 	styleSysMsg = lipgloss.NewStyle().
 			Foreground(colorMuted).
 			Italic(true)
+
+	// 完成统计行：绿色对勾 + 灰调数值
+	styleStats = lipgloss.NewStyle().
+			Foreground(colorOk)
 
 	styleHintSel = lipgloss.NewStyle().
 			Foreground(colorBg).

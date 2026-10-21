@@ -37,8 +37,10 @@ func (m *Model) openModelPicker() tea.Cmd {
 		return nil
 	}
 	m.setModelItems(items)
+	// ⚠️ 必须置位：View() 与 handleKey 都按这个标志分流；漏了它则 /model 无任何反应
+	m.modelPickerOpen = true
 	m.modelLoading = true
-	return func() tea.Msg { return fetchModelsCmd(m.configPath)() }
+	return fetchModelsCmd(m.configPath)
 }
 
 // setModelItems 写入列表并把光标定位到当前模型。
