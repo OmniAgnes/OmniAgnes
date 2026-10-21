@@ -2,6 +2,21 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.31 (2026-10-21)
+
+### ✨ 新功能
+
+- **CLI/TUI 接入思考流**：TUI 此前不处理 `agent.EventReasoning`，思考内容只有网页版能看到；现在 CLI 里思考内容以灰色流式显示在正文上方，正文未产出时标头显示「✻ 思考中…」。
+
+### 🐛 修复
+
+- **生成期间「✻ 思考中…」状态行刷满屏**：根因是工具输出、系统消息、欢迎屏 cwd 未按终端宽度折行，长行被终端硬折行撑破 alt-screen frame，spinner 10FPS 重绘时状态行被反复顶出。相关渲染路径全部补齐 `wrapText` 折行。
+- **conhost 下中文/框线乱码**：新增 `console_windows.go`，TUI 启动前把控制台输出码页切到 UTF-8（65001），退出时还原。
+
+### 🔧 调整
+
+- 输入区 textarea 高度 3 行 → 2 行，上下分隔线与提示符靠拢；新增 `styleChatInput` 圆角边框输入框样式。
+
 ## v1.0.30 (2026-10-21)
 
 v1.0.29 里的 CLI 修复只进了 master，当时的 tag 还指着坏 workflow，CLI 附件依旧没发出去。
