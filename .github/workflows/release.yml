@@ -28,6 +28,13 @@
 #              omni-Setup-amd64.deb + omni-Setup-arm64.deb（apt/软件中心）
 #              ⚠️ x64 架构在两种格式下的文件名不同（x86_64 vs amd64），见 build-linux 的注释
 #
+# 另有一组「纯命令行」附件（build-cli job，不含 Electron 壳，只要 TUI/--web/--print）：
+#   omni-cli-windows-x64.zip / omni-cli-windows-arm64.zip
+#   omni-cli-macos-arm64.tar.gz / omni-cli-macos-x64.tar.gz
+#   omni-cli-linux-x64.tar.gz / omni-cli-linux-arm64.tar.gz
+#   omni-cli-checksums.txt
+#   解压即用：压缩包内是 omni + 内置 MCP 插件（必须同目录，内核靠同目录自动注册）。
+#
 # ⚠️ 打包已验证的经验（别改回去）：
 #   1) electron-builder.yml 的 `publish: null` 是必需的。不写它时 electron-builder 会从
 #      package.json 的 repository 推断 provider=github，写 app-update.yml 时构造
@@ -618,6 +625,140 @@ jobs:
             webui/desktop/release/omni-Setup-arm64.AppImage
             webui/desktop/release/omni-Setup-amd64.deb
             webui/desktop/release/omni-Setup-arm64.deb
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # 纯命令行（TUI / --web / --print）：只发内核二进制 + 内置 MCP 插件，不含 Electron 壳。
+  #
+  # 为什么单开一个 job：上面三个 job 的产物是安装包，内核 exe 藏在包的
+  # resources/bin/ 里，用户拿不到单个命令行程序。而内核本身就是完整的 CLI
+  # （不带参数 = TUI，--web = 网页工作台，--print = 非交互），所以这里只是
+  # 再编一遍、打成压缩包上传，不改任何代码逻辑。
+  #
+  # ⚠️ 产物名固定不带版本号（同桌面直链规则），发版即覆盖同名附件：
+  #   omni-cli-windows-x64.zip / omni-cli-windows-arm64.zip
+  #   omni-cli-macos-arm64.tar.gz / omni-cli-macos-x64.tar.gz
+  #   omni-cli-linux-x64.tar.gz / omni-cli-linux-arm64.tar.gz
+  #   omni-cli-checksums.txt（sha256，解包前可校验）
+  #
+  # ⚠️ MCP 插件必须与 omni 可执行文件**同目录**（内核按自身 exe 同目录扫描并
+  #    自动注册），所以插件要和内核打进同一个压缩包——只发一个 omni 会让
+  #    pdf/xlsx/docx/image 等工具全部消失。
+  # ---------------------------------------------------------------------------
+  build-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 前端产物经 go:embed 进内核，--web 才不是空壳；这里跟着源码重编，
+      # 不用仓库里的旧 dist（版本对齐桌面包）。
+      - name: 构建前端（→ internal/webui/dist，go:embed 消费）
+        run: |
+          npm ci
+          npm run build
+        working-directory: webui/frontend
+
+      - name: 交叉编译各平台内核与 MCP 插件
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          LDFLAGS="-s -w -X main.version=${TAG}"
+          # 内置技能（.omni/skills）同步进 go:embed 源，编进内核二进制
+          go run ./build/gen-builtin-skills
+          OUT=build/cli
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          for TARGET in windows-x64 windows-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            OS=${TARGET%%-*}; ARCH=${TARGET##*-}
+            GA=$ARCH; [ "$ARCH" = x64 ] && GA=amd64
+            EXE=""; [ "$OS" = windows ] && EXE=".exe"
+            D="$OUT/$TARGET"; mkdir -p "$D"
+            GOOS=$OS GOARCH=$GA go build -trimpath -ldflags "$LDFLAGS" -o "$D/omni$EXE" .
+            # 内置 MCP 插件同目录随包（内核自动注册，缺了就少一批工具）
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
+              GOOS=$OS GOARCH=$GA go build -trimpath -o "$D/$P$EXE" "./dev/$P"
+            done
+            ls -l "$D"
+          done
+
+      - name: 打包并生成校验和
+        shell: bash
+        run: |
+          set -e
+          command -v zip >/dev/null || sudo apt-get install -y zip
+          OUT=build/cli
+          for TARGET in windows-x64 windows-arm64; do
+            ( cd "$OUT/$TARGET" && zip -q -9 "../omni-cli-$TARGET.zip" ./* )
+          done
+          for TARGET in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            tar -czf "$OUT/omni-cli-$TARGET.tar.gz" -C "$OUT/$TARGET" .
+          done
+          ( cd "$OUT" && sha256sum omni-cli-*.zip omni-cli-*.tar.gz > omni-cli-checksums.txt )
+          ls -l "$OUT"
+
+      # 产物校验不能省：runner 是 linux x64，直接跑本机那份断言版本号，
+      # 再断言每份内核都 >10MB（防止编出占位/空产物还上传）。
+      - name: 校验命令行产物
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          OUT=build/cli
+          chmod +x "$OUT/linux-x64/omni"
+          VER=$("$OUT/linux-x64/omni" --version)
+          echo "内核自报版本：$VER"
+          if [ "$VER" != "omni $TAG" ]; then
+            echo "::error::内核版本($VER)与 tag($TAG)不一致——-X main.version 注入没生效"
+            exit 1
+          fi
+          for TARGET in windows-x64 windows-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            EXE=""; case "$TARGET" in windows-*) EXE=".exe" ;; esac
+            BIN="$OUT/$TARGET/omni$EXE"
+            SIZE=$(stat -c%s "$BIN")
+            echo "[$TARGET] $BIN（$SIZE 字节）"
+            if [ "$SIZE" -lt 10000000 ]; then
+              echo "::error::[$TARGET] 只有 $SIZE 字节，疑似未编译产物"
+              exit 1
+            fi
+            for P in pdf xlsx docx pptx csv image media fetch agnes mimo; do
+              if [ ! -f "$OUT/$TARGET/$P$EXE" ]; then
+                echo "::error::[$TARGET] 缺少 MCP 插件：$P$EXE（内核靠同目录扫描注册）"
+                exit 1
+              fi
+            done
+          done
+          # 压缩包里必须真有内核，而不是空目录
+          unzip -l "$OUT/omni-cli-windows-x64.zip" | grep -q 'omni.exe'
+          tar -tzf "$OUT/omni-cli-linux-x64.tar.gz" | grep -q '\./omni$'
+          echo "✓ 六个平台的命令行包齐全，版本与插件均正常"
+
+      - name: 上传命令行包到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            build/cli/omni-cli-windows-x64.zip
+            build/cli/omni-cli-windows-arm64.zip
+            build/cli/omni-cli-macos-arm64.tar.gz
+            build/cli/omni-cli-macos-x64.tar.gz
+            build/cli/omni-cli-linux-x64.tar.gz
+            build/cli/omni-cli-linux-arm64.tar.gz
+            build/cli/omni-cli-checksums.txt
           fail_on_unmatched_files: true
           draft: false
           prerelease: false

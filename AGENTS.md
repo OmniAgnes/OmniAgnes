@@ -58,6 +58,11 @@ version 一起打包，不会错位。
 
 升级判断用壳的版本做基准是对的（升级替换的就是那个壳）。要让两处一致，就老老实实走 CI。
 
+**纯命令行附件**（2026-10-21 加）：release.yml 里独立一个 `build-cli` job，只编内核 +
+内置 MCP 插件，出 `omni-cli-<平台>-<架构>.zip/.tar.gz`（win/mac/linux 各双架构）+
+`omni-cli-checksums.txt`，让「只要 TUI / `--web` / `--print`」的用户不必装 Electron。
+插件必须和 `omni` 打进同一个包（内核按自身 exe 同目录注册），别改成只发单个二进制。
+
 ## Windows 上的坑
 
 - 禁用 `Set-Content`/`>` 写中文文件，必然坏 UTF-8；用编辑器或 Edit/Write 工具。

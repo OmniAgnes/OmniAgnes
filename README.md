@@ -32,6 +32,39 @@
 
 ## 安装
 
+### 只要命令行（TUI / 网页版 / 脚本），不要桌面端
+
+去 [Releases](https://github.com/OmniAgnes/omni/releases/latest) 下 `omni-cli-*` 附件，
+解压即用，**不需要装桌面端、不需要 Electron**：
+
+| 平台 | 附件 |
+|------|------|
+| Windows x64 | `omni-cli-windows-x64.zip` |
+| Windows ARM64 | `omni-cli-windows-arm64.zip` |
+| macOS Apple Silicon | `omni-cli-macos-arm64.tar.gz` |
+| macOS Intel | `omni-cli-macos-x64.tar.gz` |
+| Linux x64 | `omni-cli-linux-x64.tar.gz` |
+| Linux ARM64 | `omni-cli-linux-arm64.tar.gz` |
+
+```sh
+tar -xzf omni-cli-linux-x64.tar.gz -C ~/.local/bin   # Windows 用解压工具解压即可
+omni                     # 进 TUI
+```
+
+要点：
+
+- 压缩包里是 `omni`（或 `omni.exe`）**加**内置 MCP 插件（`pdf` `xlsx` `docx` `pptx` `csv`
+  `image` `media` `fetch` `agnes` `mimo`）。插件必须和 `omni` **放在同一目录**——内核按
+  自身 exe 同目录自动注册，拆散了那批工具就没了。
+- 没有桌面端就没有图形化配置界面，首次运行在 TUI 里用 `/config` 添加供应商与 API Key
+  （写回 `~/.config/omni/config.json`，与桌面端共用同一份配置与 `~/.local/share/omni/` 数据）。
+- `omni-cli-checksums.txt` 是 sha256，解包前可校验。
+- 附件名固定不带版本号，`releases/latest/download/omni-cli-linux-x64.tar.gz` 可写进脚本。
+- macOS 包未签名：首次运行若被拦截，`xattr -dr com.apple.quarantine ~/.local/bin/omni`
+  再执行（或右键 → 打开）；Windows 同理可能弹 SmartScreen，选「仍要运行」。
+
+### 从源码
+
 ```sh
 go build -o omni .
 ```
@@ -44,7 +77,7 @@ go build -o omni .
 聊天输入框底部可随时切换模型，选择自动记住。
 
 ```sh
-./omni            # 桌面版 + 工作台（TUI 内输入 /webui 也可打开网页版）
+./omni            # 进 TUI（桌面端用户双击安装包即可；TUI 内输入 /webui 打开网页版）
 ./omni --web      # 只启动网页版工作台
 ```
 
