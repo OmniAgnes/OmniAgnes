@@ -2,6 +2,36 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.28 (2026-10-21)
+
+命令行版可以单独安装了：不必再下 Electron 桌面安装包，一条命令装完 TUI / `--web` / `--print`。
+
+### ✨ 新功能
+
+- **发版新增纯命令行附件**（`release.yml` 新增 `build-cli` job，独立于原三个桌面 job）：
+  打 tag 时交叉编译 win/mac/linux × x64/arm64 六个目标，连同 11 个内置 MCP 插件打包成
+  `omni-cli-<平台>-<架构>.zip/.tar.gz`，另出 `omni-cli-checksums.txt` 供校验。
+  **根因**：内核本身就是完整 CLI（不带参数 = TUI、`--web` = 网页工作台、`--print` = 非交互），
+  桌面壳只是它的前端；但此前只上传 Electron 安装包，内核 exe 藏在包内 `resources/bin/`，
+  外部拿不到单个可执行文件，想只用命令行的人只能自己装 Go 编译
+- **一条命令安装**：新增 `scripts/install.sh`（macOS / Linux）与 `scripts/install.ps1`（Windows）。
+  脚本自动识别平台与架构，从 `releases/latest/download` 取对应包，用 `omni-cli-checksums.txt`
+  校验 sha256，解到 `~/.local/bin`（Windows 为 `%LOCALAPPDATA%\omni\bin` 并写入用户 PATH），
+  最后跑一次 `omni --version` 自检。支持 `--version` / `--dir` 与环境变量 `OMNI_DOWNLOAD_BASE`（镜像源）
+- **README 新增「只要命令行（TUI / 网页版 / 脚本），不要桌面端」安装章节**：
+  一条命令安装 + 六个平台附件对照表 + 手工解压步骤 + 常见拦截说明
+
+### 📝 说明
+
+- **插件必须与内核同目录**：内核按自身 exe 同目录扫描并自动注册 MCP 插件，所以十一个插件
+  和 `omni` 打进同一个压缩包，安装脚本解到同一目录；CI 校验步骤逐项断言插件齐全，
+  并真跑一遍 linux-x64 内核 `--version` 断言等于 tag（防 `-X main.version` 注入失效）
+- **Windows 安装脚本带 UTF-8 BOM**：Windows PowerShell 5.1 读无 BOM 脚本会按 ANSI 解码，
+  中文注释会把字符串边界解析坏（实测 5.1 直接报「字符串缺少终止符」），BOM 是必要的
+- 没装桌面端就没有图形化设置界面，首次运行在 TUI 里用 `/config` 配置供应商与 API Key；
+  配置与数据与桌面端共用同一份（`~/.config/omni/config.json`、`~/.local/share/omni/`）
+- 命令行附件名固定不带版本号，`releases/latest/download/omni-cli-linux-x64.tar.gz` 这类直链可长期引用
+
 ## v1.0.27 (2026-10-18)
 
 生成文件默认落到系统下载目录，PDF/Office 产物在回复中随图片同区展示，并修复 PDF 被误标为图片导致上游 400。
