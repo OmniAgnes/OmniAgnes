@@ -705,11 +705,29 @@ jobs:
           for TARGET in windows-x64 windows-arm64; do
             ( cd "$OUT/$TARGET" && zip -q -9 "../omni-cli-$TARGET.zip" ./* )
           done
+          # ⚠️ 目录名用 GOOS（darwin-*），对外附件名统一用 macos-*（README / 安装脚本都按
+          #    macos 写）。v1.0.28 就是这里漏了映射：打出 omni-cli-darwin-*.tar.gz，
+          #    上传清单却写 macos，fail_on_unmatched_files 在最后一步把整个 job 拦下，
+          #    六个 CLI 附件一个都没传出去。
           for TARGET in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
-            tar -czf "$OUT/omni-cli-$TARGET.tar.gz" -C "$OUT/$TARGET" .
+            NAME=${TARGET/darwin-/macos-}
+            tar -czf "$OUT/omni-cli-$NAME.tar.gz" -C "$OUT/$TARGET" .
           done
           ( cd "$OUT" && sha256sum omni-cli-*.zip omni-cli-*.tar.gz > omni-cli-checksums.txt )
           ls -l "$OUT"
+          # 上传前逐个断言附件名（与下面 action-gh-release 的 files 清单严格一致）：
+          # 名字对不上时在这里秒级失败，而不是等编译器全跑完才在最后一步炸掉。
+          for f in omni-cli-windows-x64.zip omni-cli-windows-arm64.zip \
+                   omni-cli-macos-arm64.tar.gz omni-cli-macos-x64.tar.gz \
+                   omni-cli-linux-x64.tar.gz omni-cli-linux-arm64.tar.gz \
+                   omni-cli-checksums.txt; do
+            if [ ! -f "$OUT/$f" ]; then
+              echo "::error::缺少产物 $OUT/$f（上传步骤会 fail_on_unmatched_files）"
+              ls -l "$OUT"
+              exit 1
+            fi
+          done
+          echo "✓ 七个附件名齐备"
 
       # 产物校验不能省：runner 是 linux x64，直接跑本机那份断言版本号，
       # 再断言每份内核都 >10MB（防止编出占位/空产物还上传）。

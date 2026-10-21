@@ -23,7 +23,7 @@ INSTALL_DIR="${HOME}/.local/bin"
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="${2:?--version 需要值}"; shift 2 ;;
-    --dir)     INSTALL_DIR="${2:?--dir 需要值}";     shift 2 ;;
+    --dir)     INSTALL_DIR="${2:?--dir 需要值}";     OMNI_DIR_GIVEN=1; shift 2 ;;
     -h|--help)
       cat <<'USAGE'
 用法：install.sh [--version <版本>] [--dir <安装目录>]
@@ -45,6 +45,25 @@ OS_RAW=$(uname -s)
 case "$OS_RAW" in
   Linux*)  OS=linux ;;
   Darwin*) OS=macos ;;
+  MINGW*|MSYS*|CYGWIN*)
+    # Git Bash / MSYS2 / Cygwin：用户习惯敲 `curl | sh`，但这里要装的是 Windows 原生版
+    # （omni.exe + .exe 插件），直接转交给 PowerShell 安装器，别让他们看到「不支持的平台」。
+    command -v powershell >/dev/null 2>&1 || \
+      die "检测到 Git Bash/MSYS，但找不到 powershell。请在 PowerShell 里执行：
+  irm https://raw.githubusercontent.com/OmniAgnes/OmniAgnes/master/scripts/install.ps1 | iex"
+    # 版本号透传；目录若由 --dir 指定，先转成 Windows 路径（cygpath 在 Git Bash 里一定有）
+    [ "$VERSION" = "latest" ] || export OMNI_VERSION="$VERSION"
+    if [ -n "${OMNI_DIR_GIVEN:-}" ]; then
+      if command -v cygpath >/dev/null 2>&1; then
+        export OMNI_DIR="$(cygpath -w "$INSTALL_DIR")"
+      else
+        die "在 Git Bash 里用 --dir 需要 cygpath；或在 PowerShell 里设置 \$env:OMNI_DIR 后直接跑 install.ps1"
+      fi
+    fi
+    echo "→ 检测到 Git Bash/MSYS，转为运行 Windows 版安装脚本（powershell）"
+    exec powershell -NoProfile -ExecutionPolicy Bypass -Command \
+      "irm https://raw.githubusercontent.com/OmniAgnes/OmniAgnes/master/scripts/install.ps1 | iex"
+    ;;
   *) die "不支持的平台：$OS_RAW（Windows 请用 scripts/install.ps1）" ;;
 esac
 
