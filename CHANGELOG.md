@@ -2,6 +2,36 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.29 (2026-10-21)
+
+补 v1.0.28 装不上的命令行版：修掉发版时附件名拼错、以及 Windows 一键安装脚本被 BOM 弄坏的两个问题。
+桌面端安装包在 v1.0.28 里是正常的，只是 `omni-cli-*` 六个附件一个都没传出去。
+
+### 🐛 修复
+
+- **CLI 附件名 `darwin` / `macos` 不一致，导致整个 `build-cli` job 在上传步骤失败**：
+  编译循环按 `GOOS` 命名目录（`darwin-arm64`），打包时直接拿目录名当附件名，产出
+  `omni-cli-darwin-arm64.tar.gz`，而上传清单写的是 `omni-cli-macos-arm64.tar.gz`。
+  `fail_on_unmatched_files: true` 在最后一步把 job 拦下，**六个 CLI 附件全都没上传**
+  （校验步骤只 grep 了 linux/windows 两个名字，所以没提前发现）。
+  现在打包时把 `darwin-` 映射成 `macos-`，并在**打包步骤末尾**逐个断言七个附件名齐备，
+  名字对不上就秒级失败，不用等交叉编译跑完
+- **`install.ps1` 带 UTF-8 BOM，`irm ... | iex` 在 PowerShell 5.1 直接失败**：
+  BOM 会粘在第一个 `#` 上，被当成命令名（`无法将 '﻿#' 识别为 cmdlet`）。去掉 BOM 后
+  5.1 又会把文件按 ANSI 读，中文注释使字符串解析崩掉（`字符串缺少终止符`）。
+  两者互斥，因此脚本改为**纯 ASCII、无 BOM**（提示语改英文），这是唯一同时满足
+  `iex` 与 `-File` 两种执行方式的组合
+- **`install.sh` 在 Git Bash / MSYS2 里报「不支持的平台」**：这类用户习惯敲 `curl | sh`，
+  现在识别到 `MINGW*`/`MSYS*`/`CYGWIN*` 会自动转交给 PowerShell 安装器（版本号与
+  `--dir` 一并透传，目录用 `cygpath -w` 转成 Windows 路径），不再让人换终端重来
+
+### 📝 说明
+
+- 两个安装脚本都做了端到端验证：本地起一个假 release 源，跑通「下载 → sha256 校验 →
+  解包（内核 + 插件同目录）→ `omni --version` 自检」全流程
+- README 里的一条命令安装自 v1.0.29 起可用；v1.0.28 因为没有 CLI 附件，`latest/download`
+  会 404，属预期
+
 ## v1.0.28 (2026-10-21)
 
 命令行版可以单独安装了：不必再下 Electron 桌面安装包，一条命令装完 TUI / `--web` / `--print`。
