@@ -1,0 +1,6 @@
+# shell 安装脚本必须是 LF：CRLF 的 shebang 在 macOS/Linux 上会以
+# "bad interpreter: /bin/sh^M" 直接失败，而这正是 `curl | sh` 之外最常见的用法。
+*.sh text eol=lf
+
+# PowerShell 脚本按仓库习惯保持 CRLF（install.ps1 另带 UTF-8 BOM，BOM 是内容的一部分）
+*.ps1 text eol=crlf
