@@ -2,6 +2,19 @@
 
 本项目版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.32 (2026-10-23)
+
+### ✨ 新功能
+
+- **供应商自定义请求头**：`providers[].headers` 可配置任意 HTTP 头，对话与 `GET /models` 都会携带；同名头覆盖默认值（含 `Authorization`）。设置 → 模型 → 供应商卡片里可直接增删。
+- **opencode 网关自动补 `x-opencode-session`**：此前请求会返回 400「Request is missing x-opencode-session」。内核按每个任务生成稳定会话 ID 自动补齐（OpenAI / Anthropic / Gemini 三种通道都生效），用户显式配置同名头时以配置为准，不再需要手动加 header。
+- **模型参数自动获取**：设置里模型行新增 ✨「自动获取参数」，通过 `POST /api/model-meta` 从 models.dev 拉取上下文窗口、最大输出与输入类型。实测 `deepseek-v4.1-flash`（opencode-go）= 1,000,000 / 384,000 / text+image。
+
+### 🔧 说明
+
+- 供应商自己的 `/models` 通常只返回模型 id，拿不到上下文长度；models.dev registry 缓存到 `~/.local/share/omni/models.dev.json`（TTL 24 小时，联网失败回退旧缓存）。
+- 同名模型跨供应商时优先按 base_url 匹配；参数冲突不猜，避免把上下文配错。
+
 ## v1.0.31 (2026-10-21)
 
 ### ✨ 新功能
