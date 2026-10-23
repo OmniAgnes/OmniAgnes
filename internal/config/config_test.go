@@ -121,3 +121,26 @@ func TestSave(t *testing.T) {
 		t.Fatalf("file not created: %v", err)
 	}
 }
+
+// 自定义请求头：键值去空白、丢空键；全空时归 nil，不落空对象。
+func TestProviderHeadersNormalize(t *testing.T) {
+	p := ProviderConfig{
+		Type:  "openai",
+		Model: "m",
+		Headers: map[string]string{
+			" x-opencode-session ": " abc ",
+			"":                     "orphan",
+			"   ":                  "blank",
+		},
+	}
+	p.Normalize()
+	if len(p.Headers) != 1 || p.Headers["x-opencode-session"] != "abc" {
+		t.Fatalf("headers = %#v", p.Headers)
+	}
+
+	p = ProviderConfig{Type: "openai", Model: "m", Headers: map[string]string{" ": "x"}}
+	p.Normalize()
+	if p.Headers != nil {
+		t.Fatalf("空请求头应归 nil: %#v", p.Headers)
+	}
+}

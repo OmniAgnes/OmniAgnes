@@ -33,21 +33,21 @@ func ResolveProvider(cfg *config.Config) (Provider, string, error) {
 				}
 			}
 		}
-	// 目标指向的供应商若无可用 key（远程 API），跳过——避免 resolve 落到失效条目上
-	if pick != nil && pick.ResolveAPIKey() == "" && !pick.NoAuth() {
-		pick = nil
-	}
-	if pick == nil {
-		for i := range cfg.Providers {
-			if cfg.Providers[i].Default {
-				pick = &cfg.Providers[i]
-				break
+		// 目标指向的供应商若无可用 key（远程 API），跳过——避免 resolve 落到失效条目上
+		if pick != nil && pick.ResolveAPIKey() == "" && !pick.NoAuth() {
+			pick = nil
+		}
+		if pick == nil {
+			for i := range cfg.Providers {
+				if cfg.Providers[i].Default {
+					pick = &cfg.Providers[i]
+					break
+				}
 			}
 		}
-	}
-	if pick == nil {
-		pick = &cfg.Providers[0]
-	}
+		if pick == nil {
+			pick = &cfg.Providers[0]
+		}
 		p := *pick
 		apiKey := p.ResolveAPIKey()
 		// ollama/本地端点无需 key
@@ -55,7 +55,7 @@ func ResolveProvider(cfg *config.Config) (Provider, string, error) {
 		if needKey {
 			return nil, "", fmt.Errorf("provider %s 缺少 API Key：请配置 providers[].api_key 或 env_key，或设置对应环境变量", p.Type)
 		}
-		prov, err := New(ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: apiKey})
+		prov, err := New(ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: apiKey, Headers: p.Headers})
 		if err != nil {
 			return nil, "", err
 		}

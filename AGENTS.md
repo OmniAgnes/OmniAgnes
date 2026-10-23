@@ -80,6 +80,21 @@ version 一起打包，不会错位。
 - 上游 500/429/502/503/504 走统一重试；进度用独立事件，不进思考流
 - 空回复优先排查上下文长度（滑动窗口只保留最近 20 个用户轮）
 
+### 模型参数与网关私有请求头
+
+- `providers[].headers` 是随每次请求（对话 + `GET /models`）发送的自定义头，
+  设置界面在供应商卡片里；同名头覆盖默认值（含 `Authorization`）。
+- opencode.ai 网关必须带 `x-opencode-session`，否则 400「Request is missing
+  x-opencode-session」。内核按「每个 Agent/任务一个稳定 ID」自动补
+  （`internal/llm/openai.go` 的 `requestHeaders`，Agent 构造时生成 `sessionID`），
+  用户配置同名头时以配置为准。
+- 上下文窗口/最大输出/输入模态由 `POST /api/model-meta` 从 models.dev 查询
+  （`internal/llm/modelinfo.go`，缓存 `~/.local/share/omni/models.dev.json`，TTL 24h，
+  联网失败回退旧缓存）。设置界面模型行的 ✨「自动获取参数」按钮用它填充。
+  供应商自己的 `/models` 通常只有 id（OpenCode 就是如此），拿不到上下文长度。
+  匹配优先按 base_url 对应 models.dev 的 `api`，其次全库模型名唯一命中；
+  多个供应商同名且参数冲突时不猜，避免把上下文配错。
+
 ## 移动端远程访问
 
 桌面端左下角手机图标（设置图标左边）→ 悬停出二维码 → 开关「允许移动端连接此设备」。

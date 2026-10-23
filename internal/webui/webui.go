@@ -74,16 +74,16 @@ func Start(opts Options) (string, error) {
 		return "", err
 	}
 	s := &server{
-		opts:   opts,
-		cfg:    cfg,
-		store:  store.New(config.DefaultDataDir()),
-		agents: map[string]*agent.Agent{},
-		regs:   map[string]*tools.Registry{},
+		opts:      opts,
+		cfg:       cfg,
+		store:     store.New(config.DefaultDataDir()),
+		agents:    map[string]*agent.Agent{},
+		regs:      map[string]*tools.Registry{},
 		approvals: map[string]*approvalReq{},
 		questions: map[string]*questionReq{},
-		browser: newBrowserBridge(),
-		hub:     newEventHub(),
-		mobile:  mob,
+		browser:   newBrowserBridge(),
+		hub:       newEventHub(),
+		mobile:    mob,
 	}
 	srv := &http.Server{Handler: s.routes()}
 	go func() { _ = srv.Serve(ln) }()
@@ -121,6 +121,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/server-url", s.handleServerURL)
 	mux.HandleFunc("GET /api/models", s.handleModels)
 	mux.HandleFunc("POST /api/test-model", s.handleTestModel)
+	mux.HandleFunc("POST /api/model-meta", s.handleModelMeta)
 	mux.HandleFunc("GET /api/providers", s.handleProvidersGet)
 	mux.HandleFunc("PUT /api/providers", s.handleProvidersPut)
 	mux.HandleFunc("GET /api/projects", s.handleProjectsList)

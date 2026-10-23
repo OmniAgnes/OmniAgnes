@@ -94,7 +94,7 @@ func fetchModelsCmd(configPath string) tea.Cmd {
 		var errs []string
 		for i, p := range cfg.Providers {
 			prov, nerr := llm.New(llm.ConfigP{
-				Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey(),
+				Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey(), Headers: p.Headers,
 			})
 			if nerr != nil {
 				errs = append(errs, fmt.Sprintf("%s: %v", p.Type, nerr))
@@ -154,7 +154,7 @@ func (m *Model) switchModel(name string, provIdx int) {
 			m.addSystemMsg(fmt.Sprintf("供应商 %s（%s）缺少 API Key，无法切换到 %s；请用 /config 补全", p.Type, p.Model, name))
 			return
 		}
-		prov, nerr := llm.New(llm.ConfigP{Type: p.Type, Model: name, BaseURL: p.BaseURL, APIKey: apiKey})
+		prov, nerr := llm.New(llm.ConfigP{Type: p.Type, Model: name, BaseURL: p.BaseURL, APIKey: apiKey, Headers: p.Headers})
 		if nerr != nil {
 			m.addSystemMsg(fmt.Sprintf("切换到 %s 失败: %v", name, nerr))
 			return

@@ -3,6 +3,7 @@ import type {
   ChatEvent,
   MCPStatus,
   MCPServerConfig,
+  ModelMeta,
   MobileInfo,
   Project,
   ProviderConfig,
@@ -66,6 +67,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model }),
     }).then((r) => json<{ ok: boolean; error?: string }>(r)),
+
+  /** 自动获取模型参数（上下文窗口/最大输出/输入模态），数据来自 models.dev */
+  modelMeta: (p: { model: string; type?: string; base_url?: string }) =>
+    fetch("/api/model-meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }).then((r) => json<{ ok: boolean; meta?: ModelMeta; error?: string }>(r)),
 
   providers: () => fetch("/api/providers").then((r) => json<{ providers: ProviderConfig[] }>(r)),
 

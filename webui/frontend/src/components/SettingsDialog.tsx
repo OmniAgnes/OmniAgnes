@@ -20,6 +20,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   RocketIcon,
+  SparklesIcon,
   SunMoonIcon,
   Trash2Icon,
   UserIcon,
@@ -1402,6 +1403,21 @@ function ProviderCard({
   const [open, setOpen] = useState(defaultOpen)
   const [modelInput, setModelInput] = useState("")
   const nameRef = useRef<HTMLInputElement>(null)
+  // 自定义请求头用行编辑（空行先留在本地，提交时过滤空键），
+  // 避免「点添加 → 立刻被回写过滤掉」导致输入框一闪而过。
+  const [headerRows, setHeaderRows] = useState<{ key: string; value: string }[]>(() =>
+    Object.entries(provider.headers ?? {}).map(([key, value]) => ({ key, value })),
+  )
+
+  const commitHeaders = (rows: { key: string; value: string }[]) => {
+    setHeaderRows(rows)
+    const headers: Record<string, string> = {}
+    for (const r of rows) {
+      const k = r.key.trim()
+      if (k) headers[k] = r.value.trim()
+    }
+    onChange({ headers: Object.keys(headers).length ? headers : undefined })
+  }
 
   // 新添加的供应商：展开后直接聚焦名称，省一次点击
   useEffect(() => {
@@ -1561,6 +1577,53 @@ function ProviderCard({
                   placeholder="https://api.example.com/v1"
                 />
               </div>
+              {/* 自定义请求头：网关的私有要求（如 OpenCode Go 的 x-opencode-session） */}
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <Label className="text-muted-foreground text-xs">{t("se.headers")}</Label>
+                {headerRows.map((row, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={row.key}
+                      onChange={(e) =>
+                        commitHeaders(
+                          headerRows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)),
+                        )
+                      }
+                      placeholder={t("se.headerKey")}
+                      className="w-52 shrink-0 font-mono text-xs"
+                    />
+                    <Input
+                      value={row.value}
+                      onChange={(e) =>
+                        commitHeaders(
+                          headerRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)),
+                        )
+                      }
+                      placeholder={t("se.headerValue")}
+                      className="font-mono text-xs"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-muted-foreground hover:text-destructive shrink-0"
+                      onClick={() => commitHeaders(headerRows.filter((_, j) => j !== i))}
+                      title={t("se.removeHeader")}
+                    >
+                      <Trash2Icon />
+                    </Button>
+                  </div>
+                ))}
+                <div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setHeaderRows([...headerRows, { key: "", value: "" }])}
+                  >
+                    <PlusIcon /> {t("se.addHeader")}
+                  </Button>
+                </div>
+                <p className="text-muted-foreground text-[11px]">{t("se.headersHint")}</p>
+              </div>
               {/* 添加模型：只负责新增；改名/删除在下方「模型参数」列表里做 */}
               <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <Label className="text-muted-foreground text-xs">{t("se.addModels")}</Label>
@@ -1588,6 +1651,8 @@ function ProviderCard({
                       key={m}
                       name={m}
                       options={provider.model_options?.[m] ?? {}}
+                      providerType={provider.type}
+                      providerBaseURL={provider.base_url ?? ""}
                       onChange={(opt) => patchModelOptions(m, opt)}
                       onRename={renameModel}
                       onRemove={removeModel}
@@ -1702,12 +1767,17 @@ function ReasoningEffortPicker({
 function ModelOptionsRow({
   name,
   options,
+  providerType,
+  providerBaseURL,
   onChange,
   onRename,
   onRemove,
 }: {
   name: string
   options: ModelOptions
+  /** 自动获取参数时用于定位 models.dev 供应商 */
+  providerType: string
+  providerBaseURL: string
   onChange: (patch: Partial<ModelOptions>) => void
   onRename: (from: string, to: string) => void
   onRemove: (name: string) => void
@@ -1717,22 +1787,57 @@ function ModelOptionsRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
 
-  // 连通性测试：点图标发一次极短探测，结果只提示连接成功 / 连接失败
+  // 连通性测试 / 自动获取参数的结果提示（portal 到 body，覆盖在弹窗之上）
   const [testing, setTesting] = useState(false)
-  const [testToast, setTestToast] = useState<{ ok: boolean } | null>(null)
+  const [fetchingMeta, setFetchingMeta] = useState(false)
+  const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
+  const showToast = (ok: boolean, msg: string) => {
+    setToast({ ok, msg })
+    setTimeout(() => setToast(null), 3500)
+  }
   const runTest = async () => {
     if (testing) return
     setTesting(true)
-    let ok = false
     try {
       const r = await api.testModel(name)
-      ok = r.ok
-    } catch {
-      ok = false
+      // 后端可能返回「通但模型没回话」的提示，原样展示便于定位
+      showToast(r.ok, r.ok ? r.error || t("se.testOk") : r.error || t("se.testFail"))
+    } catch (e) {
+      showToast(false, e instanceof Error ? e.message : t("se.testFail"))
     } finally {
       setTesting(false)
-      setTestToast({ ok })
-      setTimeout(() => setTestToast(null), 3500)
+    }
+  }
+
+  // 从 models.dev 取上下文窗口/最大输出/输入模态；取不到的字段保持原值
+  const fetchMeta = async () => {
+    if (fetchingMeta) return
+    setFetchingMeta(true)
+    try {
+      const r = await api.modelMeta({ model: name, type: providerType, base_url: providerBaseURL })
+      if (!r.ok || !r.meta) {
+        showToast(false, r.error || t("se.fetchMetaFail"))
+        return
+      }
+      const m = r.meta
+      const patch: Partial<ModelOptions> = {}
+      if (m.context_window) patch.context_window = m.context_window
+      if (m.max_output_tokens) patch.max_output_tokens = m.max_output_tokens
+      if (m.input_types?.length) patch.input_types = m.input_types
+      if (Object.keys(patch).length === 0) {
+        showToast(false, t("se.fetchMetaEmpty"))
+        return
+      }
+      onChange(patch)
+      const parts: string[] = []
+      if (m.context_window) parts.push(t("se.sumContext", { n: m.context_window }))
+      if (m.max_output_tokens) parts.push(t("se.sumOutput", { n: m.max_output_tokens }))
+      if (m.input_types?.length) parts.push(m.input_types.join("/"))
+      showToast(true, t("se.fetchMetaOk", { info: parts.join(" · ") }))
+    } catch (e) {
+      showToast(false, e instanceof Error ? e.message : t("se.fetchMetaFail"))
+    } finally {
+      setFetchingMeta(false)
     }
   }
 
@@ -1807,6 +1912,19 @@ function ModelOptionsRow({
               variant="ghost"
               size="icon-sm"
               className="text-muted-foreground"
+              onClick={fetchMeta}
+              title={t("se.fetchMeta")}
+            >
+              {fetchingMeta ? (
+                <Loader2Icon className="size-4 animate-spin" />
+              ) : (
+                <SparklesIcon className="size-4" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
               onClick={() => {
                 setDraft(name)
                 setEditing(true)
@@ -1824,15 +1942,15 @@ function ModelOptionsRow({
             >
               <Trash2Icon />
             </Button>
-            {/* 连通性结果 toast：portal 到 body 覆盖在弹窗之上 */}
-            {testToast && createPortal(
+            {/* 探测/获取结果 toast：portal 到 body 覆盖在弹窗之上 */}
+            {toast && createPortal(
               <div
                 className={cn(
                   "text-foreground fixed bottom-6 left-1/2 z-[200] -translate-x-1/2 max-w-[80vw] rounded-md border px-3.5 py-2.5 text-sm shadow-md",
-                  testToast.ok ? "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950" : "border-destructive/40 bg-destructive/10",
+                  toast.ok ? "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950" : "border-destructive/40 bg-destructive/10",
                 )}
               >
-                {testToast.ok ? "连接成功" : "连接失败"}
+                {toast.msg}
               </div>,
               document.body,
             )}
@@ -1842,6 +1960,17 @@ function ModelOptionsRow({
 
       {open && (
         <div className="flex flex-col gap-3 border-t p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground text-[11px]">{t("se.metaHint")}</span>
+            <Button variant="outline" size="sm" onClick={fetchMeta} disabled={fetchingMeta}>
+              {fetchingMeta ? (
+                <Loader2Icon className="size-3.5 animate-spin" />
+              ) : (
+                <SparklesIcon className="size-3.5" />
+              )}
+              {t("se.fetchMeta")}
+            </Button>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label className="text-muted-foreground text-xs">{t("se.contextWin")}</Label>

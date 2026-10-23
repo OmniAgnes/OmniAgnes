@@ -110,7 +110,7 @@ func (s *server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "未找到该模型对应的供应商配置"})
 		return
 	}
-	prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey()})
+	prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey(), Headers: p.Headers})
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "创建通道失败: " + err.Error()})
 		return
@@ -121,6 +121,7 @@ func (s *server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 		Model:     req.Model,
 		Messages:  []llm.Message{llm.NewTextMessage(llm.RoleUser, "ping")},
 		MaxTokens: 1,
+		SessionID: llm.NewSessionID(),
 	}, nil)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
@@ -132,6 +133,39 @@ func (s *server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleModelMeta 到 models.dev 查询模型的上下文窗口/最大输出/输入模态。
+// 前端「自动获取」按钮用它填模型参数，省得用户自己翻文档。
+func (s *server) handleModelMeta(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[struct {
+		Model   string `json:"model"`
+		Type    string `json:"type"`
+		BaseURL string `json:"base_url"`
+	}](r)
+	if err != nil || strings.TrimSpace(req.Model) == "" {
+		writeErr(w, `请求体需为 {"model": ...}`, http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(req.Model, config.BuiltinModelPrefix) {
+		writeJSON(w, map[string]any{"ok": false, "error": "内置模型由后台网关提供，暂无元数据"})
+		return
+	}
+	typ, baseURL := req.Type, req.BaseURL
+	if typ == "" && baseURL == "" {
+		if p := s.cfg.ProviderForModel(req.Model); p != nil {
+			typ, baseURL = p.Type, p.BaseURL
+		}
+	}
+	// 首次查询要下载并解析 models.dev 的 registry（之后走磁盘缓存），留足时间
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	meta, err := llm.LookupModelMeta(ctx, typ, baseURL, req.Model)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "meta": meta})
 }
 
 // ---------- 供应商 ----------
@@ -691,7 +725,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// 内置的选择劫持到本地 provider 上，这里只把去前缀的真名交给 agent，provider 保持回落。
 	if req.Model != "" {
 		if p := s.cfg.ProviderForModel(req.Model); p != nil {
-			if prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey()}); err == nil {
+			if prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey(), Headers: p.Headers}); err == nil {
 				a.SetProvider(prov, req.Model)
 				t.Model = req.Model
 			}

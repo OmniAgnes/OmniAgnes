@@ -25,6 +25,10 @@ func init() {
 			baseURL: baseURL,
 			apiKey:  cfg.APIKey,
 			model:   cfg.Model,
+			headers: cloneHeaders(cfg.Headers),
+			// 网关（如 OpenCode Go）要求 x-opencode-session 且同一对话内保持稳定；
+			// 构造时先备一个，Chat 请求带 SessionID 时以会话的为准。
+			session: sessionState{id: NewSessionID()},
 		}, nil
 	})
 }
@@ -34,6 +38,8 @@ type OpenAIProvider struct {
 	baseURL string
 	apiKey  string
 	model   string
+	headers map[string]string
+	session sessionState
 	client  *http.Client
 }
 
@@ -55,9 +61,10 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	// ollama 不校验 key；其余按 Bearer 传
-	headers := map[string]string{}
-	if p.apiKey != "" {
+	// ollama 不校验 key；其余按 Bearer 传。用户显式配置的 Authorization
+	// （有些网关不用 Bearer）优先，不再覆盖。
+	headers := p.requestHeaders("")
+	if p.apiKey != "" && !hasHeader(headers, "Authorization") {
 		headers["Authorization"] = "Bearer " + p.apiKey
 	}
 	if err := fetchJSON(ctx, p.httpClient(), p.baseURL+"/models", headers, &out); err != nil {
@@ -202,6 +209,19 @@ func (p *OpenAIProvider) httpClient() *http.Client {
 	return p.client
 }
 
+// requestHeaders 组装本次请求要带的额外头：用户配置优先；
+// OpenCode 网关没配 x-opencode-session 时自动补一个会话级标识，
+// 否则请求会被 400（「Request is missing x-opencode-session」）。
+func (p *OpenAIProvider) requestHeaders(sessionID string) map[string]string {
+	return gatewayRequestHeaders(p.baseURL, sessionID, p.headers, &p.session)
+}
+
+// isOpenCodeGateway 判断是否为 opencode.ai 的推理网关。
+// 只有该网关强制要求会话头，别的兼容端点不受影响。
+func isOpenCodeGateway(baseURL string) bool {
+	return strings.Contains(strings.ToLower(baseURL), "opencode.ai")
+}
+
 func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func(StreamEvent) error) (*ChatResponse, error) {
 	model := req.Model
 	if model == "" {
@@ -305,7 +325,8 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 	// 为什么要重试：中转网关/免费模型（如 openrouter 的 :free 档、agnes）渠道池浅，
 	// 偶发返回 500「上游失败」/ 503「无可用渠道」/ 502 / 429，单次失败不代表模型不可用。
 	// 只对可重试的状态码重试；4xx（如 401 key 失效）立刻返回，避免掩盖真实配置错误。
-	resp, err := p.doWithRetry(ctx, body, onEvent)
+	headers := p.requestHeaders(req.SessionID)
+	resp, err := p.doWithRetry(ctx, body, onEvent, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +341,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 			return nil, err
 		}
 		body = fixed
-		resp, err = p.doWithRetry(ctx, body, onEvent)
+		resp, err = p.doWithRetry(ctx, body, onEvent, headers)
 		if err != nil {
 			return nil, err
 		}
@@ -365,7 +386,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 			return nil, ctx.Err()
 		case <-time.After(retryDelay):
 		}
-		resp, err = p.doOnce(ctx, body)
+		resp, err = p.doOnce(ctx, body, headers)
 		if err != nil {
 			return nil, err
 		}
@@ -401,7 +422,7 @@ const (
 
 // doWithRetry 发送请求，遇可重试状态码或网络错误按固定间隔重试。
 // 重试之间会通过 onEvent 发一条 reasoning 提示，让用户知道正在重试（否则界面像卡死）。
-func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent func(StreamEvent) error) (*http.Response, error) {
+func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent func(StreamEvent) error, headers map[string]string) (*http.Response, error) {
 	maxAttempts := maxRetries + 1
 	var lastErr error
 
@@ -415,7 +436,7 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent f
 			}
 		}
 
-		resp, err := p.doOnce(ctx, body)
+		resp, err := p.doOnce(ctx, body, headers)
 		if err != nil {
 			// 网络层错误（EOF/超时）也重试；最后一次才抛
 			lastErr = fmt.Errorf("请求 %s 失败: %w", p.baseURL, err)
@@ -443,13 +464,17 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte, onEvent f
 }
 
 // doOnce 发起一次请求（无重试逻辑；重试由 doWithRetry 与 Chat 的空响应重试负责）。
-func (p *OpenAIProvider) doOnce(ctx context.Context, body []byte) (*http.Response, error) {
+func (p *OpenAIProvider) doOnce(ctx context.Context, body []byte, headers map[string]string) (*http.Response, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	// 自定义头最后写，允许覆盖上面的默认头
+	setHeaders(httpReq, headers)
 	return p.httpClient().Do(httpReq)
 }
 

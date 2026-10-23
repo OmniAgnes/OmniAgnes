@@ -24,6 +24,8 @@ func init() {
 			baseURL: baseURL,
 			apiKey:  cfg.APIKey,
 			model:   cfg.Model,
+			headers: cloneHeaders(cfg.Headers),
+			session: sessionState{id: NewSessionID()},
 		}, nil
 	})
 }
@@ -33,7 +35,14 @@ type GeminiProvider struct {
 	baseURL string
 	apiKey  string
 	model   string
+	headers map[string]string
+	session sessionState
 	client  *http.Client
+}
+
+// requestHeaders 合并用户自定义头，并在 OpenCode 网关上补会话头。
+func (p *GeminiProvider) requestHeaders(sessionID string) map[string]string {
+	return gatewayRequestHeaders(p.baseURL, sessionID, p.headers, &p.session)
 }
 
 func (p *GeminiProvider) Name() string { return "gemini" }
@@ -48,7 +57,7 @@ func (p *GeminiProvider) ListModels(ctx context.Context) ([]string, error) {
 		} `json:"models"`
 	}
 	endpoint := fmt.Sprintf("%s/models?key=%s", p.baseURL, url.QueryEscape(p.apiKey))
-	if err := fetchJSON(ctx, p.httpClient(), endpoint, nil, &out); err != nil {
+	if err := fetchJSON(ctx, p.httpClient(), endpoint, p.requestHeaders(""), &out); err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(out.Models))
@@ -237,6 +246,7 @@ func (p *GeminiProvider) Chat(ctx context.Context, req ChatRequest, onEvent func
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	setHeaders(httpReq, p.requestHeaders(req.SessionID))
 
 	resp, err := p.httpClient().Do(httpReq)
 	if err != nil {

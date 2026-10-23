@@ -47,6 +47,10 @@ type ProviderConfig struct {
 	APIKey  string   `json:"api_key,omitempty"`
 	EnvKey  string   `json:"env_key,omitempty"` // 从该环境变量读取 key，优先级高于 api_key
 	Default bool     `json:"default,omitempty"`
+	// Headers 是随每次请求发送的额外 HTTP 头（模型列表与对话都带）。
+	// 用于网关的私有要求，例如 OpenCode Go 必须带 x-opencode-session；
+	// 同名头以这里配置的为准，未配置时由内核自动补会话标识。
+	Headers map[string]string `json:"headers,omitempty"`
 
 	// 以下为供应商级默认值，模型未单独配置时生效（兼容旧配置文件）
 	ContextWindow   int      `json:"context_window,omitempty"`
@@ -118,6 +122,7 @@ func (p *ProviderConfig) Normalize() {
 	if p.Reasoning == "default" {
 		p.Reasoning = ""
 	}
+	p.Headers = normalizeHeaders(p.Headers)
 	for name, o := range p.ModelOptions {
 		if o.Reasoning == "default" {
 			o.Reasoning = ""
@@ -166,6 +171,26 @@ func (p *ProviderConfig) HasModel(model string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeHeaders 清理自定义请求头：键值去首尾空白、丢弃空键；
+// 全部为空时返回 nil，避免配置文件里留下空对象。
+func normalizeHeaders(h map[string]string) map[string]string {
+	if len(h) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // MCPServerConfig 描述一个 MCP 服务器：command（stdio）或 url（streamable HTTP）二选一。

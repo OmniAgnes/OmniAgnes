@@ -76,7 +76,7 @@ func (s *server) runScheduledTask(st *store.ScheduledTask) {
 	// 指定模型：模型可能属于另一个 provider，须连 provider 一起切
 	if st.Model != "" {
 		if p := s.cfg.ProviderForModel(st.Model); p != nil {
-			if prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey()}); err == nil {
+			if prov, err := llm.New(llm.ConfigP{Type: p.Type, Model: p.Model, BaseURL: p.BaseURL, APIKey: p.ResolveAPIKey(), Headers: p.Headers}); err == nil {
 				a.SetProvider(prov, st.Model)
 				t.Model = st.Model
 			}

@@ -23,6 +23,8 @@ func init() {
 			baseURL: baseURL,
 			apiKey:  cfg.APIKey,
 			model:   cfg.Model,
+			headers: cloneHeaders(cfg.Headers),
+			session: sessionState{id: NewSessionID()},
 		}, nil
 	})
 }
@@ -32,7 +34,14 @@ type AnthropicProvider struct {
 	baseURL string
 	apiKey  string
 	model   string
+	headers map[string]string
+	session sessionState
 	client  *http.Client
+}
+
+// requestHeaders 合并用户自定义头，并在 OpenCode 网关上补会话头。
+func (p *AnthropicProvider) requestHeaders(sessionID string) map[string]string {
+	return gatewayRequestHeaders(p.baseURL, sessionID, p.headers, &p.session)
 }
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
@@ -46,10 +55,10 @@ func (p *AnthropicProvider) ListModels(ctx context.Context) ([]string, error) {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	headers := map[string]string{
-		"x-api-key":          p.apiKey,
-		"anthropic-version":  "2023-06-01",
-	}
+	headers := mergeHeaders(map[string]string{
+		"x-api-key":         p.apiKey,
+		"anthropic-version": "2023-06-01",
+	}, p.requestHeaders(""))
 	if err := fetchJSON(ctx, p.httpClient(), p.baseURL+"/models", headers, &out); err != nil {
 		return nil, err
 	}
@@ -258,6 +267,7 @@ func (p *AnthropicProvider) Chat(ctx context.Context, req ChatRequest, onEvent f
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
+	setHeaders(httpReq, p.requestHeaders(req.SessionID))
 
 	resp, err := p.httpClient().Do(httpReq)
 	if err != nil {

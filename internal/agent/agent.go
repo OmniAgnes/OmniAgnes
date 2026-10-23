@@ -117,6 +117,9 @@ type Agent struct {
 	history       []llm.Message
 	lastTurnStart int
 	maxKeepTurns  int
+	// sessionID 是本任务的稳定会话标识：同一任务内所有请求保持不变，
+	// 供要求按会话路由/缓存的网关（如 OpenCode Go 的 x-opencode-session）使用。
+	sessionID string
 }
 
 // New 创建 Agent。
@@ -148,6 +151,7 @@ func New(provider llm.Provider, reg *tools.Registry, opts Options) *Agent {
 		history:       opts.History,
 		maxKeepTurns:  keep,
 		lastTurnStart: -1,
+		sessionID:     llm.NewSessionID(),
 	}
 }
 
@@ -386,6 +390,7 @@ func (a *Agent) Execute(ctx context.Context, emit func(Event)) error {
 			Messages:        contextWindow(a.history, a.maxKeepTurns),
 			Tools:           a.toolDefs(),
 			MaxTokens:       a.maxToken,
+			SessionID:       a.sessionID,
 			Reasoning:       reasoning,
 			ReasoningEffort: effort,
 		}

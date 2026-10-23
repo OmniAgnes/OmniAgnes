@@ -171,12 +171,25 @@ export interface ProviderConfig {
   api_key?: string
   env_key?: string
   default?: boolean
+  /** 随每次请求发送的额外 HTTP 头，如网关要求的 x-opencode-session */
+  headers?: Record<string, string>
   context_window?: number
   max_output_tokens?: number
   input_types?: string[]
   reasoning?: string
   /** 按模型名覆盖供应商级默认值 */
   model_options?: Record<string, ModelOptions>
+}
+
+/** models.dev 返回的模型能力参数（自动获取模型参数用） */
+export interface ModelMeta {
+  context_window?: number
+  max_output_tokens?: number
+  input_types?: string[]
+  tool_call?: boolean
+  reasoning?: boolean
+  provider?: string
+  source?: string
 }
 
 export interface StateInfo {

@@ -3,12 +3,16 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Role 是消息角色。
@@ -241,6 +245,9 @@ type ChatRequest struct {
 	Messages  []Message
 	Tools     []ToolDef
 	MaxTokens int
+	// SessionID 是本对话的稳定标识（同一任务内不变）。部分网关要求按会话
+	// 路由/缓存（如 OpenCode Go 的 x-opencode-session），由 provider 决定是否发送。
+	SessionID string
 	// Reasoning 思考开关：on | off；空 = 不控制，跟随服务端默认。
 	Reasoning string
 	// ReasoningEffort 推理强度：low | medium | high；空 = 不发送（模型不支持时留空）。
@@ -273,9 +280,7 @@ func fetchJSON(ctx context.Context, c *http.Client, url string, headers map[stri
 	if err != nil {
 		return err
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
+	setHeaders(req, headers)
 	resp, err := c.Do(req)
 	if err != nil {
 		return fmt.Errorf("请求 %s 失败: %w", url, err)
@@ -289,6 +294,106 @@ func fetchJSON(ctx context.Context, c *http.Client, url string, headers map[stri
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// setHeaders 把键值写入请求；空键跳过。已有同名头会被覆盖，
+// 供 provider 先写默认头再叠用户自定义头。
+func setHeaders(req *http.Request, headers map[string]string) {
+	for k, v := range headers {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+}
+
+// cloneHeaders 复制请求头 map，避免调用方之后修改影响已构造的 provider。
+func cloneHeaders(h map[string]string) map[string]string {
+	if len(h) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		out[k] = v
+	}
+	return out
+}
+
+// mergeHeaders 复制 defaults 后叠加 custom（custom 覆盖同名头）。
+func mergeHeaders(defaults, custom map[string]string) map[string]string {
+	out := cloneHeaders(defaults)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for k, v := range custom {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// hasHeader 按大小写不敏感判断请求头是否已配置。
+func hasHeader(h map[string]string, name string) bool {
+	_, ok := getHeader(h, name)
+	return ok
+}
+
+// getHeader 按大小写不敏感取请求头值。
+func getHeader(h map[string]string, name string) (string, bool) {
+	for k, v := range h {
+		if strings.EqualFold(strings.TrimSpace(k), name) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// sessionState 是 provider 级的缺省会话标识：没有 ChatRequest.SessionID 时
+// （如拉模型清单、连通性探测）用它兜底，懒生成且并发安全。
+type sessionState struct {
+	id   string
+	once sync.Once
+}
+
+func (s *sessionState) get() string {
+	s.once.Do(func() {
+		if s.id == "" {
+			s.id = NewSessionID()
+		}
+	})
+	return s.id
+}
+
+// gatewayRequestHeaders 在用户自定义头基础上补齐网关要求的会话头。
+// 目前只有 opencode.ai 需要 x-opencode-session，其他网关原样返回自定义头。
+func gatewayRequestHeaders(baseURL, sessionID string, custom map[string]string, fallback *sessionState) map[string]string {
+	h := cloneHeaders(custom)
+	if h == nil {
+		h = map[string]string{}
+	}
+	if isOpenCodeGateway(baseURL) {
+		// 用户配了但留空同样视为未配置：空会话头照样会被网关拒绝
+		if v, ok := getHeader(h, "x-opencode-session"); !ok || strings.TrimSpace(v) == "" {
+			if sessionID == "" {
+				sessionID = fallback.get()
+			}
+			h["x-opencode-session"] = sessionID
+		}
+	}
+	return h
+}
+
+// NewSessionID 生成 128 位随机会话标识。网关按会话做路由与提示缓存时
+// （如 OpenCode Go 的 x-opencode-session）要求同一对话内保持不变。
+func NewSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("omni-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // Registry 是 provider 工厂注册表。
@@ -305,6 +410,8 @@ type ConfigP struct {
 	Model   string
 	BaseURL string
 	APIKey  string
+	// Headers 是配置里用户自定义的额外请求头（可覆盖同名的默认头）。
+	Headers map[string]string
 }
 
 var globalRegistry = &Registry{factories: map[string]Factory{}}
